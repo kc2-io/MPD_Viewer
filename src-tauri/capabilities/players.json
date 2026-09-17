@@ -1,0 +1,17 @@
+{
+  "identifier": "players",
+  "description": "Player wrappers may only report advisory telemetry for themselves.",
+  "windows": [
+    "player-*"
+  ],
+  "local": false,
+  "remote": {
+    "urls": [
+      "http://localhost:*/*",
+      "https://parent.mpdviewer.com/*"
+    ]
+  },
+  "permissions": [
+    "report-playback"
+  ]
+}

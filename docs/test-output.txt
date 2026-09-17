@@ -1,0 +1,142 @@
+MPD Tabber hosted-parent update verification — September 17, 2026
+$ node --test tests/view-model.test.mjs
+TAP version 13
+# Subtest: only fresh actual PLAYING reports count as observed playback
+ok 1 - only fresh actual PLAYING reports count as observed playback
+  ---
+  duration_ms: 1.793156
+  type: 'test'
+  ...
+# Subtest: missing telemetry is unknown, not playing
+ok 2 - missing telemetry is unknown, not playing
+  ---
+  duration_ms: 0.281033
+  type: 'test'
+  ...
+# Subtest: stale telemetry stops being counted
+ok 3 - stale telemetry stops being counted
+  ---
+  duration_ms: 0.101933
+  type: 'test'
+  ...
+# Subtest: closing windows retain capacity but are not counted as playing
+ok 4 - closing windows retain capacity but are not counted as playing
+  ---
+  duration_ms: 0.359771
+  type: 'test'
+  ...
+# Subtest: blocked playback requests an honest user gesture
+ok 5 - blocked playback requests an honest user gesture
+  ---
+  duration_ms: 0.106711
+  type: 'test'
+  ...
+# Subtest: demo playback is explicitly labeled simulated
+ok 6 - demo playback is explicitly labeled simulated
+  ---
+  duration_ms: 0.242325
+  type: 'test'
+  ...
+# Subtest: offline player is not confused with authoritative live monitoring
+ok 7 - offline player is not confused with authoritative live monitoring
+  ---
+  duration_ms: 0.086741
+  type: 'test'
+  ...
+# Subtest: paused state is preserved
+ok 8 - paused state is preserved
+  ---
+  duration_ms: 0.099569
+  type: 'test'
+  ...
+# Subtest: unknown SDK state is not claimed to be playing
+ok 9 - unknown SDK state is not claimed to be playing
+  ---
+  duration_ms: 0.224097
+  type: 'test'
+  ...
+# Subtest: last check handles unknown
+ok 10 - last check handles unknown
+  ---
+  duration_ms: 0.454764
+  type: 'test'
+  ...
+# Subtest: last check renders seconds
+ok 11 - last check renders seconds
+  ---
+  duration_ms: 0.144217
+  type: 'test'
+  ...
+# Subtest: last check renders minutes
+ok 12 - last check renders minutes
+  ---
+  duration_ms: 0.085268
+  type: 'test'
+  ...
+1..12
+# tests 12
+# suites 0
+# pass 12
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 75.729784
+$ python3 tests/configuration_test.py
+test_compiled_origin_and_permission_stay_in_sync (__main__.ConfigurationTests.test_compiled_origin_and_permission_stay_in_sync) ... ok
+test_hosted_configuration_updates_both_files_without_manager_access (__main__.ConfigurationTests.test_hosted_configuration_updates_both_files_without_manager_access) ... ok
+test_https_directory (__main__.ConfigurationTests.test_https_directory) ... ok
+test_https_root_directory (__main__.ConfigurationTests.test_https_root_directory) ... ok
+test_https_wrapper (__main__.ConfigurationTests.test_https_wrapper) ... ok
+test_invalid_origin_does_not_modify_configuration (__main__.ConfigurationTests.test_invalid_origin_does_not_modify_configuration) ... ok
+test_local_reset_removes_remote_host_permission (__main__.ConfigurationTests.test_local_reset_removes_remote_host_permission) ... ok
+test_manager_has_no_remote_origins (__main__.ConfigurationTests.test_manager_has_no_remote_origins) ... ok
+test_registered_client_id_source_configuration (__main__.ConfigurationTests.test_registered_client_id_source_configuration) ... ok
+test_reject_ambiguous_relative_asset_path (__main__.ConfigurationTests.test_reject_ambiguous_relative_asset_path) ... ok
+test_reject_credentials (__main__.ConfigurationTests.test_reject_credentials) ... ok
+test_reject_insecure (__main__.ConfigurationTests.test_reject_insecure) ... ok
+test_reject_query_or_fragment (__main__.ConfigurationTests.test_reject_query_or_fragment) ... ok
+test_remote_player_only_gets_advisory_reporting (__main__.ConfigurationTests.test_remote_player_only_gets_advisory_reporting) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.006s
+
+OK
+$ MPD_TEST_CHROMIUM=/usr/bin/chromium python3 tests/browser_test.py
+PASS Manager renders four ranked favorites
+PASS Registered public Client ID is prefilled from native state
+PASS Manager renders three player cards
+PASS Simulated data is visibly distinguished
+PASS First channel cannot be moved above rank one
+PASS Reorder dispatches the correct zero-based target
+PASS Volume dispatch preserves independent mute
+PASS Add-channel form sends a manager action
+PASS Rejected input is preserved for correction
+PASS Pause retains displayed player sessions
+PASS Stop action updates empty-session UI
+PASS Connect dispatches the registered Client ID without editing
+PASS Client ID can still be overridden before connecting
+PASS Manager ran without JavaScript exceptions
+PASS Wrapper derives parent from its document hostname
+PASS SDK initializes without uncontrolled autoplay/audio
+PASS Requested audio is applied before the first play attempt
+PASS Blocked autoplay is reported rather than called playing
+PASS Heartbeat does not unpause or repeatedly call play
+PASS Zero volume and unmuted remain distinct
+PASS Player reports use only the narrow native command
+PASS Wrapper ran without JavaScript exceptions
+PASS Demo does not load Twitch or stream media
+PASS Demo visibly states that no viewers are created
+PASS Demo lets the user exercise blocked telemetry
+25 browser checks passed.
+$ node --check (UI and player JavaScript files)
+$ Parse JSON, TOML and plist; validate Python syntax
+PASS: static file parsing and Python syntax
+
+Additional attempted check (not included in passing total):
+$ MPD_TEST_CHROMIUM=/usr/bin/chromium python3 tests/hosted_wrapper_test.py
+BLOCKED before assertions: Page.goto: net::ERR_BLOCKED_BY_ADMINISTRATOR
+No environment policy was changed or bypassed.
+
+Live-site inspection: web fetch returned Cache miss; container curl failed to resolve parent.mpdviewer.com.
+No remote files, TLS certificate, response headers, real SDK, native IPC or media were verified.

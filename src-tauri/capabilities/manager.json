@@ -1,0 +1,7 @@
+{
+  "identifier": "manager",
+  "description": "Trusted bundled management interface. No remote origins.",
+  "windows": ["main"],
+  "local": true,
+  "permissions": ["manage"]
+}

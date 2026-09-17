@@ -1,0 +1,31 @@
+{
+  "kind": "mocked browser UI and SDK tests; NOT native or live Twitch tests",
+  "passed": 25,
+  "tests": [
+    "Manager renders four ranked favorites",
+    "Registered public Client ID is prefilled from native state",
+    "Manager renders three player cards",
+    "Simulated data is visibly distinguished",
+    "First channel cannot be moved above rank one",
+    "Reorder dispatches the correct zero-based target",
+    "Volume dispatch preserves independent mute",
+    "Add-channel form sends a manager action",
+    "Rejected input is preserved for correction",
+    "Pause retains displayed player sessions",
+    "Stop action updates empty-session UI",
+    "Connect dispatches the registered Client ID without editing",
+    "Client ID can still be overridden before connecting",
+    "Manager ran without JavaScript exceptions",
+    "Wrapper derives parent from its document hostname",
+    "SDK initializes without uncontrolled autoplay/audio",
+    "Requested audio is applied before the first play attempt",
+    "Blocked autoplay is reported rather than called playing",
+    "Heartbeat does not unpause or repeatedly call play",
+    "Zero volume and unmuted remain distinct",
+    "Player reports use only the narrow native command",
+    "Wrapper ran without JavaScript exceptions",
+    "Demo does not load Twitch or stream media",
+    "Demo visibly states that no viewers are created",
+    "Demo lets the user exercise blocked telemetry"
+  ]
+}

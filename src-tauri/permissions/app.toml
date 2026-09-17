@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "manage"
+description = "Read state and issue validated manager actions; local manager only."
+commands.allow = ["get_state", "dispatch"]
+
+[[permission]]
+identifier = "report-playback"
+description = "Submit advisory, bounded playback telemetry for the calling player only."
+commands.allow = ["player_report"]

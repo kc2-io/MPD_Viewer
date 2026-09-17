@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>MPD Tabber</title><link rel="stylesheet" href="style.css"><script type="module" src="app.js"></script></head>
+<body>
+<header class="topbar">
+  <div class="brand"><div class="monogram" aria-hidden="true">M</div><div><h1>MPD Tabber <span class="tag">POC / 0.1</span></h1><p>Your favorites. Your priorities.</p></div></div>
+  <div class="transport"><span id="run-status" class="pill">Stopped</span><button id="start" class="primary">Start</button><button id="pause">Pause</button><button id="stop" class="danger">Stop</button></div>
+</header>
+<main>
+  <div id="error" class="error" role="alert" hidden><span id="error-text"></span><button id="dismiss-error" aria-label="Dismiss error">Dismiss</button></div>
+  <section class="metrics" aria-label="Session summary">
+    <div class="metric"><span class="eyebrow">MANAGED SESSIONS</span><strong id="session-count">0 <small>/ 3</small></strong><span>Closing sessions still reserve capacity</span></div>
+    <div class="metric"><span class="eyebrow" id="playing-heading">OBSERVED PLAYBACK</span><strong id="playing-count">0</strong><span id="playing-detail">No playback reported</span></div>
+    <div class="metric"><span class="eyebrow">LIVE MONITOR</span><strong id="monitor-heading">Not started</strong><span id="monitor-detail">No status check yet</span></div>
+  </section>
+  <div class="columns">
+    <section class="panel favorites-panel">
+      <div class="section-header"><div><h2>Priority list <span id="favorite-count" class="count">0</span></h2><p>Highest priority first. Drag to reorder, or use the arrows.</p></div><button id="refresh">Check now</button></div>
+      <form id="add-form" class="add-form"><label class="sr-only" for="channel">Twitch channel</label><input id="channel" placeholder="Channel name or twitch.tv/channel" maxlength="512" autocomplete="off" required><button type="submit" class="primary">Add channel</button></form>
+      <div class="list-header"><span>RANK</span><span>CHANNEL</span><span>CONTROLS</span></div>
+      <ol id="favorites" class="favorites"></ol>
+      <div id="empty-favorites" class="empty"><h3>Make room for your favorites.</h3><p>Add a channel above, or load the demo to explore priority switching without a Twitch login.</p><button id="load-demo" class="primary">Load demo channels</button></div>
+      <p id="demo-note" class="footnote">Demo switches simulate live status. No Twitch streams or viewers are created.</p>
+    </section>
+    <aside>
+      <section class="panel settings-panel">
+        <h2>Session settings</h2>
+        <label for="source">Live-status source</label><select id="source"><option value="demo">Demo · simulated channels</option><option value="twitch">Twitch · real channels</option></select>
+        <label for="limit">Maximum open sessions</label><input id="limit" type="number" min="1" max="1000" step="1" value="3"><p class="hint">Your limit, not a verified Twitch counting rule.</p>
+        <div class="label-row"><label for="volume">Player volume</label><output id="volume-value" for="volume">25%</output></div><input id="volume" type="range" min="0" max="100" step="1" value="25">
+        <label class="check"><input id="muted" type="checkbox">Mute all managed players</label>
+        <p class="hint">Volume applies to every player. Muting is independent.</p>
+      </section>
+      <section class="panel auth-panel" id="auth-panel">
+        <div class="section-header"><h2>Twitch connection</h2><span id="auth-status" class="dot-label">Not connected</span></div>
+        <p class="hint">MPD Tabber’s public Client ID is prefilled. You can override it for another registration. Never enter a client secret.</p>
+        <form id="connect-form"><label for="client-id">Public Client ID</label><input id="client-id" autocomplete="off" maxlength="128" placeholder="Your registered Client ID"><div class="button-row"><button id="connect" type="submit">Connect Twitch</button><button id="disconnect" type="button">Disconnect</button></div></form>
+        <div id="device-auth" class="device-auth" hidden><span>Authorize this device</span><strong id="device-code"></strong><button id="open-auth" class="primary">Open Twitch authorization</button></div>
+        <p class="hint">Credentials stay in memory in this POC. Reconnect after quitting. API authorization does not sign in the video player.</p>
+      </section>
+    </aside>
+  </div>
+  <section class="panel workspace-panel">
+    <div class="section-header"><div><h2>Player sessions</h2><p>Separate native windows in this POC. Focus a player to watch or interact with it.</p></div><span class="tag">PLAYBACK ≠ VIEWER CREDIT</span></div>
+    <div id="players" class="players"></div><div id="empty-players" class="empty compact">Press Start to open the highest-priority live favorites.</div>
+  </section>
+  <details class="panel diagnostics"><summary>Activity &amp; playback diagnostics</summary><p class="hint">Player wrapper: <code id="player-origin"></code></p><pre id="events">Ready.</pre></details>
+  <footer>Proof of concept · Background playback, browser compatibility, and viewer attribution are not guaranteed.</footer>
+</main>
+</body></html>

@@ -1,0 +1,8 @@
+{
+  "kind": "HTTPS-origin route mock; not live website/TLS/native/media validation",
+  "configured_url": "https://parent.mpdviewer.com/",
+  "status": "blocked_by_environment_before_assertions",
+  "passed": 0,
+  "error": "Page.goto: net::ERR_BLOCKED_BY_ADMINISTRATOR",
+  "planned_assertions": 8
+}

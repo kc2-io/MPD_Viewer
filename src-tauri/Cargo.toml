@@ -1,0 +1,24 @@
+[package]
+name = "mpd-tabber"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+mpd-core = { path = "../crates/core" }
+mpd-twitch = { path = "../crates/twitch" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tauri = { version = "2", features = [] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tiny_http = "0.12"
+webbrowser = "1"
+url = "2"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
