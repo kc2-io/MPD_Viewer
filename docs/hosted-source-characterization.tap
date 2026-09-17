@@ -1,0 +1,118 @@
+TAP version 13
+# Subtest: snapshot: contains one inline application plus Twitch and Cloudflare scripts
+ok 1 - snapshot: contains one inline application plus Twitch and Cloudflare scripts
+  ---
+  duration_ms: 1.857845
+  type: 'test'
+  ...
+# Subtest: snapshot integrity: manifest hash agrees with reconstructed HTML
+ok 2 - snapshot integrity: manifest hash agrees with reconstructed HTML
+  ---
+  duration_ms: 0.871311
+  type: 'test'
+  ...
+# Subtest: defaults: empty root boot, 50 percent volume and pauseInactive enabled
+ok 3 - defaults: empty root boot, 50 percent volume and pauseInactive enabled
+  ---
+  duration_ms: 2.449996
+  type: 'test'
+  ...
+# Subtest: query bootstrap creates channels and derives parent from actual hostname
+ok 4 - query bootstrap creates channels and derives parent from actual hostname
+  ---
+  duration_ms: 2.145958
+  type: 'test'
+  ...
+# Subtest: known incompatibility: uploaded POC fragment does not bootstrap any players
+ok 5 - known incompatibility: uploaded POC fragment does not bootstrap any players
+  ---
+  duration_ms: 0.873394
+  type: 'test'
+  ...
+# Subtest: known incompatibility: query volume=25 clamps to 1 rather than 25 percent
+ok 6 - known incompatibility: query volume=25 clamps to 1 rather than 25 percent
+  ---
+  duration_ms: 1.011201
+  type: 'test'
+  ...
+# Subtest: default behavior: only active channel is playing and unmuted after READY
+ok 7 - default behavior: only active channel is playing and unmuted after READY
+  ---
+  duration_ms: 1.284933
+  type: 'test'
+  ...
+# Subtest: pauseInactive=false at bootstrap requests SDK autoplay for each constructed player
+ok 8 - pauseInactive=false at bootstrap requests SDK autoplay for each constructed player
+  ---
+  duration_ms: 1.978706
+  type: 'test'
+  ...
+# Subtest: known behavior: disabling pauseInactive later does not resume an already paused channel
+ok 9 - known behavior: disabling pauseInactive later does not resume an already paused channel
+  ---
+  duration_ms: 1.614849
+  type: 'test'
+  ...
+# Subtest: known behavior: volume change resumes a manually paused active player
+ok 10 - known behavior: volume change resumes a manually paused active player
+  ---
+  duration_ms: 1.359135
+  type: 'test'
+  ...
+# Subtest: known defect: second add lays out using one registered player
+ok 11 - known defect: second add lays out using one registered player
+  ---
+  duration_ms: 1.308358
+  type: 'test'
+  ...
+# Subtest: retained setChannels entries keep their player instance but are not reordered
+ok 12 - retained setChannels entries keep their player instance but are not reordered
+  ---
+  duration_ms: 1.276059
+  type: 'test'
+  ...
+# Subtest: known gap: removing active channel alone leaves no active replacement
+ok 13 - known gap: removing active channel alone leaves no active replacement
+  ---
+  duration_ms: 1.13658
+  type: 'test'
+  ...
+# Subtest: known security gap: inbound command accepts an unrelated origin and source
+ok 14 - known security gap: inbound command accepts an unrelated origin and source
+  ---
+  duration_ms: 1.155669
+  type: 'test'
+  ...
+# Subtest: known validation gap: nonnumeric volume produces NaN
+ok 15 - known validation gap: nonnumeric volume produces NaN
+  ---
+  duration_ms: 1.943624
+  type: 'test'
+  ...
+# Subtest: known validation gap: nonarray setChannels throws
+ok 16 - known validation gap: nonarray setChannels throws
+  ---
+  duration_ms: 1.188948
+  type: 'test'
+  ...
+# Subtest: known protocol mismatch: no POC audio function or Tauri command invocation
+ok 17 - known protocol mismatch: no POC audio function or Tauri command invocation
+  ---
+  duration_ms: 1.392245
+  type: 'test'
+  ...
+# Subtest: snapshot has no chat iframe or local dependency files
+ok 18 - snapshot has no chat iframe or local dependency files
+  ---
+  duration_ms: 0.235875
+  type: 'test'
+  ...
+1..18
+# tests 18
+# suites 0
+# pass 18
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 98.635068

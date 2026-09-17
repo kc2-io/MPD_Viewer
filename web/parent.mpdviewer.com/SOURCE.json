@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "claimed_deployment_url": "https://parent.mpdviewer.com/",
+  "source_method": "User-pasted HTML in the current conversation; reconstructed from Markdown table",
+  "captured_at_utc": "2026-09-17T19:08:16.370476+00:00",
+  "live_fetch_verified": false,
+  "server_original_verified": false,
+  "normalizations": [
+    "Removed the Markdown table wrapper and padding.",
+    "Unescaped Markdown punctuation in HTML, identifiers and JavaScript operators.",
+    "Converted the two Markdown hyperlink wrappers inside script src attributes to their URL text.",
+    "Converted table rows containing <br> into blank source lines.",
+    "Wrote UTF-8 text with LF line endings and a final newline."
+  ],
+  "preserved": [
+    "Existing MPD Tabber title and comments",
+    "Inline CSS and application JavaScript",
+    "Default volume=0.5 and pauseInactive=true",
+    "Twitch SDK script tag",
+    "Cloudflare script tag, integrity value and public beacon identifier"
+  ],
+  "files": [
+    {
+      "path": "index.html",
+      "bytes": 6509,
+      "sha256": "d25b4433c867e5b9c32d7688b41db2acbd5f7a5a1ec6c86e75aa224821cf2d2f"
+    }
+  ],
+  "external_scripts": [
+    {
+      "url": "https://player.twitch.tv/js/embed/v1.js",
+      "downloaded": false
+    },
+    {
+      "url": "https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495",
+      "downloaded": false
+    }
+  ],
+  "note": "Snapshot only. No fetched-byte equivalence, native integration, Twitch playback, website login, Turbo behavior, response headers or TLS properties verified."
+}

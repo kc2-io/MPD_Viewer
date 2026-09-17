@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MPD Tabber player host</title>
+<meta name="robots" content="noindex">
+<script src="https://player.twitch.tv/js/embed/v1.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #grid { display: grid; gap: 2px; width: 100%; height: 100%; }
+  .cell { position: relative; min-width: 400px; min-height: 300px; }
+  .cell > div { width: 100%; height: 100%; }
+  .cell[data-active="true"] { outline: 2px solid #9147ff; outline-offset: -2px; }
+</style>
+</head>
+<body>
+<div id="grid"></div>
+
+<script>
+/*
+ * Player host for MPD Tabber.
+ *
+ * Deploy this as a static page on the hostname you register as the Twitch
+ * `parent`. The native app points a webview at it and drives it over
+ * postMessage. Nothing here talks to a backend.
+ *
+ * Two ways in:
+ *   1. Bootstrap from the query string:  ?channel=foo&channel=bar&active=foo
+ *   2. Send commands from the host app:  webview.postMessage({type:"add", channel:"foo"})
+ *
+ * `parent` is derived from location.hostname, so the same file works on
+ * localhost during development and on your real hostname in production
+ * without an edit. Twitch matches the hostname exactly -- no wildcards, and
+ * an apex domain does not cover its subdomains.
+ */
+
+var PARENT = [location.hostname];
+var MIN_W = 400, MIN_H = 300;   // Twitch player minimums; autoplay also needs visibility
+
+var players = Object.create(null);  // channel -> { player, cell }
+var active = null;
+var volume = 0.5;
+var pauseInactive = true;           // only the focused stream plays
+
+var grid = document.getElementById("grid");
+
+function post(msg) {
+  // Host app listens for these. Targeting "*" is fine: the only consumer is
+  // the embedding webview, and nothing secret goes over this channel.
+  try { window.parent.postMessage(msg, "*"); } catch (e) {}
+  if (window.chrome && window.chrome.webview) {
+    try { window.chrome.webview.postMessage(msg); } catch (e) {}
+  }
+  if (window.ipc && typeof window.ipc.postMessage === "function") {
+    try { window.ipc.postMessage(JSON.stringify(msg)); } catch (e) {}  // Tauri / wry
+  }
+}
+
+function relayout() {
+  var n = Object.keys(players).length;
+  var cols = n <= 1 ? 1 : Math.ceil(Math.sqrt(n));
+  grid.style.gridTemplateColumns = "repeat(" + cols + ", 1fr)";
+  grid.style.gridAutoRows = "1fr";
+}
+
+function add(channel) {
+  channel = String(channel || "").toLowerCase().trim();
+  if (!channel || players[channel]) return;
+
+  var cell = document.createElement("div");
+  cell.className = "cell";
+  cell.dataset.channel = channel;
+  var mount = document.createElement("div");
+  mount.id = "p-" + channel;
+  cell.appendChild(mount);
+  grid.appendChild(cell);
+  relayout();
+
+  var player = new Twitch.Player(mount.id, {
+    channel: channel,
+    parent: PARENT,
+    width: "100%",
+    height: "100%",
+    muted: true,          // start silent; setActive decides what is audible
+    autoplay: !pauseInactive
+  });
+
+  players[channel] = { player: player, cell: cell };
+
+  ["READY", "PLAYING", "PAUSE", "ENDED", "ONLINE", "OFFLINE", "PLAYBACK_BLOCKED"]
+    .forEach(function (name) {
+      player.addEventListener(Twitch.Player[name], function () {
+        post({ type: "event", event: name, channel: channel });
+        if (name === "READY") applyState(channel);
+      });
+    });
+
+  post({ type: "added", channel: channel });
+}
+
+function remove(channel) {
+  var entry = players[channel];
+  if (!entry) return;
+  try { entry.player.pause(); } catch (e) {}
+  entry.cell.remove();
+  delete players[channel];
+  if (active === channel) active = null;
+  relayout();
+  post({ type: "removed", channel: channel });
+}
+
+function applyState(channel) {
+  var entry = players[channel];
+  if (!entry) return;
+  var isActive = channel === active;
+  try {
+    entry.player.setMuted(!isActive);
+    if (isActive) entry.player.setVolume(volume);
+    if (pauseInactive) {
+      if (isActive) entry.player.play();
+      else entry.player.pause();
+    }
+  } catch (e) { /* player not READY yet; the READY handler re-applies */ }
+  entry.cell.dataset.active = isActive ? "true" : "false";
+}
+
+function setActive(channel) {
+  channel = String(channel || "").toLowerCase().trim();
+  if (!players[channel]) return;
+  active = channel;
+  Object.keys(players).forEach(applyState);
+  post({ type: "active", channel: channel });
+}
+
+function setVolume(v) {
+  volume = Math.max(0, Math.min(1, Number(v)));
+  if (active) applyState(active);
+  post({ type: "volume", volume: volume });
+}
+
+function setChannels(list) {
+  var want = (list || []).map(function (c) { return String(c).toLowerCase().trim(); })
+                         .filter(Boolean);
+  Object.keys(players).forEach(function (c) { if (want.indexOf(c) === -1) remove(c); });
+  want.forEach(add);
+  if (want.indexOf(active) === -1) setActive(want[0]);
+}
+
+window.addEventListener("message", function (e) {
+  var msg = e.data;
+  if (typeof msg === "string") { try { msg = JSON.parse(msg); } catch (err) { return; } }
+  if (!msg || typeof msg.type !== "string") return;
+
+  switch (msg.type) {
+    case "add":           add(msg.channel); break;
+    case "remove":        remove(msg.channel); break;
+    case "setChannels":   setChannels(msg.channels); break;
+    case "setActive":     setActive(msg.channel); break;
+    case "setVolume":     setVolume(msg.volume); break;
+    case "pauseInactive":
+      pauseInactive = !!msg.value;
+      Object.keys(players).forEach(applyState);
+      break;
+    case "ping":          post({ type: "pong", parent: PARENT }); break;
+  }
+});
+
+// Bootstrap from the query string.
+(function () {
+  var q = new URLSearchParams(location.search);
+  var channels = q.getAll("channel");
+  if (q.has("volume")) volume = Math.max(0, Math.min(1, Number(q.get("volume"))));
+  if (q.has("pauseInactive")) pauseInactive = q.get("pauseInactive") !== "false";
+  if (channels.length) {
+    channels.forEach(add);
+    setActive(q.get("active") || channels[0]);
+  }
+  post({ type: "hostReady", parent: PARENT, minSize: [MIN_W, MIN_H] });
+})();
+</script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"c44f7b379c304af88d24fcd8b7be4fe6","r":1,"spa":2}' crossorigin="anonymous"></script>
+</body>
+</html>
