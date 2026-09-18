@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
       - run: rustup show
@@ -23,7 +23,7 @@ jobs:
           test ! -f Cargo.lock || { echo 'A lockfile exists; use a reviewed dependency PR.'; exit 1; }
           cargo generate-lockfile
           python scripts/release-tools.py pin-rust
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: MPD_Viewer-initial-lock-REVIEW-AND-COMMIT
           path: |

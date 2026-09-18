@@ -28,8 +28,15 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     g=p.add_mutually_exclusive_group(required=True);g.add_argument('--write',action='store_true');g.add_argument('--check',action='store_true')
     args=p.parse_args(); changes={};pins={};unresolved=[]
-    for path in sorted((ROOT/'.github/workflows').glob('*.yml')):
+    for path in sorted(p for p in (ROOT/'.github/workflows').iterdir() if p.suffix in ('.yml', '.yaml')):
         text=path.read_text(encoding="utf-8")
+        # Accept only the simple block-style uses syntax handled below. Fail closed
+        # for quoted, flow-style, subpath or multiline uses rather than skipping it.
+        for number, line in enumerate(text.splitlines(), 1):
+            if line.lstrip().startswith('#'):
+                continue
+            if re.search(r"\buses['\"]?\s*:", line) and not PATTERN.fullmatch(line):
+                raise ValueError(f'{path.name}:{number}: unsupported uses syntax; use an unquoted owner/repo@ref block entry.')
         def replacement(m):
             prefix,repo,ref,trailer=m.groups()
             if repo.lower() not in ALLOW: raise ValueError('Review an unexpected action before using it: '+repo)

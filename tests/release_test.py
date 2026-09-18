@@ -73,6 +73,16 @@ class ReleaseTests(unittest.TestCase):
   with patch.object(pa,'api',side_effect=responses):self.assertEqual(pa.resolve('actions/checkout','v7'),'a'*40)
  def test_action_rejects_noncommit(self):
   with patch.object(pa,'api',return_value={'object':{'type':'blob','sha':'a'*40}}),self.assertRaises(ValueError):pa.resolve('actions/checkout','v7')
+ def test_yaml_workflow_requires_pins(self):
+  workflows=self.root/'.github/workflows';workflows.mkdir(parents=True)
+  (workflows/'extra.yaml').write_text('steps:\n  - uses: actions/checkout@v7\n')
+  with patch.object(pa,'ROOT',self.root),patch('sys.argv',['pin-actions.py','--check']),self.assertRaisesRegex(ValueError,'not pinned'):pa.main()
+ def test_unsupported_action_syntax_fails_closed(self):
+  workflows=self.root/'.github/workflows';workflows.mkdir(parents=True)
+  for line in ('  - uses: "actions/checkout@v7"', '  - uses: actions/checkout/subpath@v7', '  - { uses: actions/checkout@v7 }', '  - "uses": actions/checkout@v7', '  - uses:'):
+   with self.subTest(line=line):
+    (workflows/'extra.yml').write_text('steps:\n'+line+'\n')
+    with patch.object(pa,'ROOT',self.root),patch('sys.argv',['pin-actions.py','--check']),self.assertRaisesRegex(ValueError,'unsupported uses syntax'):pa.main()
  def test_native_ci_has_no_signing_or_oidc(self):
   text=(ROOT/'.github/workflows/ci.yml').read_text();self.assertNotIn('secrets.',text);self.assertNotIn('id-token: write',text);self.assertNotIn('environment:',text)
  def test_release_has_no_unsafe_pr_trigger(self):

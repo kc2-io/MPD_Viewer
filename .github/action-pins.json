@@ -1,0 +1,9 @@
+{
+  "actions/checkout@v7": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+  "actions/download-artifact@v8": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+  "actions/setup-node@v6": "249970729cb0ef3589644e2896645e5dc5ba9c38",
+  "actions/setup-python@v6": "ece7cb06caefa5fff74198d8649806c4678c61a1",
+  "actions/upload-artifact@v7": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+  "azure/artifact-signing-action@v2": "c7ab2a863ab5f9a846ddb8265964877ef296ee82",
+  "azure/login@v3": "a641126d1b8aa4d1fa005f4f92df94a3a4c4c906"
+}
