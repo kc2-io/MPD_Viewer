@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,6 +17,8 @@ class ReleaseTests(unittest.TestCase):
   self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);(self.root/'src-tauri').mkdir()
   (self.root/'Cargo.toml').write_text('[workspace.package]\nversion="1.2.3-rc.1"\n')
   (self.root/'src-tauri/tauri.conf.json').write_text('{"version":"1.2.3-rc.1"}')
+  (self.root/'.github').mkdir()
+  (self.root/'.github/release-policy.json').write_text(json.dumps({'repository':'kc2-io/MPD_Viewer','visibility':'public'}))
   self.p=patch.object(r,'ROOT',self.root);self.p.start()
  def tearDown(self):self.p.stop();self.temp.cleanup()
  def test_supported_tags(self):
@@ -37,13 +40,38 @@ class ReleaseTests(unittest.TestCase):
   with patch.object(r,'run',side_effect=ValueError('untracked')),self.assertRaises(ValueError):r.require_lock()
  def test_disable_is_default(self):
   with patch.dict(os.environ,{},clear=True),self.assertRaisesRegex(ValueError,'disabled'):r.gate()
- def test_public_repo_never_releases(self):
-  with patch.dict(os.environ,{'RELEASES_ENABLED':'true','REPOSITORY_PRIVATE':'false'},clear=True),self.assertRaisesRegex(ValueError,'PRIVATE'):r.gate()
+ def test_unapproved_private_repo_never_releases(self):
+  with patch.dict(os.environ,{'RELEASES_ENABLED':'true','REPOSITORY_PRIVATE':'true','GITHUB_REPOSITORY':'kc2-io/MPD_Viewer'},clear=True),self.assertRaisesRegex(ValueError,'visibility'):r.gate()
+ def test_approved_public_repository_policy(self):
+  r.require_repository_policy('kc2-io/MPD_Viewer',False)
+ def test_fork_identity_rejected(self):
+  with self.assertRaisesRegex(ValueError,'identity'):r.require_repository_policy('other/MPD_Viewer',False)
+ def test_unknown_visibility_rejected(self):
+  for value in (None,'false',0):
+   with self.subTest(value=value),self.assertRaisesRegex(ValueError,'visibility'):r.require_repository_policy('kc2-io/MPD_Viewer',value)
+ def test_missing_event_visibility_rejected(self):
+  with patch.dict(os.environ,{'RELEASES_ENABLED':'true','GITHUB_REPOSITORY':'kc2-io/MPD_Viewer'},clear=True),self.assertRaisesRegex(ValueError,'visibility'):r.gate()
+ def test_invalid_committed_policy_rejected(self):
+  (self.root/'.github/release-policy.json').write_text('{"repository":"kc2-io/MPD_Viewer","visibility":"any"}')
+  with self.assertRaisesRegex(ValueError,'policy'):r.release_policy()
+ def test_reviewed_public_prerelease_still_checks_tag_ancestry(self):
+  env={'RELEASES_ENABLED':'true','REPOSITORY_PRIVATE':'false','GITHUB_REPOSITORY':'kc2-io/MPD_Viewer','GITHUB_EVENT_NAME':'push','GITHUB_REF_TYPE':'tag','RELEASE_TAG':'v1.2.3-rc.1'}
+  def git(*args,**kwargs):return 'tag' if args[1]=='cat-file' else 'a'*40
+  with patch.dict(os.environ,env,clear=True),patch.object(r,'require_lock'),patch.object(r,'require_release_pins'),patch.object(r,'run',side_effect=git) as run:
+   r.gate();run.assert_any_call('git','merge-base','--is-ancestor','HEAD','refs/remotes/origin/main')
+ def test_missing_committed_policy_rejected(self):
+  (self.root/'.github/release-policy.json').unlink()
+  with self.assertRaises(OSError):r.require_repository_policy('kc2-io/MPD_Viewer',False)
+ def test_malformed_committed_policy_rejected(self):
+  for data in ('null','[]','{}','{broken'):
+   with self.subTest(data=data):
+    (self.root/'.github/release-policy.json').write_text(data)
+    with self.assertRaises(ValueError):r.require_repository_policy('kc2-io/MPD_Viewer',False)
  def test_pr_cannot_sign(self):
-  with patch.dict(os.environ,{'RELEASES_ENABLED':'true','REPOSITORY_PRIVATE':'true','GITHUB_EVENT_NAME':'pull_request','GITHUB_REF_TYPE':'branch'},clear=True),self.assertRaisesRegex(ValueError,'pushed'):r.gate()
+  with patch.dict(os.environ,{'RELEASES_ENABLED':'true','REPOSITORY_PRIVATE':'false','GITHUB_REPOSITORY':'kc2-io/MPD_Viewer','GITHUB_EVENT_NAME':'pull_request','GITHUB_REF_TYPE':'branch'},clear=True),self.assertRaisesRegex(ValueError,'pushed'):r.gate()
  def test_stable_needs_its_own_enable(self):
   (self.root/'Cargo.toml').write_text('[workspace.package]\nversion="1.2.3"\n');(self.root/'src-tauri/tauri.conf.json').write_text('{"version":"1.2.3"}')
-  env={'RELEASES_ENABLED':'true','REPOSITORY_PRIVATE':'true','GITHUB_EVENT_NAME':'push','GITHUB_REF_TYPE':'tag','RELEASE_TAG':'v1.2.3'}
+  env={'RELEASES_ENABLED':'true','REPOSITORY_PRIVATE':'false','GITHUB_REPOSITORY':'kc2-io/MPD_Viewer','GITHUB_EVENT_NAME':'push','GITHUB_REF_TYPE':'tag','RELEASE_TAG':'v1.2.3'}
   with patch.dict(os.environ,env,clear=True),self.assertRaisesRegex(ValueError,'Stable'):r.gate()
  def test_configuration_errors_never_include_values(self):
   with patch.dict(os.environ,{'TOKEN':'not-for-logs'},clear=True):
@@ -102,8 +130,26 @@ class ReleaseTests(unittest.TestCase):
  def test_no_workflow_deploys_the_parent(self):
   for p in (ROOT/'.github/workflows').glob('*.yml'):
    self.assertNotIn('wrangler',p.read_text());self.assertNotIn('cloudflare',p.read_text())
- def test_publication_rechecks_live_private_status(self):
+ def test_publication_rejects_changed_live_visibility(self):
   env={'RELEASE_VERSION':'1.2.3-rc.1','RELEASE_TAG':'v1.2.3-rc.1','GH_REPO':'kc2-io/MPD_Viewer'}
-  with patch.dict(os.environ,env,clear=True),patch.object(r,'run',return_value='a'*40),patch.object(r,'gh_json',return_value={'private':False}),self.assertRaisesRegex(ValueError,'visibility'):
+  with patch.dict(os.environ,env,clear=True),patch.object(r,'run',return_value='a'*40),patch.object(r,'gh_json',return_value={'full_name':'kc2-io/MPD_Viewer','private':True}),self.assertRaisesRegex(ValueError,'visibility'):
    r.publish()
+ def test_visibility_change_after_upload_leaves_draft_unpublished(self):
+  env={'RELEASE_VERSION':'1.2.3-rc.1','RELEASE_TAG':'v1.2.3-rc.1','GH_REPO':'kc2-io/MPD_Viewer'}
+  out=r.final_dir()
+  for name in r.asset_names('1.2.3-rc.1')[:5]:(out/name).write_bytes(b'fixture binary')
+  (self.root/'Cargo.lock').write_bytes(b'fixture lock')
+  def command(*args,**kwargs):
+   if args[:2]==('git','rev-parse'):return 'a'*40
+   if args[:2]==('git','archive'):
+    target=next(a.removeprefix('--output=') for a in args if a.startswith('--output='));Path(target).write_bytes(b'fixture source')
+   if args[:3]==('gh','release','download'):
+    dest=Path(args[args.index('--dir')+1])
+    for path in out.iterdir():shutil.copy2(path,dest/path.name)
+   return ''
+  responses=[{'full_name':'kc2-io/MPD_Viewer','private':False},[],{'full_name':'kc2-io/MPD_Viewer','private':True}]
+  with patch.dict(os.environ,env,clear=True),patch.object(r,'run',side_effect=command) as run,patch.object(r,'gh_json',side_effect=responses),patch.object(r,'live_commit',return_value='a'*40):
+   with self.assertRaisesRegex(ValueError,'visibility'):r.publish()
+   self.assertTrue(any(c.args[:3]==('gh','release','create') for c in run.call_args_list))
+   self.assertFalse(any(c.args[:3]==('gh','release','edit') for c in run.call_args_list))
 if __name__=='__main__':unittest.main(verbosity=2)

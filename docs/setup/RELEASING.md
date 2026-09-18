@@ -16,7 +16,7 @@ v0.1.0
 
 Use an annotated tag identifying a reviewed commit on main. Build metadata and alternate prefixes are rejected by this first implementation. Tags never move; failed releases are investigated rather than repaired by force-moving a tag.
 
-`RELEASES_ENABLED=true` permits configured releases; stable versions also require `STABLE_RELEASES_ENABLED=true`. Both start false. The gate requires a committed nonempty Cargo.lock, a numeric pinned Rust version and full commit-SHA Action references. Repository visibility must be private. Changing it to public is a separate future task; the present release guard intentionally stops in a public repo.
+`RELEASES_ENABLED=true` permits configured releases; stable versions also require `STABLE_RELEASES_ENABLED=true`. Both start false. The gate requires a committed nonempty Cargo.lock, a numeric pinned Rust version and full commit-SHA Action references. Repository identity and visibility must match `.github/release-policy.json`: `kc2-io/MPD_Viewer`, public, following the owner's explicit visibility change on September 18, 2026. Missing or mismatched policy data stops the release; live identity and visibility are checked again before draft creation and immediately before publication.
 
 ## Release sequence
 
@@ -30,10 +30,10 @@ py -3 scripts/tag-release.py v0.1.0-rc.1 --push
 
 Without `--push`, the helper creates only the local tag. It never edits versions, moves tags, creates a repository or enables release flags.
 
-4. GitHub validates private visibility, tag form/version/annotation, main ancestry and pins. Source checks and all four native builds run without signing secrets.
+4. GitHub validates the approved repository identity and visibility, tag form/version/annotation, main ancestry and pins. Source checks and all four native builds run without signing secrets.
 5. Approve the narrowly scoped environments when supported/configured. Windows signs/verifies; macOS signs/notarizes/staples both architectures; Linux creates native packages.
-6. Publication requires the complete matrix. It checks the exact file set, creates a draft, uploads all assets, downloads and hashes them, rechecks remote privacy/tag, then publishes the verified draft. A failed verification leaves the draft unpublished. It does not overwrite an existing release, even an existing draft.
-7. Download release assets as an authorized repository reader; verify hashes, Windows publisher/timestamp, macOS notarization/Gatekeeper, Linux package installation and actual playback/lifecycle on representative machines. Record real outcomes separately from CI compilation.
+6. Publication requires the complete matrix. It checks the exact file set, creates a draft, uploads all assets, downloads and hashes them, rechecks remote identity/visibility/tag, then publishes the verified draft. A failed verification leaves the draft unpublished. It does not overwrite an existing release, even an existing draft.
+7. Download release assets from the public release; verify hashes, Windows publisher/timestamp, macOS notarization/Gatekeeper, Linux package installation and actual playback/lifecycle on representative machines. Record real outcomes separately from CI compilation.
 
 ## Expected release assets
 
@@ -55,7 +55,7 @@ The first seven names begin `MPD_Viewer-v<version>`. The example version is illu
 
 ## CI artifacts are not releases
 
-PR artifacts use `MPD_Viewer-<platform>-pr<N>-UNSIGNED`; main artifacts use the commit instead of pr<N>. They are seven-day diagnostic binary ZIPs, not a signed macOS app, Linux installer, or release. Internal native transfers are retained one day; the release pipeline uses only artifacts from its own run. GitHub release assets remain attached to that private release, subject to the repository's access controls.
+PR artifacts use `MPD_Viewer-<platform>-pr<N>-UNSIGNED`; main artifacts use the commit instead of pr<N>. They are seven-day diagnostic binary ZIPs, not a signed macOS app, Linux installer, or release. Internal native transfers are retained one day; the release pipeline uses only artifacts from its own run. GitHub release assets remain attached to the public release. Source and diagnostic artifacts are now publicly accessible.
 
 ## Recovery
 

@@ -56,7 +56,7 @@ Actual certificate chain, hardened-runtime entitlements, Tauri packaging, API-ke
 
 ## Linux and updater distinctions
 
-Linux DEB/AppImage outputs carry SHA-256 checksums but no OS-native signing identity in this first pipeline. Checksums detect file mismatch; they are not independent publisher signatures. Artifact authenticity relies on the private GitHub release and access controls until a separately approved detached-signature/attestation mechanism is added.
+Linux DEB/AppImage outputs carry SHA-256 checksums but no OS-native signing identity in this first pipeline. Checksums detect file mismatch; they are not independent publisher signatures. Artifact provenance is recorded with the public GitHub release and build metadata until a separately approved detached-signature/attestation mechanism is added.
 
 No Tauri updater plugin or update-signing key is configured. Updater signatures are a different system from Windows Authenticode, Apple code signing and notarization. No updater key is fabricated or committed and no private-release authentication tokens are distributed with the application.
 
