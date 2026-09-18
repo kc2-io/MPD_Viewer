@@ -1,0 +1,16 @@
+{
+  "prepared_date": "2026-09-18",
+  "baseline_commit": "603b8d46690979cb2e8061429ace8a9fefe8dcc3",
+  "baseline_bundle": "MPD_Viewer-Repository.bundle",
+  "baseline_bundle_sha256": "9d88ec5e919fdeba53f5ae082656f7c781eff5559314e0278b6adf1cce973e74",
+  "source_history_preserved": true,
+  "intent": "Codex local project handoff; documentation changes only",
+  "github_writes_performed": false,
+  "native_build_performed": false,
+  "site_deployed": false,
+  "credentials_included": false,
+  "model_configuration_activated": false,
+  "full_chat_history_imported": false,
+  "intended_repository": "kc2-io/MPD_Viewer",
+  "required_visibility": "private"
+}

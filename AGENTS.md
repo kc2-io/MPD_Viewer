@@ -1,5 +1,17 @@
 # MPD Viewer repository rules
 
+## Codex continuation
+
+Read `CODEX-START-HERE.md` for the current handoff and
+`CODEX-START-PROMPT.md` for the immediate repository/setup task.
+The later hosted-source addendum takes precedence over the older feature
+packet's deployment/layout assumptions. Verify actual state before writes.
+Use locally authenticated tools where available; historical plugin failures
+are not evidence about the current machine. Never overwrite a newer checkout.
+Keep existing instruction/model/approval settings unless explicitly changed.
+
+## Architecture and delivery rules
+
 Rust is the selection/controller authority. Preserve the existing app identifier,
 preferences paths, browser-profile identity and public Twitch client ID.
 The pasted hosted source in web/parent.mpdviewer.com is a provenance snapshot:

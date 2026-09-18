@@ -1,0 +1,22 @@
+# First Codex prompt — continue MPD Viewer
+
+You are taking over the MPD Viewer project from a ChatGPT conversation. Treat this repository and the handoff documents as the durable context; do not assume you can see the old conversation.
+
+Read AGENTS.md, CODEX-START-HERE.md, docs/setup/GITHUB-SETUP.md, docs/setup/SIGNING.md, docs/setup/RELEASING.md, docs/setup/VERIFICATION.md, and docs/HOSTED-SOURCE-PLAN-ADDENDUM.md first. Inspect the current checkout, branch, dirty files and remotes before making changes. Preserve user changes and all existing history.
+
+## Current task: finish private GitHub/build/signing/release setup
+
+The user already requested private kc2-io/MPD_Viewer, with build, code signing, release artifacts and version tagging similar to kc2-io/BotOrNot and kc2-io/mpd-bot. Continue that request rather than restarting architecture or waiting for a ChatGPT plugin.
+
+1. Check local GitHub CLI availability/authentication using safe status commands. If authentication is missing, guide the user through the normal local browser login; do not request or print credentials. Check the authenticated identity and authorization for the named owner and reference repositories. Do not assume CLI authentication gives organization or signing-provider permissions.
+2. Inspect actual current workflows, environment/variable/secret NAMES and repository settings in the two reference repositories. Compare them against this prepared setup; do not claim parity until verified. Read-only comparison: no changes to those repositories and no attempts to extract secret values.
+3. Verify whether kc2-io/MPD_Viewer exists and whether it is private. Lack of read permission is not proof of absence. Create it privately only when appropriate; inspect/reconcile existing state without overwriting, deleting, forcing history, or making anything public. Verify privacy before pushing any source. Repository creation/configuration and pushing reviewed setup commits are authorized; honor tool approval prompts.
+4. Inspect bootstrap scripts before running them. Their create path refuses existing origin/dirty state and is not a general resume command. Resolve real dependency/toolchain/action pins, commit reviewed changes, fix native compile/test failures in small changes, then apply the appropriate setup steps and verify remote state. Never fabricate Cargo.lock or action hashes to clear checks.
+5. Configure least-privilege signing/release environments using authorized existing signing resources after comparing the references. Prepare missing credential/trust steps for the user to complete in the appropriate provider UI. Do not buy services, change billing, broaden unrelated secret access, or copy credential values into files/logs/chat. Record missing prerequisites precisely.
+6. Run/inspect actual CI and obtain build artifacts. Distinguish unsigned diagnostics from signed releases. Keep release enable flags off until native/signing/protection gates pass. Do not push a release tag or publish until a specific reviewed prerelease is authorized, and never work around failures by removing security gates. Do not deploy the website.
+
+Use the original feature packet for subsequent application work, not as an excuse to repeat completed branding or start a large refactor during setup. The later hosted-source addendum supersedes the earlier assumption of a three-file deployed wrapper/native-only grid approach. Protocol alignment precedes chat and grid. Monitoring authorization and viewer website sign-in remain separate; Turbo behavior is unverified.
+
+Use a high-reasoning coordinator for architecture/security decisions and scoped implementation/test workers where helpful. Verify available model IDs/effort controls in this client instead of copying old examples blindly. Limit to three workers and two disjoint production-code writers; use file leases and separate worktrees. Only the coordinator integrates changes. Avoid concurrent edits to native lifecycle, protocol, permissions and workflow files.
+
+Begin by reporting the actual local/GitHub capability status and a brief next-step plan, then perform the authorized work. Continue independent build/code tasks if a credential step is blocked. Record executed tests, native build results, actual remote writes, signing state and remaining gates separately. Finish with verified repository/run/artifact references, not promises or simulated successes.

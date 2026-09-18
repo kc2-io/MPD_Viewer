@@ -1,0 +1,245 @@
+0.1.0
+TAP version 13
+# Subtest: snapshot: contains one inline application plus Twitch and Cloudflare scripts
+ok 1 - snapshot: contains one inline application plus Twitch and Cloudflare scripts
+  ---
+  duration_ms: 1.343953
+  type: 'test'
+  ...
+# Subtest: snapshot integrity: manifest hash agrees with reconstructed HTML
+ok 2 - snapshot integrity: manifest hash agrees with reconstructed HTML
+  ---
+  duration_ms: 1.214579
+  type: 'test'
+  ...
+# Subtest: defaults: empty root boot, 50 percent volume and pauseInactive enabled
+ok 3 - defaults: empty root boot, 50 percent volume and pauseInactive enabled
+  ---
+  duration_ms: 2.669959
+  type: 'test'
+  ...
+# Subtest: query bootstrap creates channels and derives parent from actual hostname
+ok 4 - query bootstrap creates channels and derives parent from actual hostname
+  ---
+  duration_ms: 2.827527
+  type: 'test'
+  ...
+# Subtest: known incompatibility: uploaded POC fragment does not bootstrap any players
+ok 5 - known incompatibility: uploaded POC fragment does not bootstrap any players
+  ---
+  duration_ms: 1.234678
+  type: 'test'
+  ...
+# Subtest: known incompatibility: query volume=25 clamps to 1 rather than 25 percent
+ok 6 - known incompatibility: query volume=25 clamps to 1 rather than 25 percent
+  ---
+  duration_ms: 1.046826
+  type: 'test'
+  ...
+# Subtest: default behavior: only active channel is playing and unmuted after READY
+ok 7 - default behavior: only active channel is playing and unmuted after READY
+  ---
+  duration_ms: 1.515442
+  type: 'test'
+  ...
+# Subtest: pauseInactive=false at bootstrap requests SDK autoplay for each constructed player
+ok 8 - pauseInactive=false at bootstrap requests SDK autoplay for each constructed player
+  ---
+  duration_ms: 2.52477
+  type: 'test'
+  ...
+# Subtest: known behavior: disabling pauseInactive later does not resume an already paused channel
+ok 9 - known behavior: disabling pauseInactive later does not resume an already paused channel
+  ---
+  duration_ms: 1.81978
+  type: 'test'
+  ...
+# Subtest: known behavior: volume change resumes a manually paused active player
+ok 10 - known behavior: volume change resumes a manually paused active player
+  ---
+  duration_ms: 1.179316
+  type: 'test'
+  ...
+# Subtest: known defect: second add lays out using one registered player
+ok 11 - known defect: second add lays out using one registered player
+  ---
+  duration_ms: 1.008468
+  type: 'test'
+  ...
+# Subtest: retained setChannels entries keep their player instance but are not reordered
+ok 12 - retained setChannels entries keep their player instance but are not reordered
+  ---
+  duration_ms: 1.02255
+  type: 'test'
+  ...
+# Subtest: known gap: removing active channel alone leaves no active replacement
+ok 13 - known gap: removing active channel alone leaves no active replacement
+  ---
+  duration_ms: 0.825333
+  type: 'test'
+  ...
+# Subtest: known security gap: inbound command accepts an unrelated origin and source
+ok 14 - known security gap: inbound command accepts an unrelated origin and source
+  ---
+  duration_ms: 0.768597
+  type: 'test'
+  ...
+# Subtest: known validation gap: nonnumeric volume produces NaN
+ok 15 - known validation gap: nonnumeric volume produces NaN
+  ---
+  duration_ms: 0.869129
+  type: 'test'
+  ...
+# Subtest: known validation gap: nonarray setChannels throws
+ok 16 - known validation gap: nonarray setChannels throws
+  ---
+  duration_ms: 1.306677
+  type: 'test'
+  ...
+# Subtest: known protocol mismatch: no POC audio function or Tauri command invocation
+ok 17 - known protocol mismatch: no POC audio function or Tauri command invocation
+  ---
+  duration_ms: 1.137954
+  type: 'test'
+  ...
+# Subtest: snapshot has no chat iframe or local dependency files
+ok 18 - snapshot has no chat iframe or local dependency files
+  ---
+  duration_ms: 0.455576
+  type: 'test'
+  ...
+# Subtest: only fresh actual PLAYING reports count as observed playback
+ok 19 - only fresh actual PLAYING reports count as observed playback
+  ---
+  duration_ms: 1.947582
+  type: 'test'
+  ...
+# Subtest: missing telemetry is unknown, not playing
+ok 20 - missing telemetry is unknown, not playing
+  ---
+  duration_ms: 0.359131
+  type: 'test'
+  ...
+# Subtest: stale telemetry stops being counted
+ok 21 - stale telemetry stops being counted
+  ---
+  duration_ms: 0.169024
+  type: 'test'
+  ...
+# Subtest: closing windows retain capacity but are not counted as playing
+ok 22 - closing windows retain capacity but are not counted as playing
+  ---
+  duration_ms: 0.151528
+  type: 'test'
+  ...
+# Subtest: blocked playback requests an honest user gesture
+ok 23 - blocked playback requests an honest user gesture
+  ---
+  duration_ms: 0.157487
+  type: 'test'
+  ...
+# Subtest: demo playback is explicitly labeled simulated
+ok 24 - demo playback is explicitly labeled simulated
+  ---
+  duration_ms: 0.17272
+  type: 'test'
+  ...
+# Subtest: offline player is not confused with authoritative live monitoring
+ok 25 - offline player is not confused with authoritative live monitoring
+  ---
+  duration_ms: 0.155595
+  type: 'test'
+  ...
+# Subtest: paused state is preserved
+ok 26 - paused state is preserved
+  ---
+  duration_ms: 0.134062
+  type: 'test'
+  ...
+# Subtest: unknown SDK state is not claimed to be playing
+ok 27 - unknown SDK state is not claimed to be playing
+  ---
+  duration_ms: 0.377118
+  type: 'test'
+  ...
+# Subtest: last check handles unknown
+ok 28 - last check handles unknown
+  ---
+  duration_ms: 0.512782
+  type: 'test'
+  ...
+# Subtest: last check renders seconds
+ok 29 - last check renders seconds
+  ---
+  duration_ms: 0.183646
+  type: 'test'
+  ...
+# Subtest: last check renders minutes
+ok 30 - last check renders minutes
+  ---
+  duration_ms: 0.170427
+  type: 'test'
+  ...
+1..30
+# tests 30
+# suites 0
+# pass 30
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 95.949471
+test_compiled_origin_and_permission_stay_in_sync (__main__.ConfigurationTests.test_compiled_origin_and_permission_stay_in_sync) ... ok
+test_hosted_configuration_updates_both_files_without_manager_access (__main__.ConfigurationTests.test_hosted_configuration_updates_both_files_without_manager_access) ... ok
+test_https_directory (__main__.ConfigurationTests.test_https_directory) ... ok
+test_https_root_directory (__main__.ConfigurationTests.test_https_root_directory) ... ok
+test_https_wrapper (__main__.ConfigurationTests.test_https_wrapper) ... ok
+test_invalid_origin_does_not_modify_configuration (__main__.ConfigurationTests.test_invalid_origin_does_not_modify_configuration) ... ok
+test_local_reset_removes_remote_host_permission (__main__.ConfigurationTests.test_local_reset_removes_remote_host_permission) ... ok
+test_manager_has_no_remote_origins (__main__.ConfigurationTests.test_manager_has_no_remote_origins) ... ok
+test_registered_client_id_source_configuration (__main__.ConfigurationTests.test_registered_client_id_source_configuration) ... ok
+test_reject_ambiguous_relative_asset_path (__main__.ConfigurationTests.test_reject_ambiguous_relative_asset_path) ... ok
+test_reject_credentials (__main__.ConfigurationTests.test_reject_credentials) ... ok
+test_reject_insecure (__main__.ConfigurationTests.test_reject_insecure) ... ok
+test_reject_query_or_fragment (__main__.ConfigurationTests.test_reject_query_or_fragment) ... ok
+test_remote_player_only_gets_advisory_reporting (__main__.ConfigurationTests.test_remote_player_only_gets_advisory_reporting) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.005s
+
+OK
+test_action_ref_resolution_is_from_tag (release_test.ReleaseTests.test_action_ref_resolution_is_from_tag) ... ok
+test_action_rejects_noncommit (release_test.ReleaseTests.test_action_rejects_noncommit) ... ok
+test_annotated_action_tag_peels (release_test.ReleaseTests.test_annotated_action_tag_peels) ... ok
+test_asset_names_unique_and_versioned (release_test.ReleaseTests.test_asset_names_unique_and_versioned) ... ok
+test_bootstrap_only_private_creation (release_test.ReleaseTests.test_bootstrap_only_private_creation) ... ok
+test_ci_artifact_explicitly_unsigned (release_test.ReleaseTests.test_ci_artifact_explicitly_unsigned) ... ok
+test_configuration_errors_never_include_values (release_test.ReleaseTests.test_configuration_errors_never_include_values) ... ok
+test_disable_is_default (release_test.ReleaseTests.test_disable_is_default) ... ok
+test_empty_lock_stops_release (release_test.ReleaseTests.test_empty_lock_stops_release) ... ok
+test_linux_refuses_missing_bundle (release_test.ReleaseTests.test_linux_refuses_missing_bundle) ... ok
+test_linux_rejects_ambiguous_bundle (release_test.ReleaseTests.test_linux_rejects_ambiguous_bundle) ... ok
+test_matching_versions (release_test.ReleaseTests.test_matching_versions) ... ok
+test_missing_lock_stops_release (release_test.ReleaseTests.test_missing_lock_stops_release) ... ok
+test_native_ci_has_no_signing_or_oidc (release_test.ReleaseTests.test_native_ci_has_no_signing_or_oidc) ... ok
+test_no_unsafe_publish_paths (release_test.ReleaseTests.test_no_unsafe_publish_paths) ... ok
+test_no_workflow_deploys_the_parent (release_test.ReleaseTests.test_no_workflow_deploys_the_parent) ... ok
+test_only_signer_can_request_oidc (release_test.ReleaseTests.test_only_signer_can_request_oidc) ... ok
+test_pr_cannot_sign (release_test.ReleaseTests.test_pr_cannot_sign) ... ok
+test_preserve_import_snapshot (release_test.ReleaseTests.test_preserve_import_snapshot) ... ok
+test_public_repo_never_releases (release_test.ReleaseTests.test_public_repo_never_releases) ... ok
+test_publication_rechecks_live_private_status (release_test.ReleaseTests.test_publication_rechecks_live_private_status) ... ok
+test_reject_unsafe_or_ambiguous_tags (release_test.ReleaseTests.test_reject_unsafe_or_ambiguous_tags) ... ok
+test_release_has_no_unsafe_pr_trigger (release_test.ReleaseTests.test_release_has_no_unsafe_pr_trigger) ... ok
+test_sha256 (release_test.ReleaseTests.test_sha256) ... ok
+test_signing_failure_not_ignored (release_test.ReleaseTests.test_signing_failure_not_ignored) ... ok
+test_stable_needs_its_own_enable (release_test.ReleaseTests.test_stable_needs_its_own_enable) ... ok
+test_supported_tags (release_test.ReleaseTests.test_supported_tags) ... ok
+test_untracked_lock_stops_release (release_test.ReleaseTests.test_untracked_lock_stops_release) ... ok
+test_version_mismatch (release_test.ReleaseTests.test_version_mismatch) ... ok
+test_windows_zip_preserves_input_bytes (release_test.ReleaseTests.test_windows_zip_preserves_input_bytes) ... ok
+
+----------------------------------------------------------------------
+Ran 30 tests in 0.016s
+
+OK

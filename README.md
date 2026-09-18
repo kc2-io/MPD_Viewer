@@ -14,6 +14,11 @@ The supplied deployed host and native POC use different bootstrap/audio/telemetr
 
 ## Start here
 
+For the Codex continuation, open this directory as a local project and read
+[CODEX-START-HERE.md](CODEX-START-HERE.md), then use
+[the first-chat prompt](CODEX-START-PROMPT.md). Full context and existing Git
+history are included; no remote or authentication is installed by this handoff.
+
 - [GitHub setup and reference-workflow comparison](docs/setup/GITHUB-SETUP.md)
 - [Signing configuration](docs/setup/SIGNING.md)
 - [Tags, release gates and expected artifacts](docs/setup/RELEASING.md)
