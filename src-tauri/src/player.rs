@@ -47,19 +47,45 @@ impl Host {
     pub fn base(&self, demo: bool) -> &Url {
         if demo { &self.local } else { self.production.as_ref().unwrap_or(&self.local) }
     }
-    pub fn open(&self, app: &AppHandle, login: &str, id: u64, settings: &Settings) -> Result<String, String> {
+    fn player_url(&self, login: &str, id: u64, settings: &Settings) -> Url {
         let mut url = self.base(settings.demo).clone();
-        let fragment = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("channel", login).append_pair("session", &id.to_string())
-            .append_pair("volume", &settings.volume.to_string()).append_pair("muted", &settings.muted.to_string())
-            .append_pair("demo", &settings.demo.to_string()).finish();
-        url.set_fragment(Some(&fragment));
+        if !settings.demo && self.production.is_some() {
+            // The deployed host consumes queries and fractional volume, unlike
+            // the bundled demo wrapper. An invalid channel sentinel keeps the
+            // legacy active-player handler muted until the native adapter sets
+            // volume BEFORE unmuting. It never selects another channel.
+            url.set_fragment(None);
+            let retained: Vec<(String, String)> = url.query_pairs()
+                .filter(|(key, _)| !matches!(key.as_ref(), "channel" | "active" | "volume" | "pauseInactive"))
+                .map(|(key, value)| (key.into_owned(), value.into_owned())).collect();
+            url.query_pairs_mut().clear().extend_pairs(retained)
+                .append_pair("channel", login).append_pair("active", "__mpd-native-pending__")
+                .append_pair("volume", &(f64::from(settings.volume) / 100.0).to_string())
+                .append_pair("pauseInactive", "false");
+        } else {
+            let fragment = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("channel", login).append_pair("session", &id.to_string())
+                .append_pair("volume", &settings.volume.to_string()).append_pair("muted", &settings.muted.to_string())
+                .append_pair("demo", &settings.demo.to_string()).finish();
+            url.set_fragment(Some(&fragment));
+        }
+        url
+    }
+    pub fn open(&self, app: &AppHandle, login: &str, id: u64, settings: &Settings) -> Result<String, String> {
+        let url = self.player_url(login, id, settings);
+        let adapter = if !settings.demo && self.production.is_some() {
+            format!("({})({});", include_str!("../hosted-player-adapter.js"), serde_json::json!({
+                "origin": url.origin().ascii_serialization(), "path": url.path(),
+                "channel": login, "session": id, "volume": settings.volume, "muted": settings.muted
+            }))
+        } else { String::new() };
         let label = format!("player-{id}");
         let origin = url.origin();
         WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
             .title(format!("{login} · MPD Viewer{}", if settings.demo { " · SIMULATED" } else { "" }))
             .inner_size(820.0, 550.0).min_inner_size(430.0, 480.0)
             .focused(false)
+            .initialization_script(adapter)
             .on_navigation(move |target| {
                 // No navigation to arbitrary sites and no OS custom-scheme launches.
                 // Twitch's own player origin is also allowed for iframe navigation.
@@ -78,4 +104,42 @@ pub fn audio(app: &AppHandle, label: &str, settings: &Settings) -> Result<(), St
         window.eval(&script).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn host(production: Option<&str>) -> Host {
+        Host { local: Url::parse("http://localhost:4321/index.html").unwrap(),
+            production: production.map(|url| Url::parse(url).unwrap()) }
+    }
+    #[test]
+    fn hosted_bootstrap_replaces_old_assignments_and_converts_volume() {
+        let host = host(Some("https://parent.mpdviewer.com/?channel=old&channel=other&active=old&volume=1&pauseInactive=true&keep=yes#old"));
+        let settings = Settings { demo: false, volume: 25, muted: true, ..Settings::default() };
+        let url = host.player_url("alpha", 7, &settings);
+        let pairs: Vec<_> = url.query_pairs().collect();
+        assert_eq!(pairs.iter().filter(|(k, _)| k == "channel").count(), 1);
+        for (key, value) in [("channel", "alpha"), ("active", "__mpd-native-pending__"),
+            ("volume", "0.25"), ("pauseInactive", "false"), ("keep", "yes")] {
+            assert!(pairs.iter().any(|(k, v)| k == key && v == value));
+        }
+        assert!(url.fragment().is_none());
+        assert!(mpd_core::normalize_login("__mpd-native-pending__").is_err());
+    }
+    #[test]
+    fn demo_keeps_bundled_fragment_protocol() {
+        let host = host(Some("https://parent.mpdviewer.com/"));
+        let url = host.player_url("alpha", 7, &Settings::default());
+        assert_eq!(url.host_str(), Some("localhost"));
+        assert_eq!(url.fragment(), Some("channel=alpha&session=7&volume=25&muted=false&demo=true"));
+    }
+    #[test]
+    fn local_live_fallback_keeps_bundled_protocol() {
+        let host = host(None);
+        let settings = Settings { demo: false, ..Settings::default() };
+        let url = host.player_url("alpha", 7, &settings);
+        assert_eq!(url.host_str(), Some("localhost"));
+        assert_eq!(url.fragment(), Some("channel=alpha&session=7&volume=25&muted=false&demo=false"));
+    }
 }
