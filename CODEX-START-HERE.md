@@ -1,5 +1,7 @@
 # MPD Viewer — start in Codex
 
+> Current connected setup: [docs/setup/CONTINUATION-2026-09-18.md](docs/setup/CONTINUATION-2026-09-18.md). The earlier handoff status below is historical; releases remain disabled.
+
 Prepared: September 18, 2026. This is a source-and-context handoff, not a deployed application or completed GitHub setup.
 
 ## Open the project

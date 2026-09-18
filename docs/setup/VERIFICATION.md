@@ -1,5 +1,7 @@
 # Setup verification record
 
+> Current connected setup: [CONTINUATION-2026-09-18.md](CONTINUATION-2026-09-18.md). The earlier handoff status below is historical; releases remain disabled.
+
 Prepared September 17, 2026 (America/Los_Angeles). This record concerns the new repository/CI/signing/release source, not the verification reports from earlier POC turns.
 
 ## What was actually done

@@ -1,0 +1,51 @@
+{
+  "run_id": "35386136378",
+  "url": "https://github.com/kc2-io/MPD_Viewer/actions/runs/35386136378",
+  "commit": "0ed080a706838fb292fa652d6833607db79d4294",
+  "artifacts": [
+    {
+      "platform": "Linux-x64",
+      "filename": "MPD_Viewer-Linux-x64-0ed080a-UNSIGNED.zip",
+      "sha256": "e0c2da41aa69679dbc9553255e9f7b668a1742fd06dd3274fc59e8368424cd90",
+      "bytes": 6225742,
+      "artifact_id": 10565115614,
+      "github_digest": "sha256:5f0b824b2648cfe03ce87e7111eeeb9b035d3f94324de563c29322f90becd842",
+      "artifact_url": "https://github.com/kc2-io/MPD_Viewer/actions/runs/35386136378/artifacts/10565115614",
+      "binary_sha256": "4b6dfbd5bc2088ddaf1fbd2335324b218798abad7bcf5bf57dda0565bccc069a",
+      "architecture_verified": true
+    },
+    {
+      "platform": "macOS-x64",
+      "filename": "MPD_Viewer-macOS-x64-0ed080a-UNSIGNED.zip",
+      "sha256": "88c5ad428013341c7693ba903cd86ebd78bbacdf1da53e62a9e44683138ff5aa",
+      "bytes": 5920437,
+      "artifact_id": 10564725652,
+      "github_digest": "sha256:a715fb635d8491947ea8efd1a324185dafe706508399d60dcf076e422c7f19d2",
+      "artifact_url": "https://github.com/kc2-io/MPD_Viewer/actions/runs/35386136378/artifacts/10564725652",
+      "binary_sha256": "97b629b4c3c7eefd2cf9da5f453acdef16e1df8baf7292aa1285a919020dcc1e",
+      "architecture_verified": true
+    },
+    {
+      "platform": "Windows-x64",
+      "filename": "MPD_Viewer-Windows-x64-0ed080a-UNSIGNED.zip",
+      "sha256": "3e6661f54adbc0f446a7b6fc6f6f48380c4bba56c3179caeb2e41ef91bc9f474",
+      "bytes": 5457890,
+      "artifact_id": 10564492304,
+      "github_digest": "sha256:72f2eeaeebddcc6b032389ae8a8631b255764693c17c62f28fce18316d0ac16e",
+      "artifact_url": "https://github.com/kc2-io/MPD_Viewer/actions/runs/35386136378/artifacts/10564492304",
+      "binary_sha256": "d1949ae2a4ad8c1401bb07b8676230be3377c00363e1351ed565683ee99620d1",
+      "architecture_verified": true
+    },
+    {
+      "platform": "macOS-arm64",
+      "filename": "MPD_Viewer-macOS-arm64-0ed080a-UNSIGNED.zip",
+      "sha256": "027264eea2a5723944e67cea8ca702c8aa0972498c9ccd44a1f0afb0bd9d8ec0",
+      "bytes": 5692622,
+      "artifact_id": 10563684155,
+      "github_digest": "sha256:7fcbdd1b7ab99c362e38eb30a207012198fa34acaef6c72cc60a75b26182656a",
+      "artifact_url": "https://github.com/kc2-io/MPD_Viewer/actions/runs/35386136378/artifacts/10563684155",
+      "binary_sha256": "1d5f32e7088db20973d867b89eac36138ee9b60a39aeb31f77a2d08d3673a4e5",
+      "architecture_verified": true
+    }
+  ]
+}
