@@ -50,21 +50,48 @@ trip, and environment approval requirements remain intact.
 
 ## Signing and release work still required
 
-Windows uses the existing Azure Artifact Signing service also used by BotOrNot
-and mpd-bot. The references share a signing profile but use distinct application
-IDs. MPD Viewer needs an authorized, narrowly scoped identity and exact OIDC trust:
+Windows reuses the existing Azure Artifact Signing account `MPD-Artifacts` and
+certificate profile `mpd-bot-public`, also used by the read-only reference repos.
+The Azure login succeeded. The live profile is active and its publisher matches
+the independently verified reference executable.
+
+The dedicated single-tenant application `mpd-viewer-github-signing` and its
+service principal were created without passwords, certificate credentials, or
+requested Graph/API permissions. The application client ID is
+`39ca9c57-3bf4-47ea-b5ae-69fe86f8ad8b`; all seven nonsecret Windows environment variables,
+including `AZURE_CLIENT_ID`, were read back from GitHub.
+
+Exactly one federated credential was created and verified:
 
 ```text
 issuer: https://token.actions.githubusercontent.com
 audience: api://AzureADTokenExchange
-subject: repo:kc2-io/MPD_Viewer:environment:release-windows
+subject: repo:kc2-io@157092316/MPD_Viewer@1376346660:environment:release-windows
 ```
 
-The provider's Certificate Profile Signer role should be scoped to the existing
-certificate profile. No new paid signing account/profile, broad organization
-access, or changes to reference-repository trust are authorized. Environment
-variables and provider trust must be verified separately; their presence alone
-does not prove an actual signed artifact or working OIDC exchange.
+The GitHub OIDC settings API reports `use_default=true`,
+`use_immutable_subject=true`, and the repository-ID-bearing prefix above. This
+supersedes the name-only subject in the earlier handoff. GitHub's
+[immutable subject format](https://docs.github.com/en/actions/reference/security/oidc)
+must be matched exactly; no repository OIDC settings were changed.
+
+The **Artifact Signing Certificate Profile Signer** role was assigned only at:
+
+```text
+/subscriptions/73209fda-257d-4d9e-beae-4b5892d95d90/resourceGroups/MPD-Artifacts/providers/Microsoft.CodeSigning/codeSigningAccounts/MPD-Artifacts/certificateProfiles/mpd-bot-public
+```
+
+Azure role-assignment readback found exactly this one assignment for the new
+principal in the verified subscription. The active Azure tenant/subscription,
+GitHub release-environment protections, signing endpoint, publisher and disabled
+release flags were checked before writes. The provisioning script received
+independent security review. No paid signing resources, client secrets, broad
+roles, or reference-repository trust changes were created.
+
+**Configuration is verified; actual OIDC exchange and MPD Viewer signing are
+still untested.** No signing job or release tag was launched to bypass the
+release gates. A successful future signed artifact must independently pass
+publisher, signature and timestamp verification.
 
 The owner confirmed **no Apple signing credentials are available yet**. The
 existing macOS Developer ID/notarization and complete release-asset gates remain
@@ -84,6 +111,7 @@ change preventing publication. These helper tests use mocks and are not evidence
 of a real signing run or release upload.
 
 The existing four-platform build/artifact result is recorded in
-`CONTINUATION-2026-09-18.md`; the pull request for this policy change must also
-satisfy all five required checks before merge. No application source, dependency,
+`CONTINUATION-2026-09-18.md`; [policy PR #5](https://github.com/kc2-io/MPD_Viewer/pull/5) passed all five
+required checks in [run 35389308958](https://github.com/kc2-io/MPD_Viewer/actions/runs/35389308958)
+and merged as `1b12fc4e5cdab6c7f1907d75022b2c59c941c745`. No application source, dependency,
 branding, stored identity, or hosted HTML changes are included.

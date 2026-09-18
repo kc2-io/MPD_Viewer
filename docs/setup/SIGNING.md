@@ -1,6 +1,6 @@
-# Signing configuration — not yet provisioned
+# Signing configuration — Azure trust provisioned; signing untested
 
-The workflow code exists; signing credentials, provider trust, native signatures and notarization have **not** been configured or tested in this handoff. Secrets must be entered in the appropriate provider/secret settings, never pasted into chat or committed.
+Azure application/service-principal creation, exact GitHub OIDC trust, the existing certificate-profile-scoped signer role, and all seven Windows environment variables were provisioned and read back on September 18, 2026. See [the current setup record](PUBLIC-SETUP-2026-09-18.md). Actual GitHub OIDC exchange and MPD Viewer signing have **not** been tested. Apple credentials are unavailable; macOS signing/notarization remain pending. Secrets must be entered in the appropriate provider/secret settings, never pasted into chat or committed.
 
 ## Windows: Azure Artifact Signing + OIDC
 
@@ -25,10 +25,10 @@ Create a narrowly scoped Entra federated identity credential through an authoriz
 ```text
 issuer:   https://token.actions.githubusercontent.com
 audience: api://AzureADTokenExchange
-subject:  repo:kc2-io/MPD_Viewer:environment:release-windows
+subject:  repo:kc2-io@157092316/MPD_Viewer@1376346660:environment:release-windows
 ```
 
-Use the actual owner if changed. An environment-based OIDC subject does not contain the tag; the GitHub environment's tag deployment policy, release workflow gates, and trusted main ancestry jointly restrict the context. Assign the **Artifact Signing Certificate Profile Signer** role at the narrow required profile/account scope. Do not broaden existing BotOrNot trust to arbitrary repositories or refs.
+The live repository OIDC API reports immutable subjects and the prefix above; its owner and repository IDs were also verified. Do not substitute the older name-only subject. Recheck the live OIDC configuration if repository identity changes. An environment-based OIDC subject does not contain the tag; the GitHub environment's tag deployment policy, release workflow gates, and trusted main ancestry jointly restrict the context. Assign the **Artifact Signing Certificate Profile Signer** role at the narrow required profile/account scope. Do not broaden existing BotOrNot trust to arbitrary repositories or refs.
 
 Only the Windows signing job requests an OIDC token. It receives the binary from the same workflow run, signs and timestamps it, then independently checks Authenticode status, exact publisher subject and timestamp before making the ZIP. No compilation runs after signing. No MSI/NSIS installer is produced in this first setup.
 
