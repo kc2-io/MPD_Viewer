@@ -1,0 +1,268 @@
+name: Tagged release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  gate:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - id: gate
+        env:
+          RELEASES_ENABLED: ${{ vars.RELEASES_ENABLED }}
+          STABLE_RELEASES_ENABLED: ${{ vars.STABLE_RELEASES_ENABLED }}
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python scripts/release-tools.py gate
+      - run: bash scripts/ci-check.sh
+  build:
+    name: Release build (${{ matrix.platform }})
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            platform: Windows-x64
+          - os: macos-15
+            platform: macOS-arm64
+          - os: macos-15-intel
+            platform: macOS-x64
+          - os: ubuntu-22.04
+            platform: Linux-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - if: runner.os == 'Linux'
+        run: bash scripts/install-linux-deps.sh
+      - name: Toolchain, test, and build (no signing credentials)
+        shell: bash
+        run: |
+          rustup show
+          python scripts/verify-native-host.py "${{ matrix.platform }}"
+          cargo test --locked --workspace --features mpd-tabber/custom-protocol
+          cargo build --locked --release -p mpd-tabber --features custom-protocol
+      - name: Preserve executable permissions in transfer
+        shell: bash
+        run: |
+          mkdir -p .release-work
+          if [ "$RUNNER_OS" = Windows ]; then
+            tar -czf .release-work/native.tar.gz -C target/release mpd-tabber.exe
+          else
+            tar -czf .release-work/native.tar.gz -C target/release mpd-tabber
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: internal-native-${{ matrix.platform }}
+          path: .release-work/native.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+  windows:
+    name: Sign and package Windows x64
+    needs: [gate, build]
+    runs-on: windows-2025
+    environment: release-windows
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v8
+        with:
+          name: internal-native-Windows-x64
+          path: .release-work
+      - name: Extract this run's executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .release-work/windows | Out-Null
+          tar -xzf .release-work/native.tar.gz -C .release-work/windows
+          if ($LASTEXITCODE -ne 0) { throw 'Native artifact extraction failed.' }
+      - name: Require signing settings
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_CERTIFICATE_PROFILE: ${{ vars.AZURE_CERTIFICATE_PROFILE }}
+          WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
+        run: python scripts/release-tools.py require-env AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_SIGNING_ENDPOINT AZURE_SIGNING_ACCOUNT AZURE_CERTIFICATE_PROFILE WINDOWS_SIGNER_SUBJECT
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Authenticode sign using Azure Artifact Signing
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERTIFICATE_PROFILE }}
+          files-folder: ${{ github.workspace }}\.release-work\windows
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+      - name: Verify signature, expected publisher, and timestamp
+        shell: pwsh
+        env:
+          EXPECTED_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
+        run: ./scripts/verify-windows-signature.ps1 -Path .release-work/windows/mpd-tabber.exe
+      - name: Package signed executable (never rebuild after signing)
+        env:
+          RELEASE_VERSION: ${{ needs.gate.outputs.version }}
+        run: python scripts/release-tools.py package-windows
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-Windows-x64
+          path: .release-assets/final/*
+          if-no-files-found: error
+          retention-days: 7
+  macos:
+    name: Sign and notarize ${{ matrix.platform }}
+    needs: [gate, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: macOS-arm64
+          - os: macos-15-intel
+            platform: macOS-x64
+    runs-on: ${{ matrix.os }}
+    environment: release-macos
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install exact packaging tool (before credentials)
+        run: cargo install tauri-cli --version 2.11.4 --locked
+      - uses: actions/download-artifact@v8
+        with:
+          name: internal-native-${{ matrix.platform }}
+          path: .release-work
+      - run: mkdir -p target/release && tar -xzf .release-work/native.tar.gz -C target/release
+      - name: Sign app, notarize and staple app and disk image
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          NOTARY_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ vars.APPLE_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ vars.APPLE_API_ISSUER }}
+          RELEASE_VERSION: ${{ needs.gate.outputs.version }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+        run: python scripts/sign-macos.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform }}
+          path: .release-assets/final/*
+          if-no-files-found: error
+          retention-days: 7
+  linux:
+    name: Package Linux x64
+    needs: [gate, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: bash scripts/install-linux-deps.sh
+      - run: cargo install tauri-cli --version 2.11.4 --locked
+      - uses: actions/download-artifact@v8
+        with:
+          name: internal-native-Linux-x64
+          path: .release-work
+      - run: mkdir -p target/release && tar -xzf .release-work/native.tar.gz -C target/release
+      - name: Bundle application, not a bare Linux executable
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: cargo tauri bundle --bundles deb,appimage
+      - name: Collect Linux packages
+        env:
+          RELEASE_VERSION: ${{ needs.gate.outputs.version }}
+        run: python scripts/release-tools.py package-linux
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-Linux-x64
+          path: .release-assets/final/*
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    name: Publish GitHub release
+    needs: [gate, windows, macos, linux]
+    runs-on: ubuntu-24.04
+    environment: release-publish
+    permissions:
+      contents: write
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: .release-assets/final
+          merge-multiple: true
+      - name: Verify exact assets, hash final bytes, publish only a complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.gate.outputs.version }}
+          GH_REPO: ${{ github.repository }}
+        run: python scripts/release-tools.py publish

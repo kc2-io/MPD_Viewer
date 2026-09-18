@@ -1,0 +1,33 @@
+# Resolves dependencies only; does not sign, publish, or bypass review by auto-pushing.
+name: Bootstrap dependency lock
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  resolve:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: rustup show
+      - name: Resolve initial Cargo.lock and pin Rust
+        shell: bash
+        run: |
+          test ! -f Cargo.lock || { echo 'A lockfile exists; use a reviewed dependency PR.'; exit 1; }
+          cargo generate-lockfile
+          python scripts/release-tools.py pin-rust
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MPD_Viewer-initial-lock-REVIEW-AND-COMMIT
+          path: |
+            Cargo.lock
+            rust-toolchain.toml
+          if-no-files-found: error
+          retention-days: 7

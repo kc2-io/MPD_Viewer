@@ -57,7 +57,7 @@ impl Host {
         let label = format!("player-{id}");
         let origin = url.origin();
         WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
-            .title(format!("{login} · MPD Tabber{}", if settings.demo { " · SIMULATED" } else { "" }))
+            .title(format!("{login} · MPD Viewer{}", if settings.demo { " · SIMULATED" } else { "" }))
             .inner_size(820.0, 550.0).min_inner_size(430.0, 480.0)
             .focused(false)
             .on_navigation(move |target| {

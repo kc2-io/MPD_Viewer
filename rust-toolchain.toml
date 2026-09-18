@@ -1,0 +1,5 @@
+[toolchain]
+# Bootstrap pins this to the resolved exact version before enabling releases.
+channel = "stable"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

@@ -1,0 +1,77 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    name: Source checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: bash scripts/ci-check.sh
+  native:
+    name: Native (${{ matrix.platform }})
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            platform: Windows-x64
+          - os: macos-15
+            platform: macOS-arm64
+          - os: macos-15-intel
+            platform: macOS-x64
+          - os: ubuntu-22.04
+            platform: Linux-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - if: runner.os == 'Linux'
+        run: bash scripts/install-linux-deps.sh
+      - name: Toolchain and committed dependencies
+        shell: bash
+        run: |
+          rustup show
+          python scripts/verify-native-host.py "${{ matrix.platform }}"
+          python scripts/release-tools.py require-lock
+          cargo metadata --locked --format-version 1 > /dev/null
+      - name: Compile and test
+        shell: bash
+        run: |
+          cargo test --locked --workspace --features mpd-tabber/custom-protocol
+          cargo clippy --locked --workspace --all-targets --features mpd-tabber/custom-protocol
+          cargo build --locked --release -p mpd-tabber --features custom-protocol
+      - name: Stage UNSIGNED diagnostic binary
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: python scripts/release-tools.py stage-ci --platform "$PLATFORM"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MPD_Viewer-${{ matrix.platform }}-${{ github.event_name == 'pull_request' && format('pr{0}', github.event.number) || github.sha }}-UNSIGNED
+          path: .release-assets/ci/
+          if-no-files-found: error
+          retention-days: 7

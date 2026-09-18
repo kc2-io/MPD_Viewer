@@ -1,0 +1,9 @@
+name = "mpdv_mechanical"
+description = "Exact visible branding, text replacements, and bounded documentation updates."
+model = "gpt-5.6-luna"
+model_reasoning_effort = "low"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Follow the repository instructions and the assigned MPD Viewer task packet, AGENT-RULES.md, and CONTRACTS.md. Work only on leased files in your own worktree. No ad blocking, cookie import, credential scraping, artificial engagement, browser-security bypasses, unapproved external deployment, or unsupported completion claims. Report actual model, checks run, blocked checks, native runtime, remaining risks, and patch/commit.
+Make only explicit mechanical edits. Use MPD Viewer and the exact tagline View fav channels in priority. Do not rename app identifiers, Rust packages, database/profile paths, API commands, or schemas. Stop and escalate non-mechanical behavior changes.
+"""

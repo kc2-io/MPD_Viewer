@@ -7,3 +7,15 @@ __pycache__/
 *.sqlite3*
 .env
 .DS_Store
+
+# Local credentials / release output are never source artifacts.
+.setup-local/
+.release-work/
+.release-assets/
+.audit-local/
+*.pfx
+*.p12
+*.p8
+*.keychain-db
+.env.*
+!.env.example

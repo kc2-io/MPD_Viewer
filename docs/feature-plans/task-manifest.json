@@ -1,0 +1,799 @@
+{
+  "milestone": "MPD Viewer 0.2 feature plan",
+  "status": "planned-not-executed",
+  "baseline_archive_sha256": "542075ad3983cc9b1ae819d3220b2f1838859dbd877bbb534fb37b601200fb07",
+  "maximum_worker_threads": 3,
+  "maximum_production_code_writers": 2,
+  "topological_order": [
+    "MV-000",
+    "MV-010",
+    "MV-020",
+    "MV-040",
+    "MV-001",
+    "MV-021",
+    "MV-030",
+    "MV-022",
+    "MV-031",
+    "MV-041",
+    "MV-042",
+    "MV-043",
+    "MV-044",
+    "MV-050",
+    "MV-051",
+    "MV-060"
+  ],
+  "tasks": [
+    {
+      "id": "MV-000",
+      "title": "Establish current baseline and execution environment",
+      "agent": "mpdv_native",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "depends_on": [],
+      "write_scope": [
+        "docs/mpd-viewer-v0.2/reports/baseline.md",
+        "Cargo.lock (generate only through Cargo; review resolved dependencies)",
+        "Minimal baseline build repairs only under an additional coordinator-approved file lease"
+      ],
+      "read_scope": [
+        "Repository instructions and git status",
+        "Cargo.toml and src-tauri/Cargo.toml",
+        ".github/workflows/check.yml",
+        "src-tauri/player-origin.json",
+        "Existing tests and verification reports",
+        "Actual deployed wrapper and current native build metadata"
+      ],
+      "implementation_steps": [
+        "Identify the user's current branch and uncommitted changes; do not replace it with the reviewed ZIP.",
+        "Compare the targeted files in SOURCE-REVIEW.md and record any local fixes or newer features. Check whether the installed binary corresponds to this checkout.",
+        "Record compiler, target OS/architecture, Tauri/Wry resolved versions, webview runtime, current profile configuration, and actual wrapper assets/headers. Redact account information.",
+        "Run baseline checks, distinguishing old failures from environment blockers. Generate/commit the application lockfile only after real dependency resolution.",
+        "Verify available Codex models/efforts, existing AGENTS rules, and the support matrix. Establish the file-lease ledger."
+      ],
+      "acceptance": [
+        "Current checkout/deployment fingerprint and baseline outcomes are recorded.",
+        "Missing platforms or account-interaction requirements are explicit.",
+        "No user source/settings/profile is overwritten."
+      ],
+      "checks": [
+        "cargo fmt --all -- --check",
+        "cargo test -p mpd-core",
+        "cargo test --workspace --all-targets",
+        "cargo clippy --workspace --all-targets -- -D warnings",
+        "node --test tests/view-model.test.mjs",
+        "python3 tests/configuration_test.py",
+        "Existing browser suites when their documented runtime prerequisites are available"
+      ],
+      "non_goals": [
+        "No feature implementation beyond separately approved baseline repairs.",
+        "Do not repeat prior test counts without rerunning them."
+      ],
+      "reviewer": "mpdv_architect",
+      "status": "planned",
+      "packet": "tasks/MV-000-establish-current-baseline-and-execution-environment.md"
+    },
+    {
+      "id": "MV-010",
+      "title": "Rebrand visibly and replace the tagline exactly",
+      "agent": "mpdv_mechanical",
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "low",
+      "depends_on": [
+        "MV-000"
+      ],
+      "write_scope": [
+        "ui/index.html",
+        "Visible strings only in ui/app.js",
+        "src-tauri/tauri.conf.json (display fields only)",
+        "Title/startup strings only in src-tauri/src/player.rs and main.rs",
+        "player-wrapper/index.html (title only)",
+        "README.md and relevant UI test fixtures"
+      ],
+      "read_scope": [
+        "SOURCE-REVIEW.md branding and persistence entries",
+        "src-tauri/src/storage.rs",
+        "Run scripts and packaging workflow"
+      ],
+      "implementation_steps": [
+        "Use MPD Viewer for visible application branding and the exact tagline View fav channels in priority.",
+        "Set productName to MPD Viewer; preserve POC/build labeling separately.",
+        "Keep the stable bundle ID, config/profile paths, Rust package name, commands, public Client ID, and parent hostname.",
+        "Update literal-dependent fixtures. Add an intentional-legacy-name allowlist; historical verification documents remain accurate.",
+        "Record the optional owner action to rename the Twitch registration display name; do not change the developer account."
+      ],
+      "acceptance": [
+        "Manager, native viewer, installer display fields, and wrapper title show the requested brand.",
+        "Tagline string matches exactly, without rewriting fav to favorite.",
+        "Upgrade fixture retains existing preferences and legacy identifiers."
+      ],
+      "checks": [
+        "UI/title assertions",
+        "Configuration regression tests including unchanged identifier/client ID/origin",
+        "Native upgrade/install display-name check when installers are available"
+      ],
+      "non_goals": [
+        "No global tabber-to-viewer replacement.",
+        "No Rust crate/binary rename or database/profile migration."
+      ],
+      "reviewer": "mpdv_web",
+      "status": "planned",
+      "packet": "tasks/MV-010-rebrand-visibly-and-replace-the-tagline-exactly.md"
+    },
+    {
+      "id": "MV-020",
+      "title": "Diagnose viewer login and the Turbo ad observation",
+      "agent": "mpdv_architect",
+      "model": "gpt-6-astra",
+      "reasoning_effort": "high",
+      "depends_on": [
+        "MV-000"
+      ],
+      "write_scope": [
+        "docs/mpd-viewer-v0.2/reports/auth-turbo-spike.md",
+        "A disposable auth-spike worktree; experimental changes are NOT merged"
+      ],
+      "read_scope": [
+        "src-tauri/src/player.rs",
+        "src-tauri/src/controller.rs: OpenAuth/Connect/Disconnect",
+        "src-tauri/src/main.rs",
+        "player-wrapper/*",
+        "Actual wrapper and runtime evidence",
+        "S1,S2,S5,S7,S8,S16"
+      ],
+      "implementation_steps": [
+        "Reproduce and distinguish monitoring OAuth, normal-browser login, chat identity, and native video session.",
+        "Record the existing deny-all popup and navigation policies; determine the actual profile sharing before proposing new paths.",
+        "Run the comparison matrix in PLAN.md with the user performing login/MFA. Collect only redacted errors and observations.",
+        "Experiment with official login popup handling and related-view configuration. Identify exact required origins and any storage-access limitations.",
+        "Decide whether retaining Twitch.Player plus separate official chat is viable. Recommend combined Twitch.Embed only with evidence and an approved ADR.",
+        "Return a supported, unsupported, or blocked result per runtime. Identify the likely cause only to the confidence supported by evidence."
+      ],
+      "acceptance": [
+        "A reproducible sequence and falsifiable diagnosis are provided, or the exact missing evidence is named.",
+        "No claim that API authorization proves website sign-in or Turbo.",
+        "Popup/profile requirements are concrete inputs to MV-001/MV-021."
+      ],
+      "checks": [
+        "Normal Twitch page vs hosted wrapper vs native viewer comparisons",
+        "Second-viewer and restart checks",
+        "Negative popup/navigation tests",
+        "Actual ads or missing sign-in documented without credentials"
+      ],
+      "non_goals": [
+        "No ad blocking, unsupported APIs, browser-security flags, cookie copying, or password capture.",
+        "No production patches or website deployment from spike code."
+      ],
+      "reviewer": "mpdv_security",
+      "status": "planned",
+      "packet": "tasks/MV-020-diagnose-viewer-login-and-the-turbo-ad-observation.md"
+    },
+    {
+      "id": "MV-040",
+      "title": "Prove native grid and retained-surface moves",
+      "agent": "mpdv_native",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "depends_on": [
+        "MV-000"
+      ],
+      "write_scope": [
+        "docs/mpd-viewer-v0.2/reports/grid-spike.md",
+        "A disposable grid-spike worktree; experimental changes are NOT merged"
+      ],
+      "read_scope": [
+        "src-tauri/src/player.rs",
+        "src-tauri/src/main.rs",
+        "src-tauri/src/controller.rs",
+        "src-tauri/capabilities/*",
+        "src-tauri/Cargo.toml",
+        "S5,S6,S8,S9"
+      ],
+      "implementation_steps": [
+        "Prototype two hosted child webviews inside a separate native grid window; retain the privileged manager separately.",
+        "Check tested Tauri feature/version requirements; record dependency pins and any unsupported OS constraints.",
+        "Test bounds, display scaling, focus, keyboard interaction, popup ownership, minimize/restore, and back-and-forth reparenting.",
+        "Observe whether DOM, playback, session/profile, and chat draft survive a move; never infer this only from a method returning Ok.",
+        "Test the native caller identity needed for telemetry and safe scrolling/clipping of child views.",
+        "Return a capability matrix: retained move, recreate move, grid supported/unsupported. Propose an ADR fallback instead of a broad engine rewrite."
+      ],
+      "acceptance": [
+        "At least one real native reproduction or a specific blocked-environment report.",
+        "No claim that the current unstable API is portable without platform evidence.",
+        "Grid means one window, not tiled standalone windows."
+      ],
+      "checks": [
+        "Native window-count and surface-count observation",
+        "Bidirectional reparent with a paused and playing surface",
+        "Caller identity and cross-surface report attempt",
+        "Low-space/overflow geometry and multi-monitor cases"
+      ],
+      "non_goals": [
+        "No full docking framework.",
+        "No manager permissions on remote grid children.",
+        "No release merge of throwaway prototype."
+      ],
+      "reviewer": "mpdv_architect",
+      "status": "planned",
+      "packet": "tasks/MV-040-prove-native-grid-and-retained-surface-moves.md"
+    },
+    {
+      "id": "MV-001",
+      "title": "Freeze minimal authentication and presentation contracts",
+      "agent": "mpdv_architect",
+      "model": "gpt-6-astra",
+      "reasoning_effort": "high",
+      "depends_on": [
+        "MV-010",
+        "MV-020",
+        "MV-040"
+      ],
+      "write_scope": [
+        "docs/mpd-viewer-v0.2/CONTRACTS.md",
+        "docs/mpd-viewer-v0.2/decisions/ADR-001-viewer-auth.md",
+        "docs/mpd-viewer-v0.2/decisions/ADR-002-presentation.md",
+        "Task file-lease and dependency ledger"
+      ],
+      "read_scope": [
+        "Auth and grid spike reports",
+        "Current native model/controller/player code",
+        "CONTRACTS.md proposals",
+        "S1\u2013S9"
+      ],
+      "implementation_steps": [
+        "Choose the official chat embed implementation, popup/profile strategy, and platform support policy.",
+        "Freeze logical session vs native surface vs container identity, per-surface telemetry binding, and close semantics.",
+        "Define backward-compatible wrapper negotiation and settings migration ownership.",
+        "Decide retained or deliberate recreate mode switching by supported runtime; define rollback and failure visibility.",
+        "Lease shared native, wrapper, and manager paths to nonoverlapping tasks. Keep implementation interfaces small."
+      ],
+      "acceptance": [
+        "Subsequent agents have explicit actions/events/state, permission boundaries, defaults, and error behavior.",
+        "Each unresolved native limitation is a gate or an explicit fallback decision\u2014not an assumption.",
+        "No conflicting simultaneous leases on shared files."
+      ],
+      "checks": [
+        "Review state-transition scenarios in CONTRACTS.md",
+        "Check planned protocol against the existing deny_unknown_fields report",
+        "Independent security and native-engineer review"
+      ],
+      "non_goals": [
+        "No broad refactor in the contract task.",
+        "No final support claim based on a documentation page alone."
+      ],
+      "reviewer": "mpdv_security",
+      "status": "planned",
+      "packet": "tasks/MV-001-freeze-minimal-authentication-and-presentation-contracts.md"
+    },
+    {
+      "id": "MV-021",
+      "title": "Implement shared viewer profile and constrained login popups",
+      "agent": "mpdv_native",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "depends_on": [
+        "MV-001"
+      ],
+      "write_scope": [
+        "src-tauri/src/player.rs",
+        "src-tauri/src/viewer_auth.rs (new, if useful)",
+        "Necessary module registration in src-tauri/src/main.rs",
+        "src-tauri/src/model.rs and controller.rs for bounded auth commands/events only",
+        "Native auth/popup tests"
+      ],
+      "read_scope": [
+        "Approved ADR-001",
+        "Existing profile paths/OS support",
+        "src-tauri/capabilities/*",
+        "S5,S7,S8,S9"
+      ],
+      "implementation_steps": [
+        "Reuse the identified persistent app-owned playback profile for all viewers and login popups. Preserve existing sessions when possible.",
+        "Implement official popup handling using native opener/features/environment relationships and the audited destination policy.",
+        "Keep auth windows unprivileged and out of playback capacity accounting; bound and track their lifecycle.",
+        "Provide manager-origin sign-in and explicit safe viewer-session reset primitives if supported; preserve OAuth Disconnect as a different action.",
+        "Respect normal storage/cookie restrictions and expose unsupported-runtime failures. Do not fake a login/Turbo success state.",
+        "Avoid logging auth query strings, cookies, passwords, or raw identity-provider responses."
+      ],
+      "acceptance": [
+        "Official login works on each claimed supported runtime with the user entering credentials.",
+        "Second viewer uses the intended profile; persistence and reset behavior are documented.",
+        "Arbitrary popup/navigation attempts are denied and auth windows have no native app authority."
+      ],
+      "checks": [
+        "Destination parser tests including lookalike hosts, credentials-in-URL, non-HTTPS and redirect changes",
+        "Native popup/related-view and second-viewer checks",
+        "Reset and app-exit cleanup",
+        "Negative command/telemetry checks from auth window"
+      ],
+      "non_goals": [
+        "No cookie import from Chrome/Firefox.",
+        "No automatic consent/privacy bypass.",
+        "No token persistence redesign."
+      ],
+      "reviewer": "mpdv_security",
+      "status": "planned",
+      "packet": "tasks/MV-021-implement-shared-viewer-profile-and-constrained-login-popups.md"
+    },
+    {
+      "id": "MV-030",
+      "title": "Add official per-channel chat to the hosted and Demo wrapper",
+      "agent": "mpdv_web",
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "medium",
+      "depends_on": [
+        "MV-001"
+      ],
+      "write_scope": [
+        "player-wrapper/index.html",
+        "player-wrapper/player.js",
+        "player-wrapper/style.css",
+        "Focused chat/browser test fixtures"
+      ],
+      "read_scope": [
+        "Approved embed choice and popup policy",
+        "Current Twitch.Player audio/event setup",
+        "S1\u2013S4",
+        "Native Host local asset map"
+      ],
+      "implementation_steps": [
+        "Add an official per-channel chat iframe using validated channel and actual parent hostname; keep the existing video adapter unless ADR-001 changes it.",
+        "Enable chat by default, implement explicit collapse/restore without player reconstruction, and use responsive side/stack geometry.",
+        "Adjust only necessary wrapper frame policy. Coordinate native frame-navigation changes through the owning native task.",
+        "Keep video independent of chat errors and report unsupported chat/login behavior honestly.",
+        "Add clearly simulated Demo chat with no Twitch requests. Preserve volume-before-first-play and no periodic unpause behavior."
+      ],
+      "acceptance": [
+        "Chat channel always matches viewer channel.",
+        "Chat toggle preserves the same player instance, audio, pause, and session.",
+        "Video meets minimum geometry and chat does not obscure it.",
+        "Real native chat posting/login is covered by later acceptance, not inferred from mocks."
+      ],
+      "checks": [
+        "Chat URL/parent injection tests",
+        "Mock chat failure and channel replacement",
+        "Collapsed/restored player identity and no extra play calls",
+        "Real-CSP browser check",
+        "Demo network-isolation check"
+      ],
+      "non_goals": [
+        "No custom chat client, chatbot, chat OAuth scope, or combined-embed migration without ADR approval.",
+        "No deployment during implementation."
+      ],
+      "reviewer": "mpdv_native",
+      "status": "planned",
+      "packet": "tasks/MV-030-add-official-per-channel-chat-to-the-hosted-and-demo-wrapper.md"
+    },
+    {
+      "id": "MV-022",
+      "title": "Make API connection and viewer sign-in distinct in the manager",
+      "agent": "mpdv_web",
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "medium",
+      "depends_on": [
+        "MV-010",
+        "MV-021"
+      ],
+      "write_scope": [
+        "ui/index.html",
+        "ui/app.js",
+        "ui/view-model.js",
+        "ui/style.css",
+        "Tests for manager auth UI"
+      ],
+      "read_scope": [
+        "Approved native auth action/view contract",
+        "Current connected_as and device-auth rendering",
+        "Auth diagnosis report"
+      ],
+      "implementation_steps": [
+        "Label API state as live-status/monitoring authorization, not proof of signed-in playback.",
+        "Add user-triggered viewer sign-in entry and honest Unknown/user-confirmed state where no official verification exists.",
+        "Expose explicit viewer-session reset only with a clear confirmation and explanation of what is cleared.",
+        "Keep API Disconnect separate; do not display an unverified Turbo-active badge.",
+        "Show actionable popup/runtime/login failures without exposing secrets."
+      ],
+      "acceptance": [
+        "A user can distinguish both authentication concepts before starting viewers.",
+        "Viewer-session reset never silently disconnects monitoring or deletes favorites.",
+        "No API-connected status implies ad-free playback."
+      ],
+      "checks": [
+        "Manager command dispatch and permission checks",
+        "Exact confirmation semantics for reset",
+        "Unknown/error states and keyboard accessibility",
+        "No credential fields or cookie contents in UI state"
+      ],
+      "non_goals": [
+        "No native-auth implementation in this UI task.",
+        "No automatic Turbo detection claim."
+      ],
+      "reviewer": "mpdv_qa",
+      "status": "planned",
+      "packet": "tasks/MV-022-make-api-connection-and-viewer-sign-in-distinct-in-the-manager.md"
+    },
+    {
+      "id": "MV-031",
+      "title": "Version the wrapper protocol and preserve old clients",
+      "agent": "mpdv_native",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "depends_on": [
+        "MV-021",
+        "MV-030"
+      ],
+      "write_scope": [
+        "src-tauri/src/main.rs (hello/report endpoints)",
+        "src-tauri/src/model.rs (negotiation types)",
+        "src-tauri/build.rs",
+        "src-tauri/permissions/app.toml",
+        "src-tauri/capabilities/players.json",
+        "player-wrapper/player.js (negotiation only)",
+        "src-tauri/src/player.rs (asset map if needed)",
+        "scripts/set-player-url.py and compatibility/configuration tests"
+      ],
+      "read_scope": [
+        "CONTRACTS.md protocol decision",
+        "Old v1 Report and three-asset server",
+        "Existing hosted update script and remote permissions"
+      ],
+      "implementation_steps": [
+        "Implement the approved bounded hello/version handshake without breaking v1 deny_unknown_fields payloads.",
+        "Keep old and new client/wrapper combinations explicit. Reject incompatible versions with an actionable error, not repeated reloads.",
+        "Bind telemetry/hello to native caller ownership under the approved contract. Register every new command in the build manifest and capabilities.",
+        "Keep Demo bundled assets and deployed asset manifest synchronized. Retain restrictive manager isolation.",
+        "Prepare immutable version-path deployment packaging on the existing parent host; retain the v1 root for old clients."
+      ],
+      "acceptance": [
+        "Old client/new wrapper and new client/old wrapper behavior matches the compatibility table.",
+        "No widening of manager permissions to remote pages.",
+        "Native and wrapper agree on supported feature/version metadata."
+      ],
+      "checks": [
+        "Protocol compatibility fixtures",
+        "Unknown field/major-version/missing hello cases",
+        "Configuration script exact-origin checks",
+        "Native denial of unauthorized hello/report calls",
+        "Real header/meta CSP agreement"
+      ],
+      "non_goals": [
+        "No replacement of root hosted assets without authorization.",
+        "No migration to a new parent hostname."
+      ],
+      "reviewer": "mpdv_security",
+      "status": "planned",
+      "packet": "tasks/MV-031-version-the-wrapper-protocol-and-preserve-old-clients.md"
+    },
+    {
+      "id": "MV-041",
+      "title": "Extract surface presentation while preserving standalone behavior",
+      "agent": "mpdv_native",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "depends_on": [
+        "MV-022",
+        "MV-031"
+      ],
+      "write_scope": [
+        "src-tauri/src/player.rs",
+        "src-tauri/src/presentation.rs or presentation/ (new)",
+        "src-tauri/src/controller.rs",
+        "src-tauri/src/main.rs",
+        "src-tauri/src/model.rs",
+        "Scoped presenter/lifecycle tests and caller capability adjustments"
+      ],
+      "read_scope": [
+        "Approved CONTRACTS.md",
+        "Current close/destroy/reconcile/report/sweep paths",
+        "Existing standalone behavior tests"
+      ],
+      "implementation_steps": [
+        "Split static wrapper hosting from surface creation/audio/focus/closure.",
+        "Introduce logical session, native surface instance, and container tracking using the frozen minimal interface.",
+        "Convert direct get_webview_window assumptions to adapter operations and actual surface ownership.",
+        "Bind reports to native surface identity and reject old epochs. Keep telemetry advisory.",
+        "Introduce fake adapter delayed callbacks and distinguish programmatic close reasons from manual Skip.",
+        "Leave all viewers standalone in this task and prove behavior equivalence before adding grid."
+      ],
+      "acceptance": [
+        "Current priority, capacity, skip, retry, audio, auth/chat, Stop/Quit behavior remains intact.",
+        "Late surface events cannot alter another session or resurrect a stopped one.",
+        "No new grid UI ships in this refactor commit."
+      ],
+      "checks": [
+        "Fake presenter delayed create/destroy and stale report tests",
+        "Existing core selection tests unchanged",
+        "Standalone real login/chat/playback smoke",
+        "Manual close vs programmatic close semantics"
+      ],
+      "non_goals": [
+        "No scheduling policy changes or generalized docking library.",
+        "No unrelated formatting churn across the repository."
+      ],
+      "reviewer": "mpdv_architect",
+      "status": "planned",
+      "packet": "tasks/MV-041-extract-surface-presentation-while-preserving-standalone-behavior.md"
+    },
+    {
+      "id": "MV-042",
+      "title": "Implement true grid container and geometry",
+      "agent": "mpdv_native",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "depends_on": [
+        "MV-041"
+      ],
+      "write_scope": [
+        "src-tauri/src/presentation/grid.rs (or approved equivalent)",
+        "src-tauri/src/layout.rs (new pure geometry)",
+        "Necessary presenter wiring and feature gates",
+        "Grid geometry/native smoke tests"
+      ],
+      "read_scope": [
+        "Grid feasibility ADR",
+        "Surface/profile/caller contracts",
+        "Chat panel minimum dimensions",
+        "S3,S5,S6,S9"
+      ],
+      "implementation_steps": [
+        "Create a dedicated native grid window hosting each selected surface at its own bounds.",
+        "Keep manager privileges out of all hosted surfaces; preserve profile and popup behavior.",
+        "Implement deterministic priority-ordered geometry using logical units and display scaling.",
+        "Account for video, chat and chrome minimums. Use the proven scroll/clipping or clear insufficient-space strategy from the ADR.",
+        "Test geometry in isolation and real native interaction. Do not silently hide chat, reduce capacity, or start off-screen playback tricks."
+      ],
+      "acceptance": [
+        "Grid is one native container with per-channel video and chat surfaces.",
+        "No video is shrunk below the required minimum to fit an arbitrary count.",
+        "Focus, chat keyboard input, resize and native popup work as tested."
+      ],
+      "checks": [
+        "Geometry tests for 1,2,3,4,6 plus overflow counts",
+        "Different DPI/scaling and screen work areas",
+        "Keyboard focus and chat input in neighboring cells",
+        "Hostile neighboring-surface report test"
+      ],
+      "non_goals": [
+        "No global switching state machine yet.",
+        "No OS-level tiling presented as the completed feature."
+      ],
+      "reviewer": "mpdv_architect",
+      "status": "planned",
+      "packet": "tasks/MV-042-implement-true-grid-container-and-geometry.md"
+    },
+    {
+      "id": "MV-043",
+      "title": "Implement safe layout transitions, cleanup, and persistence",
+      "agent": "mpdv_native",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "depends_on": [
+        "MV-042"
+      ],
+      "write_scope": [
+        "src-tauri/src/controller.rs",
+        "src-tauri/src/model.rs",
+        "src-tauri/src/storage.rs",
+        "src-tauri/src/main.rs (window events)",
+        "Presentation transition implementation",
+        "Transition and preference migration tests"
+      ],
+      "read_scope": [
+        "CONTRACTS.md transition sequence",
+        "Grid/standalone presenter implementations",
+        "Existing skip/capacity/Stop semantics"
+      ],
+      "implementation_steps": [
+        "Add controller-owned layout revisions and pending/committed state.",
+        "Implement retained-surface moves where supported and explicit close-confirm-recreate fallback where approved.",
+        "Preserve logical selection and desired audio; never exceed reserved capacity by opening duplicates.",
+        "Make Stop/exit, preemption, and cap reduction supersede moves; reject stale callbacks.",
+        "Differentiate grid close (Stop), standalone user close (Skip), and empty container cleanup (neither).",
+        "Persist layout preference and valid geometry with backward-compatible defaults. Preserve existing app/config/profile identities; restore no playback automatically."
+      ],
+      "acceptance": [
+        "Switching both directions never accidentally skips channels or leaves duplicate playback.",
+        "Stop during every transition stage leaves no viewer/popup orphan and no later reopen.",
+        "Old preferences load as standalone; saved valid layout survives restart without autoplay.",
+        "Failed movement or creation produces an explicit recoverable state."
+      ],
+      "checks": [
+        "Transition permutation/property-style tests",
+        "Close-grid, stop, preempt, lower-cap and repeated-toggle races",
+        "Simulated lost destroy event and registry sweep",
+        "Paused playback and recreation disclosure",
+        "Missing monitor/off-screen restore and old settings fixtures"
+      ],
+      "non_goals": [
+        "No mixed dock/standalone mode unless separately approved.",
+        "No silent removal of the background-playback uncertainty."
+      ],
+      "reviewer": "mpdv_security",
+      "status": "planned",
+      "packet": "tasks/MV-043-implement-safe-layout-transitions-cleanup-and-persistence.md"
+    },
+    {
+      "id": "MV-044",
+      "title": "Expose layout selection and state in the manager",
+      "agent": "mpdv_web",
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "medium",
+      "depends_on": [
+        "MV-022",
+        "MV-043"
+      ],
+      "write_scope": [
+        "ui/index.html",
+        "ui/app.js",
+        "ui/view-model.js",
+        "ui/style.css",
+        "Manager layout tests and fixtures"
+      ],
+      "read_scope": [
+        "Committed/pending layout action contract",
+        "Grid close and insufficient-space behavior",
+        "Current auth/chat UI"
+      ],
+      "implementation_steps": [
+        "Add Standalone/Grid setting with current, pending, failed and supported states.",
+        "Keep rank controls distinct from presentation order; focus a grid viewer through its surface.",
+        "Show brief reload disclosure for recreate-only platforms and explanatory space errors.",
+        "Reflect the committed setting only after backend success; display real failure/rollback states.",
+        "Keep controls keyboard-accessible and avoid granting layout authority to remote wrapper content."
+      ],
+      "acceptance": [
+        "User can switch modes and understand in-progress/error/reload conditions.",
+        "A failed backend change does not misleadingly show success.",
+        "Selection count and volume semantics remain unchanged."
+      ],
+      "checks": [
+        "Action dispatch and pending/committed UI tests",
+        "Unavailable mode and insufficient-space state",
+        "Focus, keyboard and resize usability",
+        "Priority order vs display mode separation"
+      ],
+      "non_goals": [
+        "No cross-platform support claims based on UI availability alone.",
+        "No unrelated visual redesign."
+      ],
+      "reviewer": "mpdv_qa",
+      "status": "planned",
+      "packet": "tasks/MV-044-expose-layout-selection-and-state-in-the-manager.md"
+    },
+    {
+      "id": "MV-050",
+      "title": "Independently review security and lifecycle invariants",
+      "agent": "mpdv_security",
+      "model": "gpt-6-astra",
+      "reasoning_effort": "high",
+      "depends_on": [
+        "MV-010",
+        "MV-031",
+        "MV-043",
+        "MV-044"
+      ],
+      "write_scope": [
+        "None: read-only reviewer returns findings; coordinator writes docs/mpd-viewer-v0.2/reports/security-review.md"
+      ],
+      "read_scope": [
+        "All changed native command, profile, popup, capability, wrapper and presentation paths",
+        "Patch diffs and acceptance evidence",
+        "S8,S9"
+      ],
+      "implementation_steps": [
+        "Trace the actual native caller from auth popup, Twitch iframe, wrapper surface, and manager to each command.",
+        "Attempt cross-surface spoofing, capability union escalation, hostile redirects and popup abuse.",
+        "Review profile preservation/reset, redaction, unknown protocol behavior, and hosted-v1 compatibility.",
+        "Trace Stop/preempt/cap-decrease races and programmatic destruction. Check for duplicate playback and orphan popups.",
+        "Return prioritized file/line findings with reproducible tests. Fixes go back to the owning implementation task, then are re-reviewed."
+      ],
+      "acceptance": [
+        "No open critical/high privilege, credential, data-loss, or duplicate-playback issue.",
+        "Native checks are distinguished from static review and mocks.",
+        "Review is independent of the code-author run."
+      ],
+      "checks": [
+        "Native negative IPC and popup checks on claimed platforms",
+        "Diff-to-contract review",
+        "Reproduction of each substantive finding or clear static proof"
+      ],
+      "non_goals": [
+        "No implementation patches during this review run.",
+        "No password/cookie requests or storage-security bypass."
+      ],
+      "reviewer": "mpdv_architect",
+      "status": "planned",
+      "packet": "tasks/MV-050-independently-review-security-and-lifecycle-invariants.md"
+    },
+    {
+      "id": "MV-051",
+      "title": "Run regression and real-runtime acceptance matrix",
+      "agent": "mpdv_qa",
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "high",
+      "depends_on": [
+        "MV-050"
+      ],
+      "write_scope": [
+        "tests/ (targeted new and updated tests)",
+        "docs/mpd-viewer-v0.2/reports/acceptance.md",
+        "docs/MANUAL-TESTS.md and redacted evidence manifests"
+      ],
+      "read_scope": [
+        "All feature acceptance criteria",
+        "Existing core/configuration/browser suites",
+        "Recorded OS/runtime/wrapper compatibility matrix"
+      ],
+      "implementation_steps": [
+        "Rerun baseline and focused suites after integration; record actual command output, not inherited counts.",
+        "Run real native chat/login/profile/Turbo comparisons with user-performed account interactions.",
+        "Exercise 1,2,3,4,6 selected viewers across modes, paused/blocked playback, cap changes and selection swaps.",
+        "Exercise sleep/wake, network loss, minimize/restore, failed moves, stop/quit, shared profile and reset.",
+        "Verify upgrade preferences/branding and real CSP/ACL enforcement.",
+        "Record support per OS/runtime. Any unavailable target remains blocked/unverified; it does not inherit another platform's pass."
+      ],
+      "acceptance": [
+        "Each required gate has an actual passed/failed/blocked result and evidence location.",
+        "No critical regression or privilege issue remains.",
+        "Ad observations and authentication claims reflect native evidence, not model inference."
+      ],
+      "checks": [
+        "Full native/Rust suite and targeted Node/Python/browser suites",
+        "Manual native Windows/macOS/Linux matrix",
+        "Old/new wrapper-client compatibility tests",
+        "Upgrade and shutdown cleanup checks"
+      ],
+      "non_goals": [
+        "No production-code fixes without a new file lease and owning-task review.",
+        "No treating mock no-sandbox/CSP-stripped harness behavior as native proof."
+      ],
+      "reviewer": "mpdv_architect",
+      "status": "planned",
+      "packet": "tasks/MV-051-run-regression-and-real-runtime-acceptance-matrix.md"
+    },
+    {
+      "id": "MV-060",
+      "title": "Package compatible release and deployment handoff",
+      "agent": "mpdv_native",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "depends_on": [
+        "MV-051"
+      ],
+      "write_scope": [
+        "Release/build metadata as approved",
+        "Versioned wrapper build/package scripts and manifest",
+        "README.md and release/setup documentation",
+        "docs/mpd-viewer-v0.2/reports/release-checklist.md"
+      ],
+      "read_scope": [
+        "Final acceptance report",
+        "Approved model/agent and architecture records",
+        "Existing hosted site version and immutable artifact policy"
+      ],
+      "implementation_steps": [
+        "Package MPD Viewer binaries/source and matching immutable hosted wrapper assets with hashes/build IDs.",
+        "Keep the old root/v1 site available; produce the explicit native/wrapper compatibility matrix and rollback instructions.",
+        "Review client ID, parent hostname, legacy identity preservation, and developer-application display-name checklist.",
+        "List exact tested platforms/runtimes and limitations; do not label untested native builds supported.",
+        "Create deployment instructions. Publish remotely only after an explicit separate instruction identifying the destination."
+      ],
+      "acceptance": [
+        "Artifact names/visible branding use MPD Viewer.",
+        "Wrapper assets form a compatible, versioned set with rollback.",
+        "Release notes distinguish implemented features, tested behavior and blocked support gates."
+      ],
+      "checks": [
+        "Clean install/upgrade checks for packaged targets",
+        "Artifact manifest/hash validation",
+        "Versioned URL and CSP checks",
+        "Rollback compatibility review"
+      ],
+      "non_goals": [
+        "No unapproved deployment, DNS/account changes, or silent old-client replacement."
+      ],
+      "reviewer": "mpdv_architect",
+      "status": "planned",
+      "packet": "tasks/MV-060-package-compatible-release-and-deployment-handoff.md"
+    }
+  ]
+}

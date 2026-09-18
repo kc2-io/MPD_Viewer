@@ -1,0 +1,8 @@
+# MERGE these settings into existing project configuration; do not overwrite it.
+# Verify the selected models and custom-agent format with the installed Codex client.
+model = "gpt-6-astra"
+model_reasoning_effort = "high"
+
+[agents]
+max_concurrent_threads_per_session = 3
+# The two-production-writer limit and file leases are coordinator rules, not a config flag.
