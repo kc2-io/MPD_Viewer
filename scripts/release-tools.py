@@ -74,11 +74,31 @@ def require_release_pins() -> None:
     run(sys.executable, "scripts/pin-actions.py", "--check")
 
 
+def release_policy() -> dict[str, str]:
+    policy = json.loads((ROOT / ".github/release-policy.json").read_text(encoding="utf-8"))
+    if (not isinstance(policy, dict) or set(policy) != {"repository", "visibility"}
+            or not isinstance(policy["repository"], str)
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+/MPD_Viewer", policy["repository"])
+            or policy["visibility"] not in ("public", "private")):
+        raise ValueError("Invalid committed release repository policy.")
+    return policy
+
+
+def require_repository_policy(repository: str, private: bool) -> None:
+    policy = release_policy()
+    if repository != policy["repository"]:
+        raise ValueError("Repository identity differs from the committed release policy.")
+    if not isinstance(private, bool) or private != (policy["visibility"] == "private"):
+        raise ValueError("Repository visibility differs from the committed release policy.")
+
+
 def gate() -> None:
     if os.environ.get("RELEASES_ENABLED") != "true":
         raise ValueError("Releases are disabled. Complete repository/signing setup before enabling them.")
-    if os.environ.get("REPOSITORY_PRIVATE", "").lower() != "true":
-        raise ValueError("This initial pipeline is restricted to the requested PRIVATE repository.")
+    private = os.environ.get("REPOSITORY_PRIVATE", "").lower()
+    if private not in ("true", "false"):
+        raise ValueError("Repository visibility is missing or invalid.")
+    require_repository_policy(os.environ.get("GITHUB_REPOSITORY", ""), private == "true")
     if os.environ.get("GITHUB_EVENT_NAME") != "push" or os.environ.get("GITHUB_REF_TYPE") != "tag":
         raise ValueError("Signing is only permitted for a pushed release tag.")
     tag = os.environ["RELEASE_TAG"]
@@ -189,12 +209,13 @@ def publish() -> None:
     if parse_tag(tag) != v:
         raise ValueError("Tag/version mismatch.")
     repo = os.environ["GH_REPO"]
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/MPD_Viewer", repo):
-        raise ValueError("Unexpected repository. Only OWNER/MPD_Viewer is accepted.")
+    if repo != release_policy()["repository"]:
+        raise ValueError("Repository identity differs from the committed release policy.")
     head = run("git", "rev-parse", "HEAD", capture=True)
     remote = gh_json("api", f"repos/{repo}")
-    if not remote["private"] or live_commit(repo, tag) != head:
-        raise ValueError("Repository visibility or live tag target has changed.")
+    require_repository_policy(remote["full_name"], remote["private"])
+    if live_commit(repo, tag) != head:
+        raise ValueError("Live tag target has changed.")
     out = final_dir()
     binaries = asset_names(v)[:5]
     actual = sorted(p.name for p in out.iterdir())
@@ -213,6 +234,7 @@ def publish() -> None:
         "docs/HOSTED-SOURCE-PLAN-ADDENDUM.md")
     files = [out / name for name in asset_names(v)]
     manifest = {"schema": 1, "repository": repo, "tag": tag, "commit": head,
+                "repository_visibility": release_policy()["visibility"],
                 "run_id": os.environ.get("GITHUB_RUN_ID"), "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
                 "cargo_lock_sha256": digest(ROOT / "Cargo.lock"),
                 "assets": {p.name: {"sha256": digest(p), "bytes": p.stat().st_size} for p in files},
@@ -247,8 +269,10 @@ def publish() -> None:
         for p in files:
             if digest(Path(d) / p.name) != digest(p):
                 raise ValueError("Draft asset hash mismatch; leaving draft unpublished.")
-    if not gh_json("api", f"repos/{repo}")["private"] or live_commit(repo, tag) != head:
-        raise ValueError("Repository/tag changed while uploading; leaving draft unpublished.")
+    remote = gh_json("api", f"repos/{repo}")
+    require_repository_policy(remote["full_name"], remote["private"])
+    if live_commit(repo, tag) != head:
+        raise ValueError("Tag changed while uploading; leaving draft unpublished.")
     run("gh", "release", "edit", tag, "--repo", repo, "--draft=false", "--latest=false" if "-" in v else "--latest")
     print("Published verified asset set for", tag)
 
