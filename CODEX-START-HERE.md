@@ -67,6 +67,12 @@ The prepared setup is **not verified parity** with either reference repository. 
 
 ## Critical application mismatch
 
+> The native legacy-host initialization mismatch is now addressed by the
+> [black-window correction](docs/setup/PLAYER-COMPATIBILITY-2026-09-18.md).
+> That record separates actual Windows playback evidence from the remaining
+> native audio and broader protocol/layout acceptance work. The original
+> mismatch description below is retained as historical context.
+
 The supplied hosted HTML reads **query parameters**, fractional volume, and `postMessage` commands; the native POC uses **fragment parameters**, different audio calls and session-specific native reports. The hosted code also defaults to `pauseInactive=true`. Its existing DOM grid is a starting point, not completed grid integration.
 
 Read `docs/HOSTED-SOURCE-PLAN-ADDENDUM.md` **before** the older feature coordinator prompt. Advance protocol alignment before chat/grid work and compare one webview containing a DOM grid with native child-webview presentation. Do not replace the site's single HTML file with the old three-file wrapper by assumption.
