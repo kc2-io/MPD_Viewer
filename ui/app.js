@@ -81,10 +81,10 @@ function render(s) {
   if(document.activeElement!==$('limit'))$('limit').value=s.settings.limit;
   if(document.activeElement!==$('volume')){$('volume').value=s.settings.volume;$('volume-value').textContent=`${s.settings.volume}%`;}
   if(document.activeElement!==$('muted'))$('muted').checked=s.settings.muted;
-  if(document.activeElement!==$('client-id'))$('client-id').value=s.settings.client_id;
   $('auth-status').textContent=s.connected_as?`Monitoring as ${s.connected_as}`:s.auth_pending?'Waiting for authorization…':'Not connected';
-  $('viewer-signin').disabled=s.settings.demo;
-  $('connect').disabled=s.auth_pending; $('disconnect').disabled=!s.connected_as&&!s.auth_pending;
+  $('connect').disabled=s.settings.demo||(s.auth_pending&&!s.user_code);
+  $('connect').textContent=s.auth_pending?(s.user_code?'Continue in Twitch':'Opening Twitch…'):s.connected_as?'Reconnect Twitch':'Connect Twitch';
+  $('disconnect').disabled=!s.connected_as&&!s.auth_pending;
   $('disconnect').textContent=s.auth_pending?'Cancel':'Disconnect';
   $('device-auth').hidden=!s.user_code; $('device-code').textContent=s.user_code??'';
   $('empty-players').hidden=s.players.length>0;
@@ -107,10 +107,8 @@ $('source').addEventListener('change',()=>act({type:'set_demo',demo:$('source').
 $('limit').addEventListener('change',()=>{const limit=Number($('limit').value);if(Number.isSafeInteger(limit)&&limit>=1&&limit<=1000)act({type:'set_limit',limit});else showError('Set a whole-number limit between 1 and 1000.');});
 function changeAudio(){clearTimeout(audioTimer);$('volume-value').textContent=`${$('volume').value}%`;audioTimer=setTimeout(()=>act({type:'set_audio',volume:Number($('volume').value),muted:$('muted').checked}),120);}
 $('volume').addEventListener('input',changeAudio);$('muted').addEventListener('change',changeAudio);
-$('connect-form').addEventListener('submit',e=>{e.preventDefault();act({type:'connect',client_id:$('client-id').value});});
+$('connect').addEventListener('click',()=>act({type:'connect'}));
 $('disconnect').addEventListener('click',()=>act({type:'disconnect'}));
-$('viewer-signin').addEventListener('click',()=>act({type:'open_viewer_login'}));
-$('open-auth').addEventListener('click',()=>act({type:'open_auth'}));
 $('dismiss-error').addEventListener('click',()=>{localError=null;$('error').hidden=true;act({type:'clear_error'});});
 if(!native())showError('Browser-only view: launch with cargo run -p mpd-tabber --features custom-protocol to use the Rust application.');
 refresh();setInterval(refresh,750);

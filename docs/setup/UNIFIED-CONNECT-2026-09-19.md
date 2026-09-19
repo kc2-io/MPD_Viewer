@@ -1,0 +1,35 @@
+# Unified Twitch connection and fixed public application ID
+
+Base: `b289bd352b2d032f494983a14a8f4643477157cb` (PR #10). Branch: `feat/unified-twitch-connect`. Worktree: `D:\MPD_Viewer-Codex-Project\MPD_Viewer`. Coordinator owns every changed file; `setup_review` independently reviewed read-only using inherited session model/effort settings, with no override.
+
+## Behavior
+
+On Windows, **Connect Twitch** requests a device grant using MPD Viewer's fixed public client ID and automatically opens Twitch's supplied, prefilled activation link in the existing viewer browser profile. The user signs in and approves access directly in Twitch. Rust continues polling for the device-flow result. No credentials or auth-page content are inspected or injected.
+
+The separate viewer sign-in button and editable client-ID field are removed. `Connect {}` accepts no parameters; even a direct manager IPC call containing `client_id` is rejected. Settings no longer deserialize or serialize a client-ID field. Legacy overrides are ignored, while favorites, ordering, enabled flags, limits, volume, mute, Demo and schema remain intact. Saved preferences shed the obsolete field on their next normal save. The registered public client ID itself is unchanged.
+
+While a grant is pending, the same button becomes **Continue in Twitch** and focuses or reopens that attempt without requesting another grant. Cancel/Disconnect aborts the grant and closes its connection window. Closing only the Twitch window leaves the pending attempt available to continue until expiry. Switching to Demo cancels a pending connection. Successful API authorization leaves Twitch's page available for the user to finish and close; it does not reload/resume players or assert website/video identity. A later reconnect closes that completed window first.
+
+Monitoring credentials remain in Rust memory and require reconnection after quitting; secure token persistence is separate work. Website sessions may persist independently. Other platforms return an explicit unsupported error before requesting a device grant. This Windows preview does not establish cross-platform login support.
+
+## Security and lifecycle
+
+The initial URL must be HTTPS, exact `www.twitch.tv`, `/activate`, with no credentials, non-default port or fragment. It must contain exactly one `public=true` and one `device-code` matching Twitch's returned user code, with no additional keys. Further navigation is restricted to official `/login`, `/`, and `/activate`; activation query values remain bound to the current attempt. The code-less `/activate` path permits a completion page. New windows and downloads remain denied. No capability or profile configuration changes are made.
+
+Window labels include the authorization epoch and match neither manager nor player capabilities. Pending state and matching epochs gate incoming auth results. Malformed links and open failures abort/invalidate the attempt. Window cleanup has separate tracking, so a failed close retains its old identity for retry even after the grant is invalidated; a new grant cannot start until cleanup succeeds. Error text excludes raw URLs/codes.
+
+## Executed verification
+
+- `cargo test --locked --workspace --features mpd-tabber/custom-protocol`: 26 tests passed, including legacy settings migration, forged client-ID rejection, activation URL binding, navigation restrictions, and failed-close/retry tracking.
+- `cargo clippy --locked --workspace --all-targets --features mpd-tabber/custom-protocol`: passed with the same two pre-existing controller style warnings.
+- `cargo build --locked --release -p mpd-tabber --features custom-protocol`: optimized Windows executable built successfully; unsigned test build.
+- `node tests/viewer-auth.browser.cjs` with installed Edge/Playwright: passed. Real manager HTML/modules with a mocked IPC bridge cover Demo, initial/pending/continue/cancel/reconnect UI, removed controls, fixed Connect payload, retained player cards and absence of JavaScript errors. This is not native authentication evidence.
+- Independent reviewer: 49 JavaScript, 14 configuration and 51 release checks passed (114 total); final source review approved after the failed-close correction. Coordinator reran configuration checks and `git diff --check` successfully.
+- Disposable native fixture, separate test profile, Tauri 2.11.5/WebView2: actual ACL denied `get_state`, `dispatch` and `player_report` from an auth-window label. The production window module opened/refocused one window, reopened it after destruction, and exited with the window open. Exit code 0; WebView2 emitted a class-unregister shutdown warning.
+- Disposable native controller harness ran the actual controller/modules with isolated identity and in-memory preferences. Passed: cancel before a device reply; ignore stale AuthCode/Authorized events; repeated Connect preserves its epoch; malformed current activation link invalidates the attempt and rejects later completion; native Demo rejects Connect. Exit code 0. Synthetic auth events characterize lifecycle only; no account authorization or session recognition was inferred.
+
+## User acceptance and delivery boundary
+
+The unified unsigned preview has been launched using the existing app profile. Real Twitch activation/approval and viewer recognition for this combined flow await the user's observation. Earlier PR #10 separately established user-reported website-session sharing and restart persistence; that does not substitute for testing this new activation route. Fresh-profile login/MFA and video identity/Turbo remain unverified.
+
+No new release, tag, website deployment, Twitch registration change, cookie import/export or automated chat is included. Files changed: native model/controller/storage/auth window; manager HTML/JS; chat help text; browser/configuration fixtures and checks; this evidence record. Existing preferences paths, app identifier, capabilities, player lifecycle policy and hosted source snapshot are preserved.

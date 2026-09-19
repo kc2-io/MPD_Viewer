@@ -10,10 +10,6 @@ import re
 from playwright.sync_api import sync_playwright
 
 ROOT=Path(__file__).resolve().parents[1]
-# Exercise the UI using the public default declared by the native model.
-DEFAULT_CLIENT_ID=re.search(r'pub const DEFAULT_CLIENT_ID: &str = "([a-zA-Z0-9]+)";',
-    (ROOT/'src-tauri/src/model.rs').read_text()).group(1)
-
 FAKE_SDK=r'''
 window.__sdkCalls=[];
 class FakePlayer {
@@ -55,14 +51,13 @@ try:
         errors=[]
         page.on('pageerror',lambda e:errors.append(str(e)))
         document(page,'ui')
-        page.evaluate('(id) => { window.__fixtureClientId=id; }',DEFAULT_CLIENT_ID)
         page.evaluate((ROOT/'tests/ui-fixture.js').read_text())
         helpers=(ROOT/'ui/view-model.js').read_text().replace('export function ', 'function ')
         app=re.sub(r'^import[^\n]*\n', '', (ROOT/'ui/app.js').read_text(), count=1)
         page.evaluate('() => {'+helpers+'\n'+app+'\n}')
         page.wait_for_selector('.favorite')
         check('Manager renders four ranked favorites',page.locator('.favorite').count()==4)
-        check('Registered public Client ID is prefilled from native state',page.locator('#client-id').input_value()==DEFAULT_CLIENT_ID)
+        check('Public Client ID has no editable field',page.locator('#client-id').count()==0)
         check('Manager renders three player cards',page.locator('.player-card').count()==3)
         check('Simulated data is visibly distinguished',page.locator('#playing-heading').inner_text()=='SIMULATED PLAYBACK')
         check('First channel cannot be moved above rank one',page.get_by_role('button',name='Move alpha_demo up',exact=True).is_disabled())
@@ -88,13 +83,12 @@ try:
         page.locator('#stop').click()
         page.wait_for_function('document.querySelectorAll(".player-card").length===0')
         check('Stop action updates empty-session UI',page.locator('#empty-players').is_visible())
+        check('Demo cannot start Twitch connection',page.locator('#connect').is_disabled())
+        page.evaluate('window.__fixture.settings.demo=false')
+        page.wait_for_function('!document.getElementById("connect").disabled')
         page.locator('#connect').click()
         page.wait_for_function('window.__actions.some(a=>a.type==="connect")')
-        check('Connect dispatches the registered Client ID without editing',page.evaluate('window.__actions.filter(a=>a.type==="connect").at(-1)')=={'type':'connect','client_id':DEFAULT_CLIENT_ID})
-        page.locator('#client-id').fill('custompublicclientid123')
-        page.locator('#connect').click()
-        page.wait_for_function('window.__actions.some(a=>a.type==="connect"&&a.client_id==="custompublicclientid123")')
-        check('Client ID can still be overridden before connecting',page.evaluate('window.__actions.filter(a=>a.type==="connect").at(-1)')=={'type':'connect','client_id':'custompublicclientid123'})
+        check('Connect has no client ID override',page.evaluate('window.__actions.filter(a=>a.type==="connect").at(-1)')=={'type':'connect'})
         check('Manager ran without JavaScript exceptions',not errors)
 
         wrapper=browser.new_page(viewport={'width':820,'height':550})

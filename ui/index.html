@@ -32,14 +32,12 @@
         <p class="hint">Volume applies to every player. Muting is independent.</p>
       </section>
       <section class="panel auth-panel" id="auth-panel">
-        <div class="section-header"><h2>Live-status API</h2><span id="auth-status" class="dot-label">Not connected</span></div>
-        <p class="hint">MPD Viewer’s public Client ID is prefilled. You can override it for another registration. Never enter a client secret.</p>
-        <form id="connect-form"><label for="client-id">Public Client ID</label><input id="client-id" autocomplete="off" maxlength="128" placeholder="Your registered Client ID"><div class="button-row"><button id="connect" type="submit">Authorize monitoring</button><button id="disconnect" type="button">Disconnect</button></div></form>
-        <div id="device-auth" class="device-auth" hidden><span>Authorize live-status monitoring</span><strong id="device-code"></strong><button id="open-auth" class="primary">Open Twitch authorization</button></div>
-        <p class="hint">Monitoring API tokens stay in memory. Reauthorize after quitting. This does not sign in the video player.</p>
-        <h3>Viewer website sign-in</h3>
-        <button id="viewer-signin" type="button">Sign in for viewing</button>
-        <p class="hint">Sign in directly with Twitch in MPD Viewer's browser profile. After signing in, close that window and use Retry on existing players if needed. Verify your account inside Twitch; Twitch may keep you signed in between app launches. Disconnect only clears monitoring authorization. Available on Windows.</p>
+        <div class="section-header"><h2>Twitch account</h2><span id="auth-status" class="dot-label">Not connected</span></div>
+        <p class="hint">Connect to sign in with Twitch and authorize live-status monitoring in one window. Available on Windows.</p>
+        <div class="button-row"><button id="connect" type="button" class="primary">Connect Twitch</button><button id="disconnect" type="button">Disconnect</button></div>
+        <div id="device-auth" class="device-auth" hidden><span>Finish connecting in the Twitch window. If Twitch asks for a code:</span><strong id="device-code"></strong></div>
+        <p class="hint">After connecting, close the Twitch window. Use Retry on an existing player if it still appears signed out. Verify your account inside Twitch.</p>
+        <p class="hint">Twitch may remember your website sign-in. Monitoring authorization lasts until you quit this preview. Disconnect only clears monitoring authorization.</p>
       </section>
     </aside>
   </div>

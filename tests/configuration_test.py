@@ -21,7 +21,10 @@ class ConfigurationTests(unittest.TestCase):
         match=re.search(r'pub const DEFAULT_CLIENT_ID: &str = "([a-zA-Z0-9]+)";',model)
         self.assertIsNotNone(match)
         self.assertEqual(match.group(1),'ha94kk20cfu1tp74pgg8isgi88cpo7')
-        self.assertIn('client_id: DEFAULT_CLIENT_ID.to_owned()',model)
+        self.assertNotIn('pub client_id:',model)
+        controller=(ROOT/'src-tauri/src/controller.rs').read_text()
+        self.assertIn('twitch.device_code(DEFAULT_CLIENT_ID)',controller)
+        self.assertIn('twitch.complete_device(DEFAULT_CLIENT_ID, code)',controller)
     def test_https_wrapper(self):
         self.assertEqual(configure.validate_url('https://example.com/mpd/index.html'),'https://example.com/*')
     def test_https_directory(self):

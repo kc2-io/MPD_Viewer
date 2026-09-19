@@ -8,6 +8,14 @@ use mpd_core::Presence;
 use mpd_twitch::{ApiError, Session, Twitch};
 
 type Credentials = Arc<Mutex<Session>>;
+
+fn close_tracked_auth_window(tracked: &mut Option<u64>, close: impl FnOnce(u64) -> Result<(), String>) -> Result<(), String> {
+    if let Some(epoch) = *tracked {
+        close(epoch)?;
+        *tracked = None;
+    }
+    Ok(())
+}
 pub enum Message {
     Action(Action, oneshot::Sender<Result<(), String>>),
     Report(String, Report),
@@ -36,7 +44,7 @@ pub struct Controller {
     failed: HashMap<String, String>, next_id: u64, generation: u64, auth_epoch: u64,
     credentials: Option<Credentials>, connected_as: Option<String>,
     auth_task: Option<tokio::task::JoinHandle<()>>, auth_pending: bool,
-    user_code: Option<String>, auth_url: Option<String>,
+    user_code: Option<String>, auth_url: Option<String>, auth_window_epoch: Option<u64>,
     polling: Option<u64>, poll_id: u64, next_poll: Instant, not_before: Instant,
     last_check: Option<Instant>, backoff: u64, error: Option<String>,
     events: VecDeque<String>, started: Instant,
@@ -48,7 +56,7 @@ impl Controller {
             presence: HashMap::new(), skipped: HashMap::new(), demo_live: HashMap::new(),
             players: HashMap::new(), failed: HashMap::new(), next_id: 0, generation: 0,
             auth_epoch: 0, credentials: None, connected_as: None, auth_task: None,
-            auth_pending: false, user_code: None, auth_url: None, polling: None,
+            auth_pending: false, user_code: None, auth_url: None, auth_window_epoch: None, polling: None,
             poll_id: 0, next_poll: Instant::now(), not_before: Instant::now(),
             last_check: None, backoff: 30, error: None, events: VecDeque::new(), started: Instant::now() }
     }
@@ -77,11 +85,18 @@ impl Controller {
             self.skipped.insert(login.into(), id); self.log(format!("Skipped {login} for this broadcast."));
         }
     }
-    fn disconnected(&mut self) {
+    fn disconnected(&mut self) -> Result<(), String> {
+        let close = close_tracked_auth_window(&mut self.auth_window_epoch, |epoch| crate::viewer_auth::close(&self.app, epoch));
         self.auth_epoch += 1;
         if let Some(task) = self.auth_task.take() { task.abort(); }
         self.auth_pending = false; self.credentials = None; self.connected_as = None;
         self.user_code = None; self.auth_url = None; self.mark_stale();
+        close
+    }
+    fn open_connection(&self) -> Result<(), String> {
+        let (Some(url), Some(code)) = (&self.auth_url, &self.user_code) else { return Ok(()); };
+        let activation = crate::viewer_auth::Activation::parse(url, code)?;
+        crate::viewer_auth::open(&self.app, self.auth_epoch, activation)
     }
     fn action(&mut self, action: Action) -> Result<(), String> {
         match action {
@@ -118,6 +133,7 @@ impl Controller {
                 if self.mode != Mode::Stopped || !self.players.is_empty() {
                     return Err("Stop and wait for all players to close before changing data sources.".into());
                 }
+                if demo { self.disconnected()?; }
                 let mut s = self.settings.clone(); s.demo = demo; self.save(s)?;
                 self.presence.clear(); self.skipped.clear(); self.failed.clear(); self.last_check = None;
                 self.changed(); self.log(if demo { "Demo data source selected." } else { "Twitch data source selected." });
@@ -142,7 +158,7 @@ impl Controller {
                 self.update_demo(); self.log("Demo loaded: Bravo, Charlie, and Delta are simulated live; Alpha is offline.");
             }
             Action::Start => {
-                if !self.settings.demo && self.credentials.is_none() { return Err("Authorize monitoring first, or use Demo mode.".into()); }
+                if !self.settings.demo && self.credentials.is_none() { return Err("Connect Twitch first, or use Demo mode.".into()); }
                 self.mode = Mode::Running; self.changed();
                 if self.settings.demo { self.update_demo(); }
                 else if self.last_check.map_or(true, |t| t.elapsed() > Duration::from_secs(90)) { self.mark_stale(); }
@@ -157,38 +173,28 @@ impl Controller {
             Action::Refresh => {
                 if self.settings.demo { self.update_demo(); } else { self.request_poll(); }
             }
-            Action::Connect { client_id } => {
-                let client_id = client_id.trim().to_owned();
-                if client_id.is_empty() || client_id.len() > 128 || !client_id.bytes().all(|b| b.is_ascii_alphanumeric()) {
-                    return Err("Enter the Client ID from your Twitch Public application.".into());
+            Action::Connect {} => {
+                if self.settings.demo { return Err("Switch to Twitch mode to connect.".into()); }
+                crate::viewer_auth::ensure_supported()?;
+                if self.auth_pending {
+                    if let Err(error) = self.open_connection() {
+                        let _ = self.disconnected();
+                        return Err(error);
+                    }
+                    return Ok(());
                 }
-                let mut s = self.settings.clone(); s.client_id = client_id.clone(); self.save(s)?;
-                self.disconnected(); self.auth_pending = true;
+                self.disconnected()?; self.auth_pending = true; self.error = None;
                 let epoch = self.auth_epoch; let tx = self.tx.clone(); let twitch = self.twitch.clone();
                 self.auth_task = Some(tokio::spawn(async move {
                     let result = async {
-                        let code = twitch.device_code(&client_id).await?;
+                        let code = twitch.device_code(DEFAULT_CLIENT_ID).await?;
                         let _ = tx.send(Message::AuthCode { epoch, code: code.user_code.clone(), url: code.verification_uri.clone() }).await;
-                        twitch.complete_device(&client_id, code).await
+                        twitch.complete_device(DEFAULT_CLIENT_ID, code).await
                     }.await;
                     let _ = tx.send(Message::Authorized { epoch, result }).await;
                 }));
             }
-            Action::Disconnect => { self.disconnected(); self.log("Monitoring disconnected. API tokens were cleared; Twitch website sign-in is unchanged."); }
-            Action::OpenViewerLogin => {
-                if self.settings.demo { return Err("Switch to Twitch mode to sign in for viewing.".into()); }
-                crate::viewer_auth::open(&self.app)?;
-                self.log("Opened Twitch website sign-in. Verify your account in Twitch; API monitoring is separate.");
-            }
-            Action::OpenAuth => {
-                let text = self.auth_url.as_ref().ok_or("No authorization is pending.")?;
-                let url = url::Url::parse(text).map_err(|_| "Invalid Twitch authorization URL.")?;
-                if url.scheme() != "https" || !matches!(url.host_str(), Some("www.twitch.tv" | "twitch.tv"))
-                    || url.path() != "/activate" || !url.username().is_empty() || url.password().is_some() {
-                    return Err("Rejected unexpected authorization URL.".into());
-                }
-                webbrowser::open(url.as_str()).map_err(|_| "Could not open your browser. Visit Twitch's activation page manually.")?;
-            }
+            Action::Disconnect => { self.disconnected()?; self.log("Monitoring disconnected. API tokens were cleared; Twitch website sign-in is unchanged."); }
             Action::Focus { login } => {
                 if let Some(p) = self.players.values().find(|p| p.login == login && !p.closing) {
                     if let Some(w) = self.app.get_webview_window(&p.label) { let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus(); }
@@ -323,17 +329,22 @@ impl Controller {
                     Some(Message::Report(label, report)) => self.report(label, report),
                     Some(Message::Destroyed(label)) => self.destroyed(&label),
                     Some(Message::AuthCode { epoch, code, url }) => {
-                        if epoch == self.auth_epoch && code.len() <= 32 && url.len() <= 1024 {
-                            self.user_code = Some(code); self.auth_url = Some(url);
+                        if epoch == self.auth_epoch && self.auth_pending {
+                            self.auth_window_epoch = Some(epoch);
+                            match crate::viewer_auth::Activation::parse(&url, &code)
+                                .and_then(|activation| crate::viewer_auth::open(&self.app, epoch, activation)) {
+                                Ok(()) => { self.user_code = Some(code); self.auth_url = Some(url); }
+                                Err(error) => { let _ = self.disconnected(); self.error = Some(error); }
+                            }
                         }
                     }
                     Some(Message::Authorized { epoch, result }) => {
-                        if epoch == self.auth_epoch {
+                        if epoch == self.auth_epoch && self.auth_pending {
                             self.auth_pending = false; self.user_code = None; self.auth_url = None;
                             match result {
                                 Ok(session) => { self.connected_as = Some(session.login.clone()); self.credentials = Some(Arc::new(Mutex::new(session)));
-                                    self.error = None; self.request_poll(); self.log("Monitoring authorized. API tokens stay in memory; viewer website sign-in is separate."); }
-                                Err(error) => self.error = Some(error.message),
+                                    self.error = None; self.request_poll(); self.log("Monitoring connected. Close the Twitch window when finished; verify your account in chat or the player."); }
+                                Err(error) => { let _ = self.disconnected(); self.error = Some(error.message); },
                             }
                         }
                     }
@@ -358,7 +369,7 @@ impl Controller {
                                     let delay = error.retry_after.max(Duration::from_secs(self.backoff));
                                     self.not_before = Instant::now() + delay; self.next_poll = self.not_before;
                                     self.backoff = (self.backoff * 2).min(300);
-                                    if error.reconnect { self.disconnected(); }
+                                    if error.reconnect { let _ = self.disconnected(); }
                                 }
                             }
                         }
@@ -373,5 +384,21 @@ impl Controller {
             }
             self.reconcile(); self.maybe_poll(); self.publish.send_replace(self.snapshot());
         }
+    }
+}
+
+#[cfg(test)]
+mod auth_cleanup_tests {
+    use super::close_tracked_auth_window;
+    #[test]
+    fn failed_close_retains_the_original_window_for_retry() {
+        let mut tracked=Some(7);
+        assert!(close_tracked_auth_window(&mut tracked, |epoch| {
+            assert_eq!(epoch,7); Err("simulated close failure".into())
+        }).is_err());
+        assert_eq!(tracked,Some(7));
+        close_tracked_auth_window(&mut tracked, |epoch| { assert_eq!(epoch,7); Ok(()) }).unwrap();
+        assert_eq!(tracked,None);
+        close_tracked_auth_window(&mut tracked, |_| panic!("Already cleaned up")).unwrap();
     }
 }
