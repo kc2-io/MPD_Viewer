@@ -53,7 +53,7 @@ function mpdInstallChat(config) {
     } else {
       const note = document.createElement('p');
       note.className = 'mpd-chat-note';
-      note.textContent = 'Official Twitch chat. Sign-in popups are not supported yet.';
+      note.textContent = 'Official Twitch chat. For account access, use Sign in for viewing in the MPD Viewer manager.';
       const status = document.createElement('p');
       status.className = 'mpd-chat-note';
       status.id = 'mpd-chat-status';

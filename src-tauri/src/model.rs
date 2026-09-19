@@ -62,6 +62,7 @@ pub enum Action {
     Connect { client_id: String },
     Disconnect,
     OpenAuth,
+    OpenViewerLogin,
     Focus { login: String },
     Skip { login: String },
     UndoSkip { login: String },

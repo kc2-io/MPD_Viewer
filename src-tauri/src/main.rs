@@ -3,6 +3,7 @@ mod controller;
 mod model;
 mod player;
 mod storage;
+mod viewer_auth;
 
 use controller::{Controller, Handle, Message};
 use model::{Action, Report, View};

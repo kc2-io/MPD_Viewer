@@ -82,7 +82,8 @@ function render(s) {
   if(document.activeElement!==$('volume')){$('volume').value=s.settings.volume;$('volume-value').textContent=`${s.settings.volume}%`;}
   if(document.activeElement!==$('muted'))$('muted').checked=s.settings.muted;
   if(document.activeElement!==$('client-id'))$('client-id').value=s.settings.client_id;
-  $('auth-status').textContent=s.connected_as?`Connected as ${s.connected_as}`:s.auth_pending?'Waiting for authorization…':'Not connected';
+  $('auth-status').textContent=s.connected_as?`Monitoring as ${s.connected_as}`:s.auth_pending?'Waiting for authorization…':'Not connected';
+  $('viewer-signin').disabled=s.settings.demo;
   $('connect').disabled=s.auth_pending; $('disconnect').disabled=!s.connected_as&&!s.auth_pending;
   $('disconnect').textContent=s.auth_pending?'Cancel':'Disconnect';
   $('device-auth').hidden=!s.user_code; $('device-code').textContent=s.user_code??'';
@@ -108,6 +109,7 @@ function changeAudio(){clearTimeout(audioTimer);$('volume-value').textContent=`$
 $('volume').addEventListener('input',changeAudio);$('muted').addEventListener('change',changeAudio);
 $('connect-form').addEventListener('submit',e=>{e.preventDefault();act({type:'connect',client_id:$('client-id').value});});
 $('disconnect').addEventListener('click',()=>act({type:'disconnect'}));
+$('viewer-signin').addEventListener('click',()=>act({type:'open_viewer_login'}));
 $('open-auth').addEventListener('click',()=>act({type:'open_auth'}));
 $('dismiss-error').addEventListener('click',()=>{localError=null;$('error').hidden=true;act({type:'clear_error'});});
 if(!native())showError('Browser-only view: launch with cargo run -p mpd-tabber --features custom-protocol to use the Rust application.');
