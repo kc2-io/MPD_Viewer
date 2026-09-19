@@ -1,5 +1,7 @@
 # Tagged releases
 
+> Current alpha scope: [ALPHA-RELEASE-PLAN.md](ALPHA-RELEASE-PLAN.md). The owner approved signed Windows-only alpha distribution; historical full-platform requirements below still apply to other release stages.
+
 ## Gate status
 
 No release tag, native release build, signature, notarization, remote artifact or GitHub release has been produced by this source handoff. Release execution is disabled until explicitly configured.

@@ -19,6 +19,7 @@ class ReleaseTests(unittest.TestCase):
   (self.root/'src-tauri/tauri.conf.json').write_text('{"version":"1.2.3-rc.1"}')
   (self.root/'.github').mkdir()
   (self.root/'.github/release-policy.json').write_text(json.dumps({'repository':'kc2-io/MPD_Viewer','visibility':'public'}))
+  (self.root/'.github/release-scope.json').write_text('{"scope":"full"}')
   self.p=patch.object(r,'ROOT',self.root);self.p.start()
  def tearDown(self):self.p.stop();self.temp.cleanup()
  def test_supported_tags(self):
@@ -116,7 +117,7 @@ class ReleaseTests(unittest.TestCase):
  def test_release_has_no_unsafe_pr_trigger(self):
   text=(ROOT/'.github/workflows/release.yml').read_text();self.assertNotIn('pull_request_target',text);self.assertNotIn('workflow_run:',text)
  def test_signing_failure_not_ignored(self):
-  text=(ROOT/'.github/workflows/release.yml').read_text();self.assertNotIn('continue-on-error',text);self.assertIn('needs: [gate, windows, macos, linux]',text)
+  text=(ROOT/'.github/workflows/release.yml').read_text();self.assertNotIn('continue-on-error',text);self.assertIn('needs: [gate, build, windows, macos, linux]',text);self.assertIn("needs.windows.result == 'success'",text);self.assertIn("needs.build.result == 'success'",text);self.assertIn("needs.macos.result == 'skipped'",text);self.assertIn("needs.linux.result == 'skipped'",text);self.assertIn('!cancelled()',text)
  def test_only_signer_can_request_oidc(self):
   text=(ROOT/'.github/workflows/release.yml').read_text();self.assertEqual(text.count('id-token: write'),1)
  def test_preserve_import_snapshot(self):
@@ -152,4 +153,64 @@ class ReleaseTests(unittest.TestCase):
    with self.assertRaisesRegex(ValueError,'visibility'):r.publish()
    self.assertTrue(any(c.args[:3]==('gh','release','create') for c in run.call_args_list))
    self.assertFalse(any(c.args[:3]==('gh','release','edit') for c in run.call_args_list))
+ def alpha_scope(self):
+  v='0.1.0-alpha.1'
+  (self.root/'Cargo.toml').write_text(f'[workspace.package]\nversion="{v}"\n')
+  (self.root/'src-tauri/tauri.conf.json').write_text(json.dumps({'version':v}))
+  (self.root/'.github/release-scope.json').write_text('{"scope":"windows-alpha"}')
+  return v
+ def test_windows_scope_only_accepts_alpha(self):
+  self.alpha_scope()
+  self.assertEqual(r.release_scope('0.1.0-alpha.1'),'windows-alpha')
+  for v in ['0.1.0','0.1.0-beta.1','0.1.0-rc.1','0.1.0-alpha.01','0.1.0-alpha.1+foo']:
+   with self.subTest(v=v),self.assertRaises(ValueError):r.release_scope(v)
+ def test_release_scope_fails_closed(self):
+  for value in ['{}','null','{"scope":"unsigned"}','{"scope":"windows-alpha","extra":true}']:
+   (self.root/'.github/release-scope.json').write_text(value)
+   with self.subTest(value=value),self.assertRaises(ValueError):r.release_scope('0.1.0-alpha.1')
+  (self.root/'.github/release-scope.json').unlink()
+  with self.assertRaises(OSError):r.release_scope('0.1.0-alpha.1')
+ def test_alpha_has_exact_windows_and_source_set(self):
+  v=self.alpha_scope();names=r.release_assets(v,r.release_scope(v))
+  self.assertEqual(names,[f'MPD_Viewer-v{v}-Windows-x64.zip',f'MPD_Viewer-v{v}-source.zip',f'MPD_Viewer-v{v}-player-sources.zip'])
+  self.assertEqual(r.release_assets('1.2.3-rc.1','full'),r.asset_names('1.2.3-rc.1'))
+  with self.assertRaises(ValueError):r.release_assets('1.2.3','windows-alpha')
+ def alpha_publish(self,extra=None,missing=False,tamper=False,changed_tag=False,existing=False):
+  v=self.alpha_scope();out=r.final_dir()
+  if not missing:(out/f'MPD_Viewer-v{v}-Windows-x64.zip').write_bytes(b'SIGNED-BINARY-TEST-FIXTURE')
+  if extra:(out/extra).write_bytes(b'unexpected')
+  (self.root/'Cargo.lock').write_bytes(b'fixture lock')
+  env={'RELEASE_VERSION':v,'RELEASE_TAG':'v'+v,'GH_REPO':'kc2-io/MPD_Viewer'}
+  def command(*args,**kwargs):
+   if args[:2]==('git','rev-parse'):return 'a'*40
+   if args[:2]==('git','archive'):
+    target=next(a.removeprefix('--output=') for a in args if a.startswith('--output='));Path(target).write_bytes(b'fixture source')
+   if args[:3]==('gh','release','download'):
+    dest=Path(args[args.index('--dir')+1])
+    for p in out.iterdir():shutil.copy2(p,dest/p.name)
+    if tamper:(dest/'BUILD-METADATA.json').write_bytes(b'tampered')
+   return ''
+  responses=[{'full_name':'kc2-io/MPD_Viewer','private':False},[[{'tag_name':'v'+v}]] if existing else [],{'full_name':'kc2-io/MPD_Viewer','private':False}]
+  with patch.dict(os.environ,env,clear=True),patch.object(r,'run',side_effect=command) as run,patch.object(r,'gh_json',side_effect=responses),patch.object(r,'live_commit',side_effect=['a'*40,('b' if changed_tag else 'a')*40]):
+   if extra or missing or tamper or changed_tag or existing:
+    with self.assertRaises(ValueError):r.publish()
+    self.assertFalse(any(c.args[:3]==('gh','release','edit') for c in run.call_args_list))
+   else:
+    r.publish()
+    create=next(c.args for c in run.call_args_list if c.args[:3]==('gh','release','create'))
+    self.assertIn('--prerelease',create);self.assertIn('--draft',create);self.assertIn('--verify-tag',create)
+    edit=next(c.args for c in run.call_args_list if c.args[:3]==('gh','release','edit'))
+    self.assertIn('--latest=false',edit)
+    meta=json.loads((out/'BUILD-METADATA.json').read_text())
+    self.assertEqual(meta['scope'],'windows-alpha');self.assertEqual(set(meta['signing']),{'windows'})
+    self.assertEqual(set(meta['assets']),set(r.release_assets(v,'windows-alpha')))
+    self.assertEqual(len(list(out.iterdir())),5)
+ def test_alpha_publication_verified_prerelease_not_latest(self):self.alpha_publish()
+ def test_alpha_missing_windows_rejected(self):self.alpha_publish(missing=True)
+ def test_alpha_unexpected_macos_rejected(self):self.alpha_publish(extra='MPD_Viewer-v0.1.0-alpha.1-macOS-arm64.dmg')
+ def test_alpha_unexpected_unsigned_rejected(self):self.alpha_publish(extra='UNSIGNED.zip')
+ def test_alpha_corrupt_download_never_publishes(self):self.alpha_publish(tamper=True)
+ def test_alpha_changed_tag_never_publishes(self):self.alpha_publish(changed_tag=True)
+ def test_alpha_existing_release_never_overwritten(self):self.alpha_publish(existing=True)
+
 if __name__=='__main__':unittest.main(verbosity=2)
