@@ -142,7 +142,7 @@ impl Controller {
                 self.update_demo(); self.log("Demo loaded: Bravo, Charlie, and Delta are simulated live; Alpha is offline.");
             }
             Action::Start => {
-                if !self.settings.demo && self.credentials.is_none() { return Err("Connect Twitch first, or use Demo mode.".into()); }
+                if !self.settings.demo && self.credentials.is_none() { return Err("Authorize monitoring first, or use Demo mode.".into()); }
                 self.mode = Mode::Running; self.changed();
                 if self.settings.demo { self.update_demo(); }
                 else if self.last_check.map_or(true, |t| t.elapsed() > Duration::from_secs(90)) { self.mark_stale(); }
@@ -174,7 +174,12 @@ impl Controller {
                     let _ = tx.send(Message::Authorized { epoch, result }).await;
                 }));
             }
-            Action::Disconnect => { self.disconnected(); self.log("Disconnected. Credentials are never saved to disk in this POC."); }
+            Action::Disconnect => { self.disconnected(); self.log("Monitoring disconnected. API tokens were cleared; Twitch website sign-in is unchanged."); }
+            Action::OpenViewerLogin => {
+                if self.settings.demo { return Err("Switch to Twitch mode to sign in for viewing.".into()); }
+                crate::viewer_auth::open(&self.app)?;
+                self.log("Opened Twitch website sign-in. Verify your account in Twitch; API monitoring is separate.");
+            }
             Action::OpenAuth => {
                 let text = self.auth_url.as_ref().ok_or("No authorization is pending.")?;
                 let url = url::Url::parse(text).map_err(|_| "Invalid Twitch authorization URL.")?;
@@ -327,7 +332,7 @@ impl Controller {
                             self.auth_pending = false; self.user_code = None; self.auth_url = None;
                             match result {
                                 Ok(session) => { self.connected_as = Some(session.login.clone()); self.credentials = Some(Arc::new(Mutex::new(session)));
-                                    self.error = None; self.request_poll(); self.log("Twitch connected. Credentials are memory-only for this POC."); }
+                                    self.error = None; self.request_poll(); self.log("Monitoring authorized. API tokens stay in memory; viewer website sign-in is separate."); }
                                 Err(error) => self.error = Some(error.message),
                             }
                         }
