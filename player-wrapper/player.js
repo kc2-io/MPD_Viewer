@@ -10,6 +10,7 @@
   if(!/^[a-z0-9_]{1,25}$/.test(channel)||!Number.isSafeInteger(session)||session<1){
     $('message').textContent='Invalid channel or session configuration.';$('status').textContent='Configuration error';return;
   }
+  mpdInstallChat({channel, demo, mode: 'bundled'});
   volume=Number.isFinite(volume)?Math.max(0,Math.min(100,volume)):25;
   $('channel').textContent=channel;$('demo-channel').textContent=channel;
   $('kind').textContent=demo?'DEMO · no live video':'Twitch embedded player';
