@@ -14,6 +14,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       version: ${{ steps.gate.outputs.version }}
+      scope: ${{ steps.gate.outputs.scope }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -160,6 +161,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   macos:
+    if: needs.gate.outputs.scope == 'full'
     name: Sign and notarize ${{ matrix.platform }}
     needs: [gate, build]
     strategy:
@@ -206,6 +208,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   linux:
+    if: needs.gate.outputs.scope == 'full'
     name: Package Linux x64
     needs: [gate, build]
     runs-on: ubuntu-22.04
@@ -240,7 +243,12 @@ jobs:
           retention-days: 7
   publish:
     name: Publish GitHub release
-    needs: [gate, windows, macos, linux]
+    needs: [gate, build, windows, macos, linux]
+    if: >-
+      ${{ !cancelled() && needs.gate.result == 'success' && needs.build.result == 'success' &&
+          needs.windows.result == 'success' &&
+          ((needs.gate.outputs.scope == 'full' && needs.macos.result == 'success' && needs.linux.result == 'success') ||
+           (needs.gate.outputs.scope == 'windows-alpha' && needs.macos.result == 'skipped' && needs.linux.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     environment: release-publish
     permissions:

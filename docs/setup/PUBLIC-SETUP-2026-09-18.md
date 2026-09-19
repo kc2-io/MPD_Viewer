@@ -1,5 +1,7 @@
 # Public repository setup — September 18, 2026
 
+> Current alpha scope: [ALPHA-RELEASE-PLAN.md](ALPHA-RELEASE-PLAN.md). The owner approved signed Windows-only alpha distribution; historical full-platform requirements below still apply to other release stages.
+
 The owner explicitly changed `kc2-io/MPD_Viewer` to public. GitHub API readback
 confirmed `isPrivate=false`. This record supersedes the earlier private-repository
 visibility requirement and plan blocker; all signing and publication approvals

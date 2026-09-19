@@ -14,6 +14,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('tag');p.add_argument('--push',action='store_true');a=p.parse_args()
     v=tools.parse_tag(a.tag)
     if v!=tools.version():raise ValueError('Set and commit matching workspace/Tauri versions first; do not rewrite versions inside CI.')
+    tools.release_scope(v)
     if tools.run('git','status','--porcelain',capture=True):raise ValueError('Working tree must be clean.')
     if tools.run('git','branch','--show-current',capture=True)!='main':raise ValueError('Create release tags from main.')
     tools.require_lock();tools.require_release_pins()

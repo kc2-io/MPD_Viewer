@@ -92,6 +92,25 @@ def require_repository_policy(repository: str, private: bool) -> None:
         raise ValueError("Repository visibility differs from the committed release policy.")
 
 
+def release_scope(v: str) -> str:
+    policy = json.loads((ROOT / ".github/release-scope.json").read_text(encoding="utf-8"))
+    if not isinstance(policy, dict) or set(policy) != {"scope"} or policy["scope"] not in ("full", "windows-alpha"):
+        raise ValueError("Invalid committed release scope.")
+    scope = policy["scope"]
+    if scope == "windows-alpha" and (not SEMVER.fullmatch(v) or "-alpha." not in v):
+        raise ValueError("Windows-only scope is permitted only for an alpha prerelease.")
+    return scope
+
+
+def release_assets(v: str, scope: str) -> list[str]:
+    names = asset_names(v)
+    if scope == "full":
+        return names
+    if scope == "windows-alpha" and SEMVER.fullmatch(v) and "-alpha." in v:
+        return [name for name in names if name.endswith(("-Windows-x64.zip", "-source.zip", "-player-sources.zip"))]
+    raise ValueError("Unsupported release asset scope.")
+
+
 def gate() -> None:
     if os.environ.get("RELEASES_ENABLED") != "true":
         raise ValueError("Releases are disabled. Complete repository/signing setup before enabling them.")
@@ -107,6 +126,7 @@ def gate() -> None:
         raise ValueError("Tag, Cargo workspace version and Tauri version differ.")
     if "-" not in v and os.environ.get("STABLE_RELEASES_ENABLED") != "true":
         raise ValueError("Stable releases need a separate explicit enable after native acceptance.")
+    scope = release_scope(v)
     require_lock()
     require_release_pins()
     ref = "refs/tags/" + tag
@@ -118,7 +138,7 @@ def gate() -> None:
     run("git", "merge-base", "--is-ancestor", "HEAD", "refs/remotes/origin/main")
     if path := os.environ.get("GITHUB_OUTPUT"):
         with open(path, "a", encoding="utf-8") as f:
-            f.write(f"version={v}\n")
+            f.write(f"version={v}\nscope={scope}\n")
     print("Release metadata gate passed:", tag)
 
 
@@ -217,7 +237,11 @@ def publish() -> None:
     if live_commit(repo, tag) != head:
         raise ValueError("Live tag target has changed.")
     out = final_dir()
-    binaries = asset_names(v)[:5]
+    scope = release_scope(v)
+    names = release_assets(v, scope)
+    source_name = f"MPD_Viewer-v{v}-source.zip"
+    player_source_name = f"MPD_Viewer-v{v}-player-sources.zip"
+    binaries = [name for name in names if name not in (source_name, player_source_name)]
     actual = sorted(p.name for p in out.iterdir())
     if actual != sorted(binaries):
         raise ValueError("Release asset set incomplete or unexpected: " + repr(actual))
@@ -228,19 +252,21 @@ def publish() -> None:
     if any(r["tag_name"] == tag for page in releases for r in page):
         raise ValueError("A release already exists. Inspect it; this workflow never overwrites release assets.")
     run("git", "archive", "--format=zip", f"--prefix=MPD_Viewer-{tag}/",
-        "--output=" + str(out / asset_names(v)[5]), "HEAD")
-    run("git", "archive", "--format=zip", "--output=" + str(out / asset_names(v)[6]), "HEAD",
+        "--output=" + str(out / source_name), "HEAD")
+    run("git", "archive", "--format=zip", "--output=" + str(out / player_source_name), "HEAD",
         "player-wrapper", "web/parent.mpdviewer.com", "src-tauri/player-origin.json",
         "docs/HOSTED-SOURCE-PLAN-ADDENDUM.md")
-    files = [out / name for name in asset_names(v)]
-    manifest = {"schema": 1, "repository": repo, "tag": tag, "commit": head,
+    files = [out / name for name in names]
+    signing = {"windows": "Authenticode + timestamp verified before ZIP"}
+    if scope == "full":
+        signing.update({"macos": "Developer ID + notarization + stapling checked",
+                        "linux": "No OS-native signature; SHA-256 checksums only"})
+    manifest = {"schema": 2, "scope": scope, "repository": repo, "tag": tag, "commit": head,
                 "repository_visibility": release_policy()["visibility"],
                 "run_id": os.environ.get("GITHUB_RUN_ID"), "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
                 "cargo_lock_sha256": digest(ROOT / "Cargo.lock"),
                 "assets": {p.name: {"sha256": digest(p), "bytes": p.stat().st_size} for p in files},
-                "signing": {"windows": "Authenticode + timestamp verified before ZIP",
-                            "macos": "Developer ID + notarization + stapling checked",
-                            "linux": "No OS-native signature; SHA-256 checksums only"}}
+                "signing": signing}
     meta = out / "BUILD-METADATA.json"
     meta.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     files.append(meta)
@@ -249,12 +275,21 @@ def publish() -> None:
     files.append(sums)
     notes = ROOT / ".release-work/notes.md"
     notes.parent.mkdir(parents=True, exist_ok=True)
-    notes.write_text(f"MPD Viewer `{tag}` from `{head}`.\n\n"
-                     "Windows: signed x64 ZIP, requires WebView2. macOS: signed/notarized DMGs for Apple Silicon and Intel. "
-                     "Linux: x64 DEB/AppImage with checksums; these Linux packages are not OS-native signed.\n\n"
-                     "**POC limitations:** a successful build/signature is not proof of real Twitch playback, login, Turbo, "
-                     "chat or grid support. The supplied hosted page and native POC have a known protocol mismatch; "
-                     "see docs/HOSTED-SOURCE-PLAN-ADDENDUM.md. Player source ZIP is for review, not automatic deployment.\n\n"
+    platforms = ("Windows-only alpha: signed x64 ZIP, requires Microsoft Edge WebView2 Runtime. "
+                 "macOS and Linux binaries are not included."
+                 if scope == "windows-alpha" else
+                 "Windows: signed x64 ZIP. macOS: signed/notarized Apple Silicon and Intel DMGs. "
+                 "Linux: x64 DEB/AppImage with checksums, not OS-native signed.")
+    notes.write_text(f"MPD Viewer `{tag}` from `{head}`.\n\n" + platforms + "\n\n"
+                     "Close the old app, extract the Windows ZIP, and run MPD_Viewer.exe. "
+                     "Existing preferences are preserved. This is a ZIP distribution, not an installer.\n\n"
+                     "Includes the Twitch player startup fix and per-channel chat with hide/show controls. "
+                     "Live video/chat display and paused-player retention were observed on Windows.\n\n"
+                     "**Alpha limitations:** chat sign-in popups remain unsupported; posting, viewer login, "
+                     "Turbo and native grid are unverified. The native volume API still reported 50% despite "
+                     "a requested 25%; check audio using Twitch's visible controls. Cross-platform builds "
+                     "do not establish live playback or login acceptance.\n\n"
+                     "Source archives are review material, not signed executables or website deployments. "
                      "Verify SHA256SUMS.txt and BUILD-METADATA.json against the downloaded files.\n", encoding="utf-8")
     command = ["gh", "release", "create", tag, "--repo", repo, "--verify-tag", "--draft",
                "--title", "MPD Viewer " + tag, "--notes-file", str(notes)]
