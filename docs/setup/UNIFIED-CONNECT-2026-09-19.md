@@ -14,7 +14,7 @@ Monitoring credentials remain in Rust memory and require reconnection after quit
 
 ## Security and lifecycle
 
-The initial URL must be HTTPS, exact `www.twitch.tv`, `/activate`, with no credentials, non-default port or fragment. It must contain exactly one `public=true` and one `device-code` matching Twitch's returned user code, with no additional keys. Further navigation is restricted to official `/login`, `/`, and `/activate`; activation query values remain bound to the current attempt. The code-less `/activate` path permits a completion page. New windows and downloads remain denied. No capability or profile configuration changes are made.
+The initial URL must be HTTPS, exact `www.twitch.tv`, `/activate`, with no credentials, non-default port or fragment. It must contain exactly one `device-code` matching Twitch's returned user code. The optional `public` parameter may occur once and must equal `true`; no additional keys are accepted. Further navigation is restricted to official `/login`, `/`, and `/activate`; activation query values remain bound to the current attempt. The code-less `/activate` path permits a completion page. New windows and downloads remain denied. No capability or profile configuration changes are made.
 
 Window labels include the authorization epoch and match neither manager nor player capabilities. Pending state and matching epochs gate incoming auth results. Malformed links and open failures abort/invalidate the attempt. Window cleanup has separate tracking, so a failed close retains its old identity for retry even after the grant is invalidated; a new grant cannot start until cleanup succeeds. Error text excludes raw URLs/codes.
 
@@ -33,3 +33,11 @@ Window labels include the authorization epoch and match neither manager nor play
 The unified unsigned preview has been launched using the existing app profile. Real Twitch activation/approval and viewer recognition for this combined flow await the user's observation. Earlier PR #10 separately established user-reported website-session sharing and restart persistence; that does not substitute for testing this new activation route. Fresh-profile login/MFA and video identity/Turbo remain unverified.
 
 No new release, tag, website deployment, Twitch registration change, cookie import/export or automated chat is included. Files changed: native model/controller/storage/auth window; manager HTML/JS; chat help text; browser/configuration fixtures and checks; this evidence record. Existing preferences paths, app identifier, capabilities, player lifecycle policy and hosted source snapshot are preserved.
+
+## Activation-link compatibility correction
+
+The first implementation incorrectly required the `public=true` parameter shown in Twitch's documentation example. On September 19, 2026, a live device-code response from the unchanged app registration returned the exact HTTPS `www.twitch.tv/activate` destination with only a matching `device-code` parameter. Only structural metadata was inspected; code/token values were not logged or saved.
+
+The parser now accepts this actual response shape as well as the documented example. A matching code remains mandatory; missing/mismatched/duplicate codes, false/duplicate public flags, unknown keys, foreign destinations, userinfo, non-default ports and fragments remain rejected. Navigation and account permissions are unchanged.
+
+Verification: 27 Rust workspace tests passed, including the new actual-shape regression and negative cases; optimized Windows build passed; independent read-only security review approved. A disposable Rust diagnostic called the actual Twitch client and production activation parser with a fresh live response and passed without performing authorization or printing codes. This establishes live response compatibility, not completed website login or viewer identity. No release/tag/site deployment.

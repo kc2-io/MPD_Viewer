@@ -38,7 +38,7 @@ impl Activation {
                 _ => return false,
             }
         }
-        public <= 1 && code <= 1 && (!required || (public == 1 && code == 1))
+        public <= 1 && code <= 1 && (!required || code == 1)
     }
     #[cfg(any(windows, test))]
     fn allows(&self, url: &url::Url) -> bool {
@@ -100,13 +100,24 @@ mod tests {
         assert!(Activation::parse(GOOD, "ABCDEFGH").is_ok());
         for text in [GOOD.replace("ABCDEFGH", "DIFFERENT"), format!("{GOOD}&device-code=ABCDEFGH"),
             format!("{GOOD}&public=true"), format!("{GOOD}&next=https://evil.example"),
-            format!("{GOOD}#fragment"), GOOD.replace("public=true&", ""),
+            format!("{GOOD}#fragment"), GOOD.replace("public=true", "public=false"),
             GOOD.replace("https:", "http:"), GOOD.replace("www.twitch.tv", "www.twitch.tv.evil.example"),
             GOOD.replace("www.twitch.tv", "user@www.twitch.tv"), GOOD.replace("www.twitch.tv", "www.twitch.tv:444"),
             GOOD.replace("/activate", "/login")] {
             assert!(Activation::parse(&text, "ABCDEFGH").is_err());
         }
         assert!(Activation::parse(GOOD, "").is_err());
+    }
+    #[test]
+    fn accepts_live_activation_shape_without_optional_public_flag() {
+        let live = "https://www.twitch.tv/activate?device-code=ABCDEFGH";
+        let activation = Activation::parse(live, "ABCDEFGH").unwrap();
+        assert!(activation.allows(&live.parse().unwrap()));
+        assert!(Activation::parse("https://www.twitch.tv/activate", "ABCDEFGH").is_err());
+        assert!(Activation::parse("https://www.twitch.tv/activate?public=true", "ABCDEFGH").is_err());
+        assert!(Activation::parse(live, "OTHER").is_err());
+        assert!(Activation::parse(&format!("{live}&device-code=ABCDEFGH"), "ABCDEFGH").is_err());
+        assert!(Activation::parse(&format!("{live}&next=https://evil.example"), "ABCDEFGH").is_err());
     }
     #[test]
     fn navigation_stays_on_reviewed_routes_and_the_same_attempt() {
