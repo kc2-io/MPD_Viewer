@@ -15,12 +15,11 @@ pub struct Settings {
     pub volume: u8,
     pub muted: bool,
     pub demo: bool,
-    pub client_id: String,
 }
 impl Default for Settings {
     fn default() -> Self {
         Self { schema: 1, favorites: vec![], limit: 3, volume: 25,
-            muted: false, demo: true, client_id: DEFAULT_CLIENT_ID.to_owned() }
+            muted: false, demo: true }
     }
 }
 impl Settings {
@@ -34,7 +33,6 @@ impl Settings {
             let login = mpd_core::normalize_login(&f.login).map_err(str::to_owned)?;
             if login != f.login || !seen.insert(login) { return Err("Invalid or duplicate favorite.".into()); }
         }
-        if self.client_id.len() > 128 { return Err("Client ID is too long.".into()); }
         Ok(())
     }
 }
@@ -59,10 +57,8 @@ pub enum Action {
     Pause,
     Stop,
     Refresh,
-    Connect { client_id: String },
+    Connect {},
     Disconnect,
-    OpenAuth,
-    OpenViewerLogin,
     Focus { login: String },
     Skip { login: String },
     UndoSkip { login: String },
@@ -125,5 +121,16 @@ impl Default for View {
         Self { mode: Mode::Stopped, settings: Settings::default(), favorites: vec![], players: vec![],
             connected_as: None, auth_pending: false, user_code: None, last_check_seconds: None,
             polling: false, next_check_seconds: 0, player_origin: String::new(), error: None, events: vec![] }
+    }
+}
+
+#[cfg(test)]
+mod action_tests {
+    use super::*;
+    #[test]
+    fn connect_rejects_application_id_overrides_and_unknown_fields() {
+        assert!(serde_json::from_str::<Action>(r#"{"type":"connect"}"#).is_ok());
+        assert!(serde_json::from_str::<Action>(r#"{"type":"connect","client_id":"other"}"#).is_err());
+        assert!(serde_json::from_str::<Action>(r#"{"type":"connect","url":"https://evil.example"}"#).is_err());
     }
 }
