@@ -67,9 +67,11 @@ impl Activation {
     }
     #[cfg(any(windows, test))]
     fn allows(&self, url: &url::Url) -> bool {
-        if official_host(url, "id.twitch.tv") {
-            return url.as_str().len() <= 4096 && url.path() == "/oauth2/authorize"
-                && url.fragment().is_none() && self.authorization_query(url);
+        let authorization_route = (official_host(url, "id.twitch.tv") && url.path() == "/oauth2/authorize")
+            || (official_host(url, "auth.twitch.tv") && url.path() == "/authorize");
+        if authorization_route {
+            return url.as_str().len() <= 4096 && url.fragment().is_none()
+                && self.authorization_query(url);
         }
         official(url) && match url.path() {
             "/login" | "/" => true,
@@ -210,6 +212,26 @@ mod tests {
             good.as_str().replace("/oauth2/authorize", "/oauth2/token"),
             format!("{good}&state=extra"), format!("{good}#fragment"),
             format!("{good}&device_code={}", "x".repeat(4096)),
+        ] { assert!(!activation.allows(&text.parse().unwrap())); }
+    }
+    #[test]
+    fn authentication_frontend_uses_the_same_bound_query_policy() {
+        let activation = Activation::parse(GOOD, "ABCDEFGH").unwrap();
+        let mut frontend = authorization_url();
+        frontend.set_host(Some("auth.twitch.tv")).unwrap();
+        frontend.set_path("/authorize");
+        assert!(activation.allows(&frontend));
+        for text in [
+            frontend.as_str().replace("auth.twitch.tv", "auth.twitch.tv.evil.example"),
+            frontend.as_str().replace("auth.twitch.tv", "user@auth.twitch.tv"),
+            frontend.as_str().replace("auth.twitch.tv", "auth.twitch.tv:444"),
+            frontend.as_str().replace("https:", "http:"),
+            frontend.as_str().replace("/authorize?", "/authorize/redirect?"),
+            frontend.as_str().replace("user_code=ABCDEFGH", "user_code=OTHER"),
+            frontend.as_str().replace(crate::model::DEFAULT_CLIENT_ID, "other-client"),
+            frontend.as_str().replace("scope=", "scope=chat%3Aedit"),
+            format!("{frontend}&user_code=ABCDEFGH"), format!("{frontend}#fragment"),
+            "https://auth.twitch.tv/authorize".into(),
         ] { assert!(!activation.allows(&text.parse().unwrap())); }
     }
     #[test]
