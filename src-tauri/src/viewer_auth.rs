@@ -10,10 +10,12 @@ pub fn ensure_supported() -> Result<(), String> {
 
 pub fn label(epoch: u64) -> String { format!("viewer-auth-{epoch}") }
 
-fn official(url: &url::Url) -> bool {
-    url.scheme() == "https" && url.host_str() == Some("www.twitch.tv")
+fn official_host(url: &url::Url, host: &str) -> bool {
+    url.scheme() == "https" && url.host_str() == Some(host)
         && url.username().is_empty() && url.password().is_none() && url.port().is_none()
 }
+
+fn official(url: &url::Url) -> bool { official_host(url, "www.twitch.tv") }
 
 pub struct Activation { url: url::Url, code: String }
 impl Activation {
@@ -41,7 +43,34 @@ impl Activation {
         public <= 1 && code <= 1 && (!required || code == 1)
     }
     #[cfg(any(windows, test))]
+    fn authorization_query(&self, url: &url::Url) -> bool {
+        // Twitch's activation page supplies this continuation. Bind it to our
+        // app and pending user code; never accept extra scopes or foreign returns.
+        let mut seen = std::collections::HashSet::new();
+        for (key, value) in url.query_pairs() {
+            if !seen.insert(key.clone()) { return false; }
+            let valid = match key.as_ref() {
+                "client_id" => value == crate::model::DEFAULT_CLIENT_ID,
+                "user_code" => value == self.code,
+                "scope" => value.is_empty(),
+                "device_code" => !value.is_empty() && value.len() <= 1024,
+                "force_verify" => matches!(value.as_ref(), "true" | "false"),
+                "response_type" => !value.is_empty() && value.len() <= 64
+                    && value.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_'),
+                "redirect_uri" => url::Url::parse(&value).is_ok_and(|target|
+                    official(&target) && target.fragment().is_none()),
+                _ => false,
+            };
+            if !valid { return false; }
+        }
+        seen.len() == 7
+    }
+    #[cfg(any(windows, test))]
     fn allows(&self, url: &url::Url) -> bool {
+        if official_host(url, "id.twitch.tv") {
+            return url.as_str().len() <= 4096 && url.path() == "/oauth2/authorize"
+                && url.fragment().is_none() && self.authorization_query(url);
+        }
         official(url) && match url.path() {
             "/login" | "/" => true,
             "/activate" => url.fragment().is_none() && self.activation_query(url, false),
@@ -131,6 +160,57 @@ mod tests {
             "https://www.twitch.tv.evil.example/login", "file:///C:/test.html", "about:blank"] {
             assert!(!activation.allows(&text.parse().unwrap()));
         }
+    }
+    fn authorization_url() -> url::Url {
+        let mut url: url::Url = "https://id.twitch.tv/oauth2/authorize".parse().unwrap();
+        url.query_pairs_mut().extend_pairs([
+            ("client_id", crate::model::DEFAULT_CLIENT_ID), ("user_code", "ABCDEFGH"),
+            ("device_code", "opaque-test-device-code"), ("scope", ""),
+            ("response_type", "device_code"), ("force_verify", "false"),
+            ("redirect_uri", "https://www.twitch.tv/activate"),
+        ]);
+        url
+    }
+    #[test]
+    fn authorization_continuation_is_bound_and_has_no_extra_authority() {
+        let activation = Activation::parse(GOOD, "ABCDEFGH").unwrap();
+        let good = authorization_url();
+        assert!(activation.allows(&good));
+        let keys: Vec<_> = good.query_pairs().map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+        // Every observed field is mandatory, unique, and checked independently.
+        for (key, _) in &keys {
+            let mut missing = good.clone();
+            missing.set_query(None);
+            missing.query_pairs_mut().extend_pairs(keys.iter().filter(|(k, _)| k != key));
+            assert!(!activation.allows(&missing), "missing {key}");
+            let mut duplicate = good.clone();
+            duplicate.query_pairs_mut().append_pair(key, &keys.iter().find(|(k, _)| k == key).unwrap().1);
+            assert!(!activation.allows(&duplicate), "duplicate {key}");
+        }
+        for (key, bad) in [
+            ("client_id", "other-app"), ("user_code", "OTHER"), ("scope", "chat:edit"),
+            ("device_code", ""), ("response_type", ""), ("response_type", "invalid value"),
+            ("force_verify", "yes"), ("redirect_uri", "https://evil.example/"),
+            ("redirect_uri", "https://www.twitch.tv.evil.example/activate"),
+            ("redirect_uri", "http://www.twitch.tv/activate"),
+            ("redirect_uri", "https://user@www.twitch.tv/activate"),
+            ("redirect_uri", "https://www.twitch.tv:444/activate"),
+            ("redirect_uri", "https://www.twitch.tv/activate#fragment"),
+        ] {
+            let mut url = good.clone();
+            url.set_query(None);
+            url.query_pairs_mut().extend_pairs(keys.iter().map(|(k, v)| (k.as_str(), if k == key { bad } else { v.as_str() })));
+            assert!(!activation.allows(&url), "invalid {key}");
+        }
+        for text in [
+            good.as_str().replace("https:", "http:"),
+            good.as_str().replace("id.twitch.tv", "id.twitch.tv.evil.example"),
+            good.as_str().replace("id.twitch.tv", "user@id.twitch.tv"),
+            good.as_str().replace("id.twitch.tv", "id.twitch.tv:444"),
+            good.as_str().replace("/oauth2/authorize", "/oauth2/token"),
+            format!("{good}&state=extra"), format!("{good}#fragment"),
+            format!("{good}&device_code={}", "x".repeat(4096)),
+        ] { assert!(!activation.allows(&text.parse().unwrap())); }
     }
     #[test]
     fn window_identity_changes_between_attempts() {
