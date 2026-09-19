@@ -17,7 +17,10 @@ fn official_host(url: &url::Url, host: &str) -> bool {
 
 fn official(url: &url::Url) -> bool { official_host(url, "www.twitch.tv") }
 
-pub struct Activation { url: url::Url, code: String }
+pub struct Activation {
+    url: url::Url, code: String,
+    return_url: std::sync::Mutex<Option<url::Url>>,
+}
 impl Activation {
     pub fn parse(text: &str, code: &str) -> Result<Self, String> {
         let invalid = || "Twitch returned an unexpected activation link. Connect again.".to_owned();
@@ -25,7 +28,7 @@ impl Activation {
             return Err(invalid());
         }
         let url = url::Url::parse(text).map_err(|_| invalid())?;
-        let result = Self { url, code: code.to_owned() };
+        let result = Self { url, code: code.to_owned(), return_url: std::sync::Mutex::new(None) };
         if !official(&result.url) || result.url.path() != "/activate" || result.url.fragment().is_some()
             || !result.activation_query(&result.url, true) { return Err(invalid()); }
         Ok(result)
@@ -70,13 +73,24 @@ impl Activation {
         let authorization_route = (official_host(url, "id.twitch.tv") && url.path() == "/oauth2/authorize")
             || (official_host(url, "auth.twitch.tv") && url.path() == "/authorize");
         if authorization_route {
-            return url.as_str().len() <= 4096 && url.fragment().is_none()
-                && self.authorization_query(url);
+            if url.as_str().len() > 4096 || url.fragment().is_some() || !self.authorization_query(url) {
+                return false;
+            }
+            // This first-party return was checked above. Keep exactly one target
+            // for this window/attempt; do not turn its origin into a path wildcard.
+            let Some(target) = url.query_pairs().find(|(key, _)| key == "redirect_uri")
+                .and_then(|(_, value)| url::Url::parse(&value).ok()) else { return false; };
+            let Ok(mut expected) = self.return_url.lock() else { return false; };
+            return match expected.as_ref() {
+                Some(current) => current == &target,
+                None => { *expected = Some(target); true },
+            };
         }
         official(url) && match url.path() {
             "/login" | "/" => true,
+            // An exact return must never bypass the existing same-code check.
             "/activate" => url.fragment().is_none() && self.activation_query(url, false),
-            _ => false,
+            _ => self.return_url.lock().is_ok_and(|expected| expected.as_ref() == Some(url)),
         }
     }
 }
@@ -233,6 +247,57 @@ mod tests {
             format!("{frontend}&user_code=ABCDEFGH"), format!("{frontend}#fragment"),
             "https://auth.twitch.tv/authorize".into(),
         ] { assert!(!activation.allows(&text.parse().unwrap())); }
+    }
+    #[test]
+    fn return_navigation_is_exact_and_bound_to_an_accepted_authorization() {
+        let activation = Activation::parse(GOOD, "ABCDEFGH").unwrap();
+        let callback: url::Url = "https://www.twitch.tv/test-only/complete".parse().unwrap();
+        let authorize = |target: &str| {
+            let mut url = authorization_url();
+            let pairs: Vec<_> = url.query_pairs().map(|(k, v)|
+                (k.to_string(), if k == "redirect_uri" { target.to_owned() } else { v.into_owned() })).collect();
+            url.set_query(None);
+            url.query_pairs_mut().extend_pairs(pairs);
+            url
+        };
+        assert!(!activation.allows(&callback));
+        let mut invalid = authorize(callback.as_str());
+        invalid.query_pairs_mut().append_pair("scope", "chat:edit");
+        assert!(!activation.allows(&invalid));
+        assert!(!activation.allows(&callback));
+        let valid = authorize(callback.as_str());
+        assert!(activation.allows(&valid));
+        assert!(activation.allows(&callback));
+        assert!(activation.allows(&valid));
+        assert!(!activation.allows(&authorize("https://www.twitch.tv/another-return")));
+        for text in [
+            format!("{callback}?extra=1"), format!("{callback}#fragment"), format!("{callback}/child"),
+            "https://www.twitch.tv/test-only/other".into(),
+            "https://www.twitch.tv/another-return".into(),
+            callback.as_str().replace("www.twitch.tv", "www.twitch.tv.evil.example"),
+            callback.as_str().replace("https:", "http:"),
+            callback.as_str().replace("www.twitch.tv", "user@www.twitch.tv"),
+            callback.as_str().replace("www.twitch.tv", "www.twitch.tv:444"),
+        ] { assert!(!activation.allows(&text.parse().unwrap())); }
+        let next_attempt = Activation::parse(GOOD, "ABCDEFGH").unwrap();
+        assert!(!next_attempt.allows(&callback));
+    }
+    #[test]
+    fn recorded_return_cannot_bypass_activation_query_checks() {
+        for target in [
+            "https://www.twitch.tv/activate?device-code=OTHER",
+            "https://www.twitch.tv/activate?extra=unexpected",
+            "https://www.twitch.tv/activate?public=false",
+        ] {
+            let activation = Activation::parse(GOOD, "ABCDEFGH").unwrap();
+            let mut authorize = authorization_url();
+            let pairs: Vec<_> = authorize.query_pairs().map(|(k, v)|
+                (k.to_string(), if k == "redirect_uri" { target.to_owned() } else { v.into_owned() })).collect();
+            authorize.set_query(None);
+            authorize.query_pairs_mut().extend_pairs(pairs);
+            assert!(activation.allows(&authorize));
+            assert!(!activation.allows(&target.parse().unwrap()));
+        }
     }
     #[test]
     fn window_identity_changes_between_attempts() {
