@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use crate::{model::*, player::{self, Host}, storage::Store};
 use mpd_core::Presence;
-use mpd_twitch::{ApiError, Session, Twitch};
+use mpd_twitch::{ApiError, Session, Stream, Twitch};
 
 type Credentials = Arc<Mutex<Session>>;
 
@@ -28,7 +28,7 @@ pub enum Message {
     AuthReturnLoaded { epoch: u64 },
     Authorized { epoch: u64, result: Result<Session, ApiError> },
     Polled { id: u64, generation: u64, epoch: u64, monitored: bool,
-        result: Result<HashMap<String, String>, ApiError> },
+        result: Result<HashMap<String, Stream>, ApiError> },
 }
 #[derive(Clone)]
 pub struct Handle {
@@ -136,7 +136,10 @@ impl Controller {
             Action::Enable { login, enabled } => {
                 let mut s = self.settings.clone();
                 s.favorites.iter_mut().find(|f| f.login == login).ok_or("Unknown favorite.")?.enabled = enabled;
-                self.save(s)?; self.changed();
+                self.save(s)?;
+                // Disabled channels are not polled; re-enabling waits for a new count.
+                if let Some(p) = self.presence.get_mut(&login) { p.viewer_count = None; }
+                self.changed();
             }
             Action::SetLimit { limit } => { let mut s = self.settings.clone(); s.limit = limit; self.save(s)?; }
             Action::SetAudio { volume, muted } => {
@@ -298,6 +301,20 @@ impl Controller {
         p.reported = Some(Instant::now()); p.report = Some(report);
         // Reports are advisory only: NEVER change live status, ranking, or opening policy.
     }
+    fn sync_viewer_titles(&self) {
+        for p in self.players.values().filter(|p| !p.closing) {
+            let enabled = self.settings.favorites.iter().any(|f| f.login == p.login && f.enabled);
+            let count = ViewerCount::from_presence(self.presence.get(&p.login), enabled, self.settings.demo);
+            if let Some(window) = self.app.get_webview_window(&p.label) {
+                let title = player::window_title(&p.login, self.settings.demo, count);
+                // Hosted pages may change document.title after loading. Compare the
+                // actual native title on each controller tick, rather than caching it.
+                if window.title().ok().as_deref() != Some(title.as_str()) {
+                    let _ = window.set_title(&title);
+                }
+            }
+        }
+    }
     fn snapshot(&self) -> View {
         let mut players: Vec<_> = self.players.values().map(|p| PlayerView {
             login: p.login.clone(), session: p.id, closing: p.closing,
@@ -318,6 +335,7 @@ impl Controller {
                     Some(_) => "offline",
                 };
                 FavoriteView { login: f.login.clone(), enabled: f.enabled, presence: presence.into(),
+                    viewer_count: ViewerCount::from_presence(p, f.enabled, self.settings.demo),
                     skipped: self.skipped.get(&f.login).is_some_and(|id| p.and_then(|p| p.broadcast_id.as_ref()) == Some(id)),
                     demo_live: self.demo_live.contains_key(&f.login), open_error: self.failed.get(&f.login).cloned() }
             }).collect(), players, connected_as: self.connected_as.clone(), auth_pending: self.auth_pending,
@@ -379,7 +397,9 @@ impl Controller {
                                         self.next_poll = Instant::now() + Duration::from_secs(if monitored { 30 } else { 3600 });
                                         if monitored && self.mode != Mode::Stopped && !self.settings.demo {
                                             for f in self.settings.favorites.iter().filter(|f| f.enabled) {
-                                                self.presence.entry(f.login.clone()).or_default().observe(online.get(&f.login).map(String::as_str));
+                                                let stream = online.get(&f.login);
+                                                self.presence.entry(f.login.clone()).or_default().observe_stream(
+                                                    stream.map(|s| s.id.as_str()), stream.and_then(|s| s.viewer_count));
                                             }
                                             self.last_check = Some(Instant::now());
                                         }
@@ -401,6 +421,8 @@ impl Controller {
                     let gone: Vec<_> = self.players.values().filter(|p| self.app.get_webview_window(&p.label).is_none()).map(|p| p.label.clone()).collect();
                     for label in gone { self.destroyed(&label); }
                     if !self.settings.demo && self.last_check.is_some_and(|t| t.elapsed() > Duration::from_secs(90)) { self.mark_stale(); }
+                    // Native title work stays bounded to this timer, not player reports.
+                    self.sync_viewer_titles();
                 }
             }
             self.reconcile(); self.maybe_poll(); self.publish.send_replace(self.snapshot());

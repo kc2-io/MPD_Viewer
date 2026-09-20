@@ -50,7 +50,13 @@ struct TokenReply { access_token: String, refresh_token: String, expires_in: u64
 #[derive(Deserialize)]
 struct Validated { client_id: String, #[serde(default)] login: String, expires_in: u64 }
 #[derive(Deserialize)]
-struct Stream { id: String, user_login: String }
+pub struct Stream {
+    pub id: String,
+    pub user_login: String,
+    // Missing metadata must not become a fabricated zero or discard live status.
+    #[serde(default)]
+    pub viewer_count: Option<u32>,
+}
 #[derive(Deserialize, Default)]
 struct Pagination { cursor: Option<String> }
 #[derive(Deserialize)]
@@ -151,7 +157,7 @@ impl Twitch {
         self.validate(session).await
     }
 
-    async fn streams_once(&self, session: &Session, logins: &[String]) -> Result<HashMap<String, String>, ApiError> {
+    async fn streams_once(&self, session: &Session, logins: &[String]) -> Result<HashMap<String, Stream>, ApiError> {
         let mut online = HashMap::new();
         for batch in logins.chunks(100) {
             let requested: HashSet<_> = batch.iter().map(String::as_str).collect();
@@ -167,7 +173,7 @@ impl Twitch {
                 let page: Page = checked(response)?.json().await.map_err(|_| ApiError::new("Invalid streams response; observation discarded."))?;
                 for stream in page.data {
                     let login = stream.user_login.to_ascii_lowercase();
-                    if requested.contains(login.as_str()) { online.insert(login, stream.id); }
+                    if requested.contains(login.as_str()) { online.insert(login, stream); }
                 }
                 match page.pagination.cursor.filter(|s| !s.is_empty()) {
                     Some(next) if cursors.insert(next.clone()) => cursor = Some(next),
@@ -181,7 +187,7 @@ impl Twitch {
     }
 
     /// Caller must serialize this method for each Session (refresh tokens are single-use).
-    pub async fn poll(&self, session: &mut Session, logins: &[String]) -> Result<HashMap<String, String>, ApiError> {
+    pub async fn poll(&self, session: &mut Session, logins: &[String]) -> Result<HashMap<String, Stream>, ApiError> {
         if session.expires.saturating_duration_since(Instant::now()) < Duration::from_secs(60) {
             self.refresh(session).await?;
         } else if session.validated.elapsed() >= Duration::from_secs(3600) {
@@ -195,6 +201,31 @@ impl Twitch {
                 self.streams_once(session, logins).await
             }
             result => result,
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+    #[test]
+    fn counts_deserialize_without_conflating_missing_and_zero() {
+        let page: Page = serde_json::from_str(r#"{"data":[
+            {"id":"1","user_login":"alpha","viewer_count":0},
+            {"id":"2","user_login":"beta","viewer_count":1234567},
+            {"id":"3","user_login":"gamma"}
+        ]}"#).unwrap();
+        assert_eq!(page.data[0].viewer_count, Some(0));
+        assert_eq!(page.data[1].viewer_count, Some(1234567));
+        assert_eq!(page.data[2].viewer_count, None);
+        assert_eq!(page.data[2].id, "3");
+    }
+    #[test]
+    fn invalid_counts_discard_the_observation_instead_of_wrapping() {
+        for count in ["-1", "1.5", "4294967296", "\"100\""] {
+            let json = format!(r#"{{"data":[{{"id":"1","user_login":"alpha","viewer_count":{count}}}]}}"#);
+            assert!(serde_json::from_str::<Page>(&json).is_err());
         }
     }
 }

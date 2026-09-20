@@ -1,4 +1,4 @@
-import { playbackLabel, observedPlaying, secondsAgo } from './view-model.js';
+import { playbackLabel, observedPlaying, secondsAgo, viewerCountLabel } from './view-model.js';
 const $ = id => document.getElementById(id);
 let state, listKey = '', playersKey = '', dragging = null, moving = false, rankRecovery = null, refreshTask = null, audioTimer, localError = null;
 const native = () => window.__TAURI__?.core;
@@ -122,6 +122,8 @@ function favorites(s) {
     li.title=`Drag ${f.login} to change rank, or use its up/down arrows`;
     const info=node('div','','channel-info'); info.append(node('strong',f.login));
     const sub=node('div','','channel-sub'); sub.append(node('span',f.presence==='live'?'● LIVE':f.presence.toUpperCase(),f.presence==='live'?'live':''));
+    const audience = s.settings.demo ? '' : viewerCountLabel(f.viewer_count);
+    if (audience) sub.append(node('span',audience,'viewer-count'));
     if (assigned.has(f.login)) sub.append(node('span','SELECTED','selected-label'));
     if (f.skipped) sub.append(node('span','SKIPPED'));
     if (f.open_error) { const e=node('span','OPEN FAILED'); e.title=f.open_error; sub.append(e); }

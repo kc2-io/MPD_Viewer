@@ -80,11 +80,34 @@ pub struct Report {
     pub muted: Option<bool>,
 }
 
+/// Last observed audience size. A missing value is never represented as zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct ViewerCount { pub count: u32, pub stale: bool }
+impl ViewerCount {
+    pub fn from_presence(presence: Option<&mpd_core::Presence>, enabled: bool, demo: bool) -> Option<Self> {
+        if !enabled || demo { return None; }
+        let p = presence?;
+        if p.broadcast_id.is_none() || p.missing_polls > 0 { return None; }
+        p.viewer_count.map(|count| Self { count, stale: !p.fresh })
+    }
+    pub fn label(self) -> String {
+        let digits = self.count.to_string();
+        let mut grouped = String::new();
+        for (index, ch) in digits.chars().enumerate() {
+            if index > 0 && (digits.len() - index).is_multiple_of(3) { grouped.push(','); }
+            grouped.push(ch);
+        }
+        format!("{grouped} viewer{}{}", if self.count == 1 { "" } else { "s" },
+            if self.stale { " (stale)" } else { "" })
+    }
+}
+
 #[derive(Clone, Serialize)]
 pub struct FavoriteView {
     pub login: String,
     pub enabled: bool,
     pub presence: String,
+    pub viewer_count: Option<ViewerCount>,
     pub skipped: bool,
     pub demo_live: bool,
     pub open_error: Option<String>,
@@ -132,5 +155,36 @@ mod action_tests {
         assert!(serde_json::from_str::<Action>(r#"{"type":"connect"}"#).is_ok());
         assert!(serde_json::from_str::<Action>(r#"{"type":"connect","client_id":"other"}"#).is_err());
         assert!(serde_json::from_str::<Action>(r#"{"type":"connect","url":"https://evil.example"}"#).is_err());
+    }
+}
+
+
+#[cfg(test)]
+mod viewer_count_tests {
+    use super::*;
+    #[test]
+    fn display_distinguishes_live_stale_unavailable_disabled_and_demo() {
+        let mut p = mpd_core::Presence::default();
+        assert_eq!(ViewerCount::from_presence(Some(&p), true, false), None);
+        p.observe_stream(Some("a1"), Some(0));
+        assert_eq!(ViewerCount::from_presence(Some(&p), true, false), Some(ViewerCount { count: 0, stale: false }));
+        assert_eq!(ViewerCount::from_presence(Some(&p), false, false), None);
+        assert_eq!(ViewerCount::from_presence(Some(&p), true, true), None);
+        p.stale();
+        assert_eq!(ViewerCount::from_presence(Some(&p), true, false), Some(ViewerCount { count: 0, stale: true }));
+        p.observe_stream(None, None);
+        assert_eq!(ViewerCount::from_presence(Some(&p), true, false), None);
+        p.observe_stream(Some("a2"), Some(20));
+        assert_eq!(ViewerCount::from_presence(Some(&p), true, false), Some(ViewerCount { count: 20, stale: false }));
+        p.observe_stream(Some("a2"), None);
+        assert_eq!(ViewerCount::from_presence(Some(&p), true, false), None);
+    }
+    #[test]
+    fn title_labels_group_counts_and_mark_stale_without_rounding() {
+        for (count, expected) in [(0,"0 viewers"), (1,"1 viewer"), (999,"999 viewers"),
+            (1000,"1,000 viewers"), (1234567,"1,234,567 viewers"), (u32::MAX,"4,294,967,295 viewers")] {
+            assert_eq!(ViewerCount { count, stale: false }.label(), expected);
+            assert_eq!(ViewerCount { count, stale: true }.label(), format!("{expected} (stale)"));
+        }
     }
 }
