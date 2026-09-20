@@ -10,6 +10,7 @@ pub struct Favorite {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Presence {
     pub broadcast_id: Option<String>,
+    pub viewer_count: Option<u32>,
     pub missing_polls: u8,
     pub fresh: bool,
 }
@@ -18,6 +19,7 @@ impl Presence {
     /// Only call for a complete, successful observation of this channel's batch.
     pub fn observe(&mut self, broadcast: Option<&str>) {
         self.fresh = true;
+        self.viewer_count = None;
         if let Some(id) = broadcast {
             self.broadcast_id = Some(id.to_owned());
             self.missing_polls = 0;
@@ -27,6 +29,12 @@ impl Presence {
                 self.broadcast_id = None;
             }
         }
+    }
+
+    /// Counts are metadata for a positive observation, never a selection signal.
+    pub fn observe_stream(&mut self, broadcast: Option<&str>, viewer_count: Option<u32>) {
+        self.observe(broadcast);
+        self.viewer_count = broadcast.and(viewer_count);
     }
 
     pub fn stale(&mut self) {
@@ -109,7 +117,7 @@ mod tests {
     }
     fn live(names: &[&str]) -> HashMap<String, Presence> {
         names.iter().map(|s| (s.to_string(), Presence {
-            broadcast_id: Some(format!("{s}-1")), missing_polls: 0, fresh: true,
+            broadcast_id: Some(format!("{s}-1")), missing_polls: 0, fresh: true, viewer_count: None,
         })).collect()
     }
     fn strings(names: &[&str]) -> Vec<String> { names.iter().map(|s| s.to_string()).collect() }
@@ -191,5 +199,50 @@ mod tests {
             "https://twitch.tv/a/videos", "a b", "<script>", "a/b", "éclair"] {
             assert!(normalize_login(value).is_err(), "{value}");
         }
+    }
+}
+
+
+#[cfg(test)]
+mod audience_tests {
+    use super::*;
+    #[test]
+    fn counts_follow_complete_observations_and_clear_on_first_miss() {
+        let mut p = Presence::default();
+        p.observe_stream(Some("broadcast-1"), Some(0));
+        assert_eq!(p.viewer_count, Some(0));
+        p.observe_stream(Some("broadcast-1"), Some(1234));
+        p.stale();
+        assert_eq!(p.viewer_count, Some(1234));
+        assert!(!p.fresh);
+        p.observe_stream(None, None);
+        assert_eq!(p.viewer_count, None);
+        assert_eq!(p.broadcast_id.as_deref(), Some("broadcast-1"));
+        p.observe_stream(None, None);
+        assert_eq!(p.broadcast_id, None);
+        p.observe_stream(Some("broadcast-2"), None);
+        assert_eq!(p.viewer_count, None);
+        assert!(p.fresh);
+    }
+    #[test]
+    fn counts_cannot_override_rank_or_enable_a_non_live_channel() {
+        let ranked = vec![Favorite { login: "alpha".into(), enabled: true },
+            Favorite { login: "beta".into(), enabled: true }];
+        let mut alpha = Presence::default();
+        let mut beta = Presence::default();
+        alpha.observe_stream(Some("a1"), Some(0));
+        beta.observe_stream(Some("b1"), Some(u32::MAX));
+        let presence = HashMap::from([("alpha".into(), alpha), ("beta".into(), beta)]);
+        assert_eq!(select(&ranked, &presence, &HashSet::new(), &HashMap::new(), 1), vec!["alpha"]);
+        let mut offline = Presence::default();
+        offline.observe_stream(None, Some(100));
+        assert_eq!(offline.viewer_count, None);
+    }
+    #[test]
+    fn demo_observation_has_no_audience_metadata() {
+        let mut p = Presence::default();
+        p.observe_stream(Some("a1"), Some(100));
+        p.observe(Some("demo-1"));
+        assert_eq!(p.viewer_count, None);
     }
 }

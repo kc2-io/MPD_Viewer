@@ -1,7 +1,7 @@
 use std::net::TcpListener;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
-use crate::model::Settings;
+use crate::model::{Settings, ViewerCount};
 
 pub struct Host { pub local: Url, pub production: Option<Url> }
 impl Host {
@@ -93,7 +93,7 @@ impl Host {
         let label = format!("player-{id}");
         let origin = url.origin();
         WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
-            .title(format!("{login} · MPD Viewer{}", if settings.demo { " · SIMULATED" } else { "" }))
+            .title(window_title(login, settings.demo, None))
             .inner_size(1180.0, 720.0).min_inner_size(430.0, 480.0)
             .focused(false)
             .initialization_script(adapter)
@@ -117,6 +117,13 @@ fn allowed_chat_url(url: &Url, channel: &str, parent: &str) -> bool {
         && url.username().is_empty() && url.password().is_none() && url.port().is_none()
         && url.path() == format!("/embed/{channel}/chat") && url.fragment().is_none()
         && pairs.len() == 1 && pairs[0].0 == "parent" && pairs[0].1 == parent
+}
+
+pub fn window_title(login: &str, demo: bool, count: Option<ViewerCount>) -> String {
+    let audience = if demo { String::new() } else {
+        count.map(|value| format!(" · {}", value.label())).unwrap_or_default()
+    };
+    format!("{login}{audience} · MPD Viewer{}", if demo { " · SIMULATED" } else { "" })
 }
 
 pub fn audio(app: &AppHandle, label: &str, settings: &Settings) -> Result<(), String> {
@@ -175,5 +182,21 @@ mod tests {
         let url = host.player_url("alpha", 7, &settings);
         assert_eq!(url.host_str(), Some("localhost"));
         assert_eq!(url.fragment(), Some("channel=alpha&session=7&volume=25&muted=false&demo=false"));
+    }
+}
+
+
+#[cfg(test)]
+mod viewer_title_tests {
+    use super::*;
+    #[test]
+    fn count_title_keeps_channel_and_brand_and_never_fakes_demo_counts() {
+        assert_eq!(window_title("alpha", false, Some(ViewerCount { count: 1234, stale: false })),
+            "alpha · 1,234 viewers · MPD Viewer");
+        assert_eq!(window_title("alpha", false, Some(ViewerCount { count: 0, stale: true })),
+            "alpha · 0 viewers (stale) · MPD Viewer");
+        assert_eq!(window_title("alpha", false, None), "alpha · MPD Viewer");
+        assert_eq!(window_title("alpha", true, Some(ViewerCount { count: 1234, stale: false })),
+            "alpha · MPD Viewer · SIMULATED");
     }
 }

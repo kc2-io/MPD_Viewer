@@ -1,3 +1,9 @@
+const viewerNumber = new Intl.NumberFormat('en-US');
+export function viewerCountLabel(value) {
+  if (!value || !Number.isInteger(value.count) || value.count < 0 || value.count > 4294967295) return '';
+  return `${viewerNumber.format(value.count)} ${value.count === 1 ? 'viewer' : 'viewers'}${value.stale ? ' (stale)' : ''}`;
+}
+
 // Presentation helpers only. Selection policy lives exclusively in mpd-core.
 export function playbackLabel(player, demo = false) {
   if (player.closing) return 'Closing · capacity reserved';
