@@ -69,6 +69,12 @@ impl Activation {
         seen.len() == 7
     }
     #[cfg(any(windows, test))]
+    fn is_return(&self, url: &url::Url) -> bool {
+        official(url) && url.fragment().is_none()
+            && (url.path() != "/activate" || self.activation_query(url, false))
+            && self.return_url.lock().is_ok_and(|expected| expected.as_ref() == Some(url))
+    }
+    #[cfg(any(windows, test))]
     fn allows(&self, url: &url::Url) -> bool {
         let authorization_route = (official_host(url, "id.twitch.tv") && url.path() == "/oauth2/authorize")
             || (official_host(url, "auth.twitch.tv") && url.path() == "/authorize");
@@ -112,6 +118,8 @@ pub fn open(app: &tauri::AppHandle, epoch: u64, activation: Activation) -> Resul
     }
     let handle = app.clone();
     let window_label = label.clone();
+    let activation = std::sync::Arc::new(activation);
+    let completion = activation.clone();
     // Preserve the default viewer profile. No capability, adapter, or auth script.
     WebviewWindowBuilder::new(app, &label, WebviewUrl::External(activation.url.clone()))
         .title("Connect Twitch · www.twitch.tv")
@@ -124,6 +132,17 @@ pub fn open(app: &tauri::AppHandle, epoch: u64, activation: Activation) -> Resul
                 }
             }
             allowed
+        })
+        .on_page_load(move |window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished
+                && completion.is_return(payload.url()) {
+                if let Some(controller) = window.app_handle().try_state::<crate::controller::Handle>() {
+                    let tx = controller.tx.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = tx.send(crate::controller::Message::AuthReturnLoaded { epoch }).await;
+                    });
+                }
+            }
         })
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
         .on_download(|_, _| false)
@@ -261,6 +280,7 @@ mod tests {
             url
         };
         assert!(!activation.allows(&callback));
+        assert!(!activation.is_return(&callback));
         let mut invalid = authorize(callback.as_str());
         invalid.query_pairs_mut().append_pair("scope", "chat:edit");
         assert!(!activation.allows(&invalid));
@@ -268,6 +288,8 @@ mod tests {
         let valid = authorize(callback.as_str());
         assert!(activation.allows(&valid));
         assert!(activation.allows(&callback));
+        assert!(activation.is_return(&callback));
+        assert!(!activation.is_return(&"https://www.twitch.tv/login".parse().unwrap()));
         assert!(activation.allows(&valid));
         assert!(!activation.allows(&authorize("https://www.twitch.tv/another-return")));
         for text in [
@@ -297,6 +319,7 @@ mod tests {
             authorize.query_pairs_mut().extend_pairs(pairs);
             assert!(activation.allows(&authorize));
             assert!(!activation.allows(&target.parse().unwrap()));
+            assert!(!activation.is_return(&target.parse().unwrap()));
         }
     }
     #[test]
