@@ -15,6 +15,15 @@ configure=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(configure)
 
 class ConfigurationTests(unittest.TestCase):
+    def test_manager_allows_html_ranking_drags(self):
+        config=json.loads((ROOT/'src-tauri/tauri.conf.json').read_text(encoding='utf-8'))
+        windows=config['app']['windows']
+        manager=[window for window in windows if window['label']=='main']
+        self.assertEqual(len(manager),1)
+        # Tauri's native file-drop interception prevents HTML5 dragging on Windows.
+        self.assertIs(manager[0].get('dragDropEnabled'),False)
+        self.assertTrue(all(window.get('dragDropEnabled',True) for window in windows if window['label']!='main'))
+
     def test_registered_client_id_source_configuration(self):
         # Source guard only; Rust/SQLite runtime behavior has separate native tests.
         model=(ROOT/'src-tauri/src/model.rs').read_text()

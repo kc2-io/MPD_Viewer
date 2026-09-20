@@ -11,6 +11,7 @@
     "windows": [
       {
         "label": "main",
+        "dragDropEnabled": false,
         "title": "MPD Viewer · Proof of Concept",
         "width": 1200,
         "height": 850,
