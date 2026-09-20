@@ -15,10 +15,11 @@
   </section>
   <div class="columns">
     <section class="panel favorites-panel">
-      <div class="section-header"><div><h2>Priority list <span id="favorite-count" class="count">0</span></h2><p>Highest priority first. Drag to reorder, or use the arrows.</p></div><button id="refresh">Check now</button></div>
+      <div class="section-header"><div><h2>Priority list <span id="favorite-count" class="count">0</span></h2><p>Highest priority first. Drag a channel or its grip to reorder, or use the arrows.</p></div><button id="refresh">Check now</button></div>
       <form id="add-form" class="add-form"><label class="sr-only" for="channel">Twitch channel</label><input id="channel" placeholder="Channel name or twitch.tv/channel" maxlength="512" autocomplete="off" required><button type="submit" class="primary">Add channel</button></form>
       <div class="list-header"><span>RANK</span><span>CHANNEL</span><span>CONTROLS</span></div>
       <ol id="favorites" class="favorites"></ol>
+      <p id="rank-status" class="hint rank-status" role="status" aria-live="polite" aria-atomic="true"></p>
       <div id="empty-favorites" class="empty"><h3>Make room for your favorites.</h3><p>Add a channel above, or load the demo to explore priority switching without a Twitch login.</p><button id="load-demo" class="primary">Load demo channels</button></div>
       <p id="demo-note" class="footnote">Demo switches simulate live status. No Twitch streams or viewers are created.</p>
     </section>
