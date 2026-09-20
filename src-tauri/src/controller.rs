@@ -16,11 +16,16 @@ fn close_tracked_auth_window(tracked: &mut Option<u64>, close: impl FnOnce(u64) 
     }
     Ok(())
 }
+fn auth_completion_ready(epoch: u64, tracked: Option<u64>, returned: Option<u64>, pending: bool, connected: bool) -> bool {
+    !pending && connected && tracked == Some(epoch) && returned == Some(epoch)
+}
+
 pub enum Message {
     Action(Action, oneshot::Sender<Result<(), String>>),
     Report(String, Report),
     Destroyed(String),
     AuthCode { epoch: u64, code: String, url: String },
+    AuthReturnLoaded { epoch: u64 },
     Authorized { epoch: u64, result: Result<Session, ApiError> },
     Polled { id: u64, generation: u64, epoch: u64, monitored: bool,
         result: Result<HashMap<String, String>, ApiError> },
@@ -44,7 +49,7 @@ pub struct Controller {
     failed: HashMap<String, String>, next_id: u64, generation: u64, auth_epoch: u64,
     credentials: Option<Credentials>, connected_as: Option<String>,
     auth_task: Option<tokio::task::JoinHandle<()>>, auth_pending: bool,
-    user_code: Option<String>, auth_url: Option<String>, auth_window_epoch: Option<u64>,
+    user_code: Option<String>, auth_url: Option<String>, auth_window_epoch: Option<u64>, auth_return_epoch: Option<u64>,
     polling: Option<u64>, poll_id: u64, next_poll: Instant, not_before: Instant,
     last_check: Option<Instant>, backoff: u64, error: Option<String>,
     events: VecDeque<String>, started: Instant,
@@ -56,7 +61,7 @@ impl Controller {
             presence: HashMap::new(), skipped: HashMap::new(), demo_live: HashMap::new(),
             players: HashMap::new(), failed: HashMap::new(), next_id: 0, generation: 0,
             auth_epoch: 0, credentials: None, connected_as: None, auth_task: None,
-            auth_pending: false, user_code: None, auth_url: None, auth_window_epoch: None, polling: None,
+            auth_pending: false, user_code: None, auth_url: None, auth_window_epoch: None, auth_return_epoch: None, polling: None,
             poll_id: 0, next_poll: Instant::now(), not_before: Instant::now(),
             last_check: None, backoff: 30, error: None, events: VecDeque::new(), started: Instant::now() }
     }
@@ -90,8 +95,17 @@ impl Controller {
         self.auth_epoch += 1;
         if let Some(task) = self.auth_task.take() { task.abort(); }
         self.auth_pending = false; self.credentials = None; self.connected_as = None;
-        self.user_code = None; self.auth_url = None; self.mark_stale();
+        self.user_code = None; self.auth_url = None; self.auth_return_epoch = None; self.mark_stale();
         close
+    }
+    fn close_completed_connection(&mut self) {
+        if auth_completion_ready(self.auth_epoch, self.auth_window_epoch, self.auth_return_epoch,
+            self.auth_pending, self.credentials.is_some()) {
+            if close_tracked_auth_window(&mut self.auth_window_epoch, |epoch|
+                crate::viewer_auth::close(&self.app, epoch)).is_err() {
+                self.error = Some("Twitch connected, but its window could not close automatically. You can close it manually.".into());
+            }
+        }
     }
     fn open_connection(&self) -> Result<(), String> {
         let (Some(url), Some(code)) = (&self.auth_url, &self.user_code) else { return Ok(()); };
@@ -338,12 +352,19 @@ impl Controller {
                             }
                         }
                     }
+                    Some(Message::AuthReturnLoaded { epoch }) => {
+                        if epoch == self.auth_epoch && self.auth_window_epoch == Some(epoch) {
+                            self.auth_return_epoch = Some(epoch);
+                            self.close_completed_connection();
+                        }
+                    }
                     Some(Message::Authorized { epoch, result }) => {
                         if epoch == self.auth_epoch && self.auth_pending {
                             self.auth_pending = false; self.user_code = None; self.auth_url = None;
                             match result {
                                 Ok(session) => { self.connected_as = Some(session.login.clone()); self.credentials = Some(Arc::new(Mutex::new(session)));
-                                    self.error = None; self.request_poll(); self.log("Monitoring connected. Close the Twitch window when finished; verify your account in chat or the player."); }
+                                    self.error = None; self.request_poll(); self.log("Monitoring connected. Verify your account in chat or the player.");
+                                    self.close_completed_connection(); }
                                 Err(error) => { let _ = self.disconnected(); self.error = Some(error.message); },
                             }
                         }
@@ -389,7 +410,22 @@ impl Controller {
 
 #[cfg(test)]
 mod auth_cleanup_tests {
-    use super::close_tracked_auth_window;
+    use super::{close_tracked_auth_window, auth_completion_ready};
+    #[test]
+    fn auto_close_requires_both_current_attempt_completions_in_either_order() {
+        assert!(!auth_completion_ready(7, Some(7), None, true, false));
+        // Return page first: still wait for successful API authorization.
+        assert!(!auth_completion_ready(7, Some(7), Some(7), true, false));
+        assert!(auth_completion_ready(7, Some(7), Some(7), false, true));
+        // API first: still wait for the exact return page to finish loading.
+        assert!(!auth_completion_ready(7, Some(7), None, false, true));
+        assert!(auth_completion_ready(7, Some(7), Some(7), false, true));
+        assert!(!auth_completion_ready(7, Some(7), Some(6), false, true));
+        assert!(!auth_completion_ready(7, Some(6), Some(7), false, true));
+        assert!(!auth_completion_ready(7, Some(7), Some(7), false, false));
+        assert!(!auth_completion_ready(7, None, Some(7), false, true));
+        assert!(!auth_completion_ready(8, Some(8), Some(7), true, false));
+    }
     #[test]
     fn failed_close_retains_the_original_window_for_retry() {
         let mut tracked=Some(7);
