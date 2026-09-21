@@ -180,6 +180,7 @@ function render(s) {
   $('empty-favorites').hidden=s.favorites.length>0; $('load-demo').hidden=!s.settings.demo;
   $('demo-note').textContent=s.settings.demo?'Demo switches simulate live status. No Twitch streams or viewers are created.':'Unknown or stale channels are not opened. Existing players survive temporary API failures.';
   if(document.activeElement!==$('source'))$('source').value=s.settings.demo?'demo':'twitch';
+  if(document.activeElement!==$('quality'))$('quality').value=s.settings.preferred_quality??'auto';
   if(document.activeElement!==$('limit'))$('limit').value=s.settings.limit;
   if(document.activeElement!==$('volume')){$('volume').value=s.settings.volume;$('volume-value').textContent=`${s.settings.volume}%`;}
   if(document.activeElement!==$('muted'))$('muted').checked=s.settings.muted;
@@ -223,6 +224,7 @@ $('stop').addEventListener('click',()=>act({type:'stop'}));
 $('refresh').addEventListener('click',()=>act({type:'refresh'}));
 $('load-demo').addEventListener('click',()=>act({type:'load_demo'}));
 $('source').addEventListener('change',()=>act({type:'set_demo',demo:$('source').value==='demo'}));
+$('quality').addEventListener('change',()=>act({type:'set_quality',quality:$('quality').value}));
 $('limit').addEventListener('change',()=>{const limit=Number($('limit').value);if(Number.isSafeInteger(limit)&&limit>=1&&limit<=1000)act({type:'set_limit',limit});else showError('Set a whole-number limit between 1 and 1000.');});
 function changeAudio(){clearTimeout(audioTimer);$('volume-value').textContent=`${$('volume').value}%`;audioTimer=setTimeout(()=>act({type:'set_audio',volume:Number($('volume').value),muted:$('muted').checked}),120);}
 $('volume').addEventListener('input',changeAudio);$('muted').addEventListener('change',changeAudio);

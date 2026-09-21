@@ -38,7 +38,14 @@ pub struct Handle {
 struct PlayerSession {
     id: u64, login: String, label: String, closing: bool,
     report: Option<Report>, reported: Option<Instant>,
-    rate_start: Instant, rate_count: u8,
+    rate_start: Instant, rate_count: u8, quality_dirty: bool,
+}
+
+impl PlayerSession {
+    fn accept_report(&mut self, report: Report) {
+        if matches!(report.state, Playback::Loading | Playback::Ready) { self.quality_dirty = true; }
+        self.reported = Some(Instant::now()); self.report = Some(report);
+    }
 }
 
 pub struct Controller {
@@ -145,6 +152,10 @@ impl Controller {
             Action::SetAudio { volume, muted } => {
                 let mut s = self.settings.clone(); s.volume = volume; s.muted = muted; self.save(s)?;
                 for p in self.players.values() { player::audio(&self.app, &p.label, &self.settings)?; }
+            }
+            Action::SetQuality { quality } => {
+                let mut s = self.settings.clone(); s.preferred_quality = quality; self.save(s)?;
+                for p in self.players.values_mut() { p.quality_dirty = true; }
             }
             Action::SetDemo { demo } => {
                 if self.mode != Mode::Stopped || !self.players.is_empty() {
@@ -269,7 +280,7 @@ impl Controller {
             if self.players.values().any(|p| p.login == login) || self.failed.contains_key(&login) { continue; }
             self.next_id += 1; let id = self.next_id;
             self.players.insert(id, PlayerSession { id, login: login.clone(), label: format!("player-{id}"),
-                closing: false, report: None, reported: None, rate_start: Instant::now(), rate_count: 0 });
+                closing: false, report: None, reported: None, rate_start: Instant::now(), rate_count: 0, quality_dirty: true });
             match self.host.open(&self.app, &login, id, &self.settings) {
                 Ok(_) => self.log(format!("Opened {login} (session {id}).")),
                 Err(error) => { self.players.remove(&id); self.failed.insert(login, error.clone()); self.error = Some(error); }
@@ -298,8 +309,18 @@ impl Controller {
         if p.rate_start.elapsed() >= Duration::from_secs(1) { p.rate_start = Instant::now(); p.rate_count = 0; }
         if p.rate_count >= 20 { return; }
         p.rate_count += 1;
-        p.reported = Some(Instant::now()); p.report = Some(report);
+        p.accept_report(report);
         // Reports are advisory only: NEVER change live status, ranking, or opening policy.
+    }
+    fn sync_quality(&mut self) {
+        for p in self.players.values_mut().filter(|p| !p.closing && p.quality_dirty && p.report.is_some()) {
+            // The document reports only after its setter is installed. A new
+            // loading/ready report re-arms this after reload; read current settings.
+            match player::quality(&self.app, &p.label, &self.settings) {
+                Ok(()) => p.quality_dirty = false,
+                Err(error) => self.error = Some(format!("Could not apply video quality to {}: {error}", p.login)),
+            }
+        }
     }
     fn sync_viewer_titles(&self) {
         for p in self.players.values().filter(|p| !p.closing) {
@@ -423,6 +444,7 @@ impl Controller {
                     if !self.settings.demo && self.last_check.is_some_and(|t| t.elapsed() > Duration::from_secs(90)) { self.mark_stale(); }
                     // Native title work stays bounded to this timer, not player reports.
                     self.sync_viewer_titles();
+                    self.sync_quality();
                 }
             }
             self.reconcile(); self.maybe_poll(); self.publish.send_replace(self.snapshot());
@@ -458,5 +480,28 @@ mod auth_cleanup_tests {
         close_tracked_auth_window(&mut tracked, |epoch| { assert_eq!(epoch,7); Ok(()) }).unwrap();
         assert_eq!(tracked,None);
         close_tracked_auth_window(&mut tracked, |_| panic!("Already cleaned up")).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod quality_sync_tests {
+    use super::*;
+    #[test]
+    fn new_document_readiness_rearms_quality_sync_without_telemetry_flooding() {
+        let mut p = PlayerSession { id: 1, login: "alpha".into(), label: "player-1".into(),
+            closing: false, report: None, reported: None, rate_start: Instant::now(), rate_count: 0, quality_dirty: true };
+        let report = |state| Report { session: 1, state, visible: true, volume: None, muted: None };
+        // An early preference waits for a report from the initialized document.
+        assert!(p.quality_dirty && p.report.is_none());
+        p.accept_report(report(Playback::Ready));
+        assert!(p.quality_dirty && p.report.is_some());
+        p.quality_dirty = false; // successful native delivery
+        p.accept_report(report(Playback::Playing));
+        assert!(!p.quality_dirty);
+        p.accept_report(report(Playback::Paused));
+        assert!(!p.quality_dirty);
+        // Reloading the same window creates another READY with its old bootstrap.
+        p.accept_report(report(Playback::Ready));
+        assert!(p.quality_dirty);
     }
 }

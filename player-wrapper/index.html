@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://player.twitch.tv; style-src 'self'; frame-src https://player.twitch.tv https://www.twitch.tv/embed/; connect-src ipc: http://ipc.localhost https://ipc.localhost; img-src 'self' data:; base-uri 'none'; form-action 'none'">
-<title>MPD Player</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="chat.css"><script src="chat.js" defer></script><script src="player.js" defer></script></head>
+<title>MPD Player</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="chat.css"><script src="chat.js" defer></script><script src="quality.js" defer></script><script src="player.js" defer></script></head>
 <body><header><div><strong id="channel">MPD player</strong><span id="kind"></span></div><span id="status">Loading</span></header>
 <div id="mpd-viewer-layout"><div id="mpd-viewer-video"><div id="video"></div>
 <div id="demo" hidden><p class="eyebrow">SIMULATED PLAYER</p><h1 id="demo-channel"></h1><p>No Twitch video or viewers are created by this demo.</p><div id="demo-controls"><button data-state="playing">Playing</button><button data-state="paused">Paused</button><button data-state="blocked">Autoplay blocked</button><button data-state="error">Player error</button><button id="freeze">Pause telemetry</button></div></div>

@@ -14,16 +14,20 @@ pub struct Settings {
     pub limit: usize,
     pub volume: u8,
     pub muted: bool,
+    pub preferred_quality: String,
     pub demo: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
         Self { schema: 1, favorites: vec![], limit: 3, volume: 25,
-            muted: false, demo: true }
+            muted: false, preferred_quality: "auto".into(), demo: true }
     }
 }
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
+        if !["auto","source","160p","180p","240p","360p","480p","720p","1080p","1440p","2160p"].contains(&self.preferred_quality.as_str()) {
+            return Err("Choose a supported preferred video quality.".into());
+        }
         if self.schema != 1 { return Err("Unsupported settings version.".into()); }
         if self.limit == 0 || self.limit > 1000 { return Err("Set a tab limit between 1 and 1000 (POC safety bound).".into()); }
         if self.volume > 100 { return Err("Volume must be 0–100%.".into()); }
@@ -50,6 +54,7 @@ pub enum Action {
     Enable { login: String, enabled: bool },
     SetLimit { limit: usize },
     SetAudio { volume: u8, muted: bool },
+    SetQuality { quality: String },
     SetDemo { demo: bool },
     DemoLive { login: String, live: bool },
     LoadDemo,

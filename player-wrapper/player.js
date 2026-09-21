@@ -6,6 +6,8 @@
   const demo=params.get('demo')==='true';
   let volume=Number(params.get('volume')??25), muted=params.get('muted')==='true';
   let player=null, ready=false, state='loading', frozen=false;
+  const quality=createQualityController(params.get('quality')??'auto');
+  window.mpdSetQuality=value=>quality.setPreference(value);
   const $=id=>document.getElementById(id);
   if(!/^[a-z0-9_]{1,25}$/.test(channel)||!Number.isSafeInteger(session)||session<1){
     $('message').textContent='Invalid channel or session configuration.';$('status').textContent='Configuration error';return;
@@ -16,6 +18,7 @@
   $('kind').textContent=demo?'DEMO · no live video':'Twitch embedded player';
   $('origin').textContent=`Parent: ${location.hostname} · ${location.protocol}`;
   async function report() {
+    if(!demo)quality.refresh(state==='paused'||state==='blocked'||state==='offline'||state==='ended');
     if(frozen)return;
     const invoke=window.__TAURI__?.core?.invoke;
     if(!invoke){$('bridge').textContent='Standalone page · no native telemetry';return;}
@@ -58,7 +61,7 @@
         ['PLAYBACK_BLOCKED','blocked'],['OFFLINE','offline'],['ENDED','ended']]){
         player.addEventListener(Twitch.Player[event],()=>changeState(value));
       }
-      player.addEventListener(Twitch.Player.READY,()=>{ready=true;window.mpdSetAudio(volume,muted);changeState('ready');player.play();});
+      player.addEventListener(Twitch.Player.READY,()=>{ready=true;quality.attach(player);window.mpdSetAudio(volume,muted);changeState('ready');player.play();});
       // ONLINE is not evidence of video playback. Only PLAYING reports playing.
     }catch{changeState('error');$('message').textContent='Could not initialize the Twitch embed. Inspect the player error and test a valid HTTPS wrapper origin.';}
   };
