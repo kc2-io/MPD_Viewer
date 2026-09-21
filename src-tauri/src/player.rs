@@ -23,6 +23,7 @@ impl Host {
                     "/" | "/index.html" => Some((include_str!("../../player-wrapper/index.html"), "text/html; charset=utf-8")),
                     "/player.js" => Some((include_str!("../../player-wrapper/player.js"), "text/javascript; charset=utf-8")),
                     "/style.css" => Some((include_str!("../../player-wrapper/style.css"), "text/css; charset=utf-8")),
+                    "/quality.js" => Some((include_str!("../../player-wrapper/quality.js"), "text/javascript; charset=utf-8")),
                     "/chat.js" => Some((include_str!("../../player-wrapper/chat.js"), "text/javascript; charset=utf-8")),
                     "/chat.css" => Some((include_str!("../../player-wrapper/chat.css"), "text/css; charset=utf-8")),
                     _ => None,
@@ -68,7 +69,8 @@ impl Host {
             let fragment = url::form_urlencoded::Serializer::new(String::new())
                 .append_pair("channel", login).append_pair("session", &id.to_string())
                 .append_pair("volume", &settings.volume.to_string()).append_pair("muted", &settings.muted.to_string())
-                .append_pair("demo", &settings.demo.to_string()).finish();
+                .append_pair("demo", &settings.demo.to_string())
+                .append_pair("quality", &settings.preferred_quality).finish();
             url.set_fragment(Some(&fragment));
         }
         url
@@ -76,10 +78,11 @@ impl Host {
     pub fn open(&self, app: &AppHandle, login: &str, id: u64, settings: &Settings) -> Result<String, String> {
         let url = self.player_url(login, id, settings);
         let mut adapter = if !settings.demo && self.production.is_some() {
-            format!("({})({});", include_str!("../hosted-player-adapter.js"), serde_json::json!({
+            format!("({})({}, {});", include_str!("../hosted-player-adapter.js"), serde_json::json!({
                 "origin": url.origin().ascii_serialization(), "path": url.path(),
-                "channel": login, "session": id, "volume": settings.volume, "muted": settings.muted
-            }))
+                "channel": login, "session": id, "volume": settings.volume, "muted": settings.muted,
+                "quality": settings.preferred_quality
+            }), include_str!("../../player-wrapper/quality.js"))
         } else { String::new() };
         if !settings.demo && self.production.is_some() {
             adapter.push_str(&format!("({})({});", include_str!("../../player-wrapper/chat.js"), serde_json::json!({
@@ -124,6 +127,14 @@ pub fn window_title(login: &str, demo: bool, count: Option<ViewerCount>) -> Stri
         count.map(|value| format!(" · {}", value.label())).unwrap_or_default()
     };
     format!("{login}{audience} · MPD Viewer{}", if demo { " · SIMULATED" } else { "" })
+}
+
+pub fn quality(app: &AppHandle, label: &str, settings: &Settings) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(label) {
+        let value = serde_json::to_string(&settings.preferred_quality).map_err(|e| e.to_string())?;
+        window.eval(format!("window.mpdSetQuality && window.mpdSetQuality({value});")).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 pub fn audio(app: &AppHandle, label: &str, settings: &Settings) -> Result<(), String> {
@@ -173,7 +184,7 @@ mod tests {
         let host = host(Some("https://parent.mpdviewer.com/"));
         let url = host.player_url("alpha", 7, &Settings::default());
         assert_eq!(url.host_str(), Some("localhost"));
-        assert_eq!(url.fragment(), Some("channel=alpha&session=7&volume=25&muted=false&demo=true"));
+        assert_eq!(url.fragment(), Some("channel=alpha&session=7&volume=25&muted=false&demo=true&quality=auto"));
     }
     #[test]
     fn local_live_fallback_keeps_bundled_protocol() {
@@ -181,7 +192,7 @@ mod tests {
         let settings = Settings { demo: false, ..Settings::default() };
         let url = host.player_url("alpha", 7, &settings);
         assert_eq!(url.host_str(), Some("localhost"));
-        assert_eq!(url.fragment(), Some("channel=alpha&session=7&volume=25&muted=false&demo=false"));
+        assert_eq!(url.fragment(), Some("channel=alpha&session=7&volume=25&muted=false&demo=false&quality=auto"));
     }
 }
 

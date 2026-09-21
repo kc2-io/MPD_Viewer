@@ -15,7 +15,7 @@ const sdk = `window.instances=[]; class Player {
 (async()=>{
  const server=http.createServer((req,res)=>{
   const name=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
-  if(!['index.html','player.js','style.css','chat.js','chat.css'].includes(name)){res.writeHead(404).end();return;}
+  if(!['index.html','player.js','quality.js','style.css','chat.js','chat.css'].includes(name)){res.writeHead(404).end();return;}
   res.setHeader('Content-Type',name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'text/html');
   res.end(fs.readFileSync(path.join(root,'player-wrapper',name)));
  });

@@ -12,7 +12,9 @@ const host = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
   .find(m => !/\bsrc\s*=/i.test(m[1]) && m[2].trim())[2];
 const adapter = fs.readFileSync(path.join(root, 'src-tauri/hosted-player-adapter.js'), 'utf8');
 
-function fixture({volume = 25, muted = false, session = 7, channel = 'alpha', hashOnly = false,
+const qualityFactory = fs.readFileSync(path.join(root, 'player-wrapper/quality.js'), 'utf8');
+
+function fixture({quality = 'auto', volume = 25, muted = false, session = 7, channel = 'alpha', hashOnly = false,
   frame = false, pathName = '/', configOrigin = 'https://parent.mpdviewer.com'} = {}) {
   const url = new URL(`https://parent.mpdviewer.com${pathName}`);
   if (hashOnly) url.hash = `channel=${channel}&session=${session}&volume=${volume}`;
@@ -32,6 +34,10 @@ function fixture({volume = 25, muted = false, session = 7, channel = 'alpha', ha
     emit(name) { for (const callback of this.listeners.get(name) || []) callback(); }
     setMuted(value) { this.calls.push(['mute', value]); this.muted = value; }
     setVolume(value) { this.calls.push(['volume', value]); this.volume = value; }
+    getQualities() { return this.qualities ?? ['auto']; }
+    getQuality() { return this.quality ?? 'auto'; }
+    setQuality(value) { this.calls.push(['quality',value]); this.quality = value; }
+    isPaused() { return this.paused; }
     getMuted() { return this.muted; }
     getVolume() { return this.volume; }
     play() { this.calls.push(['play']); this.paused = false; }
@@ -50,8 +56,8 @@ function fixture({volume = 25, muted = false, session = 7, channel = 'alpha', ha
   vm.createContext(context);
   // Use the context's own window proxy for MessageEvent.source identity.
   const window = vm.runInContext('window', context);
-  const config = {origin: configOrigin, path: '/', volume, muted, session, channel};
-  vm.runInContext(`(${adapter})(${JSON.stringify(config)})`, context);
+  const config = {origin: configOrigin, path: '/', volume, muted, session, channel, quality};
+  vm.runInContext(`(${adapter})(${JSON.stringify(config)}, ${qualityFactory})`, context);
   vm.runInContext(host, context);
   function message(data, origin = url.origin, source = window) {
     const event = {data, origin, source, stopped: false, stopImmediatePropagation() { this.stopped = true; }};
@@ -175,4 +181,51 @@ test('initialization timeout is visible, reports error, and never starts or relo
   assert.equal(f.reports.at(-1).report.state, 'error');
   assert.equal(f.instances[0].calls.length, 0);
   f.ready(); assert.equal(f.body.children.length, 0);
+});
+
+
+test('hosted quality uses nearest advertised variant without recreating or playing', () => {
+  const f=fixture({quality:'180p'}), p=f.instances[0];
+  p.qualities=['auto','360p30','720p60','chunked']; f.ready();
+  assert.equal(p.quality,'360p30');
+  f.context.mpdSetQuality('720p');
+  assert.equal(p.quality,'720p60');
+  assert.equal(f.instances.length,1);
+  assert.equal(p.calls.filter(c=>c[0]==='play').length,0);
+});
+test('latest native preference wins before READY and after document recreation', () => {
+  for(const openingPreference of ['auto','180p']) {
+    const f=fixture({quality:openingPreference}), p=f.instances[0];
+    p.qualities=['auto','360p30','720p60'];
+    f.context.mpdSetQuality('720p'); f.ready();
+    assert.equal(p.quality,'720p60');
+  }
+  // A reloaded document receives the latest Rust preference on its READY report.
+  const reloaded=fixture({quality:'180p'}), p=reloaded.instances[0];
+  p.qualities=['auto','360p30','720p60']; reloaded.ready();
+  assert.equal(p.quality,'360p30');
+  reloaded.context.mpdSetQuality('720p');
+  assert.equal(p.quality,'720p60');
+});
+test('hosted pause/block retain pending quality until normal playback resumes', () => {
+  const f=fixture({quality:'180p'}), p=f.instances[0];
+  p.qualities=['auto','360p30','720p60']; f.ready();
+  p.pause(); f.event('PAUSE'); f.context.mpdSetQuality('720p');
+  for(const tick of f.intervals)tick();
+  assert.equal(p.quality,'360p30'); assert.equal(p.paused,true);
+  f.event('PLAYBACK_BLOCKED'); p.paused=false;
+  for(const tick of f.intervals)tick();
+  assert.equal(p.quality,'360p30');
+  f.event('PLAYING'); assert.equal(p.quality,'720p60');
+  assert.equal(p.calls.filter(c=>c[0]==='play').length,0);
+});
+test('late hosted variants reselect once and audio does not undo preference', () => {
+  const f=fixture({quality:'180p'}), p=f.instances[0];
+  p.qualities=[]; f.ready();
+  p.qualities=['auto','360p30','chunked'];
+  for(const tick of f.intervals)tick();
+  assert.equal(p.quality,'360p30');
+  f.context.mpdSetAudio(50,true);
+  for(const tick of f.intervals)tick();
+  assert.equal(p.calls.filter(c=>c[0]==='quality').length,1);
 });

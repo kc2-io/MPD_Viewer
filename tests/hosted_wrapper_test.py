@@ -48,6 +48,7 @@ assets = {
     BASE: ('text/html', (ROOT / 'player-wrapper/index.html').read_text()),
     urljoin(BASE, 'style.css'): ('text/css', (ROOT / 'player-wrapper/style.css').read_text()),
     urljoin(BASE, 'player.js'): ('application/javascript', (ROOT / 'player-wrapper/player.js').read_text()),
+    urljoin(BASE, 'quality.js'): ('application/javascript', (ROOT / 'player-wrapper/quality.js').read_text()),
     SDK_URL: ('application/javascript', FAKE_SDK),
 }
 requests: list[str] = []

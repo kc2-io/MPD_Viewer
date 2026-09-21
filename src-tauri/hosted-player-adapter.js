@@ -1,4 +1,4 @@
-function installHostedPlayerAdapter(config) {
+function installHostedPlayerAdapter(config, createQualityController) {
   'use strict';
   // Native-only compatibility with the deployed, unversioned query-string host.
   // The preserved hosted source is not replaced or granted manager permissions.
@@ -7,11 +7,14 @@ function installHostedPlayerAdapter(config) {
   if (query.getAll('channel').length !== 1 || query.get('channel') !== config.channel) return;
   let volume = config.volume, muted = config.muted, ready = false, state = 'loading';
   let player = null, notice = null;
+  const quality = typeof createQualityController === 'function' ? createQualityController(config.quality) : null;
+  window.mpdSetQuality = value => quality?.setPreference(value);
   const states = {READY: 'ready', PLAYING: 'playing', PAUSE: 'paused',
     PLAYBACK_BLOCKED: 'blocked', OFFLINE: 'offline', ENDED: 'ended'};
   const commands = new Set(['add', 'remove', 'setChannels', 'setActive', 'setVolume', 'pauseInactive', 'ping']);
 
   function report() {
+    quality?.refresh(state === 'paused' || state === 'blocked' || state === 'offline' || state === 'ended');
     const invoke = window.__TAURI__?.core?.invoke;
     if (!invoke) return;
     let actualVolume = null, actualMuted = null;
@@ -83,6 +86,7 @@ function installHostedPlayerAdapter(config) {
       state = 'ready';
       if (notice) { notice.remove(); notice = null; }
       applyAudio();
+      quality?.attach(player);
     } else {
       state = states[message.event];
     }

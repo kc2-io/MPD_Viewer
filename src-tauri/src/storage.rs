@@ -39,6 +39,7 @@ mod tests {
             store.0.execute("INSERT INTO preferences(id,json) VALUES(1,?1)", [&json]).unwrap();
             let settings=store.load().unwrap();
             assert_eq!(settings.limit,2); assert_eq!(settings.volume,40);
+            assert_eq!(settings.preferred_quality,"auto");
             assert!(settings.muted); assert!(!settings.demo);
             assert_eq!(settings.favorites[0].login,"modpackdad"); assert!(!settings.favorites[0].enabled);
             store.save(&settings).unwrap();
@@ -51,5 +52,23 @@ mod tests {
     fn fresh_install_retains_existing_defaults() {
         let settings=Store::open(Path::new(":memory:")).unwrap().load().unwrap();
         assert_eq!(settings.limit,3); assert!(settings.demo); assert_eq!(settings.volume,25);
+    }
+}
+
+#[cfg(test)]
+mod quality_tests {
+    use super::*;
+    #[test]
+    fn quality_round_trips_and_rejects_invalid_preferences_without_overwriting() {
+        let mut store = Store::open(Path::new(":memory:")).unwrap();
+        let mut settings = store.load().unwrap();
+        settings.preferred_quality = "180p".into();
+        store.save(&settings).unwrap();
+        assert_eq!(store.load().unwrap().preferred_quality, "180p");
+        for bad in ["", "180", "-1p", "evil();", "99999p"] {
+            settings.preferred_quality = bad.into();
+            assert!(store.save(&settings).is_err());
+            assert_eq!(store.load().unwrap().preferred_quality, "180p");
+        }
     }
 }

@@ -103,6 +103,7 @@ try:
               window.__requestedSdk=n.src;queueMicrotask(()=>n.onload());
             }else append(n);
           }}; }""")
+        wrapper.add_script_tag(content=(ROOT/'player-wrapper/quality.js').read_text())
         wrapper.evaluate((ROOT/'player-wrapper/player.js').read_text())
         wrapper.wait_for_function('window.__sdk!==undefined')
         check('Wrapper derives parent from its document hostname',wrapper.evaluate('window.__sdkOptions.parent[0]===location.hostname'))
@@ -124,6 +125,7 @@ try:
         demo.on('request',lambda req:requests.append(req.url))
         document(demo,'player-wrapper','channel=alpha_demo&session=9&volume=25&muted=false&demo=true')
         demo.evaluate('window.__reports=[];window.__TAURI__={core:{invoke:async(c,a)=>window.__reports.push(a)}};')
+        demo.add_script_tag(content=(ROOT/'player-wrapper/quality.js').read_text())
         demo.evaluate((ROOT/'player-wrapper/player.js').read_text())
         demo.wait_for_function('window.__reports.length>0')
         check('Demo does not load Twitch or stream media',not any('twitch.tv' in r for r in requests))

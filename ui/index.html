@@ -28,6 +28,14 @@
         <h2>Session settings</h2>
         <label for="source">Live-status source</label><select id="source"><option value="demo">Demo · simulated channels</option><option value="twitch">Twitch · real channels</option></select>
         <label for="limit">Maximum open sessions</label><input id="limit" type="number" min="1" max="1000" step="1" value="3"><p class="hint">Your limit, not a verified Twitch counting rule.</p>
+        <label for="quality">Preferred video quality</label>
+        <select id="quality" aria-describedby="quality-hint">
+          <option value="auto">Auto · Twitch adjusts</option><option value="source">Source · highest available</option>
+          <option value="160p">160p</option><option value="180p">180p</option><option value="240p">240p</option>
+          <option value="360p">360p</option><option value="480p">480p</option><option value="720p">720p</option>
+          <option value="1080p">1080p</option><option value="1440p">1440p</option><option value="2160p">2160p</option>
+        </select>
+        <p class="hint" id="quality-hint">All viewers use the closest available resolution; ties choose lower. Paused viewers apply changes when playback resumes.</p>
         <div class="label-row"><label for="volume">Player volume</label><output id="volume-value" for="volume">25%</output></div><input id="volume" type="range" min="0" max="100" step="1" value="25">
         <label class="check"><input id="muted" type="checkbox">Mute all managed players</label>
         <p class="hint">Volume applies to every player. Muting is independent.</p>
