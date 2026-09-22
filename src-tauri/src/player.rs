@@ -113,13 +113,19 @@ impl Host {
     }
 }
 
-// Only the assigned official chat frame is allowed; it receives no native capability.
+// Only the assigned official chat frame is allowed; it receives no native
+// capability. The OS theme may add the single `darkpopout` flag (frozen in
+// docs/dark-mode/theme-contract.md) to the otherwise exact light shape. The
+// query is compared byte-for-byte, so only the two raw strings the chat
+// helper emits can navigate; encoded or reordered spellings never match.
 fn allowed_chat_url(url: &Url, channel: &str, parent: &str) -> bool {
-    let pairs: Vec<_> = url.query_pairs().collect();
-    url.scheme() == "https" && url.host_str() == Some("www.twitch.tv")
-        && url.username().is_empty() && url.password().is_none() && url.port().is_none()
-        && url.path() == format!("/embed/{channel}/chat") && url.fragment().is_none()
-        && pairs.len() == 1 && pairs[0].0 == "parent" && pairs[0].1 == parent
+    if url.scheme() != "https" || url.host_str() != Some("www.twitch.tv")
+        || !url.username().is_empty() || url.password().is_some() || url.port().is_some()
+        || url.path() != format!("/embed/{channel}/chat") || url.fragment().is_some() {
+        return false;
+    }
+    let Some(query) = url.query() else { return false };
+    query == format!("parent={parent}") || query == format!("parent={parent}&darkpopout")
 }
 
 pub fn window_title(login: &str, demo: bool, count: Option<ViewerCount>) -> String {
@@ -150,16 +156,36 @@ mod tests {
     use super::*;
     #[test]
     fn chat_navigation_is_bound_to_assignment_and_parent() {
-        let valid = "https://www.twitch.tv/embed/alpha/chat?parent=parent.mpdviewer.com";
-        assert!(allowed_chat_url(&Url::parse(valid).unwrap(), "alpha", "parent.mpdviewer.com"));
+        let light = "https://www.twitch.tv/embed/alpha/chat?parent=parent.mpdviewer.com";
+        let dark = "https://www.twitch.tv/embed/alpha/chat?parent=parent.mpdviewer.com&darkpopout";
+        for valid in [light, dark] {
+            assert!(allowed_chat_url(&Url::parse(valid).unwrap(), "alpha", "parent.mpdviewer.com"), "{valid}");
+        }
+        let parent = "parent.mpdviewer.com";
         for invalid in [
-            valid.replace("https:", "http:"), valid.replace("www.twitch.tv", "evil.example"),
-            valid.replace("/alpha/", "/beta/"), valid.replace("/chat?", "/chat/other?"),
-            valid.replace("parent.mpdviewer.com", "evil.example"), format!("{valid}&parent=evil.example"),
-            format!("{valid}&extra=true"), format!("{valid}#fragment"),
-            valid.replace("www.twitch.tv", "user@www.twitch.tv"),
-            valid.replace("www.twitch.tv", "www.twitch.tv:444"),
-        ] { assert!(!allowed_chat_url(&Url::parse(&invalid).unwrap(), "alpha", "parent.mpdviewer.com"), "{invalid}"); }
+            light.replace("https:", "http:"), light.replace("www.twitch.tv", "evil.example"),
+            light.replace("/alpha/", "/beta/"), light.replace("/chat?", "/chat/other?"),
+            light.replace(parent, "evil.example"), format!("{light}&parent=evil.example"),
+            format!("{light}&extra=true"), format!("{light}#fragment"),
+            light.replace("www.twitch.tv", "user@www.twitch.tv"),
+            light.replace("www.twitch.tv", "www.twitch.tv:444"),
+            // reversed order, extra flag value forms, unknown/theme/extra keys
+            format!("https://www.twitch.tv/embed/alpha/chat?darkpopout&parent={parent}"),
+            format!("{light}&darkpopout=1"), format!("{light}&darkpopout=1&darkpopout"),
+            format!("{light}&darkpopout="), format!("{dark}&theme=dark"), format!("{light}&theme=dark"),
+            format!("{light}&darkpopout=&extra=true"),
+            // empty segments and leading/trailing separators
+            format!("https://www.twitch.tv/embed/alpha/chat?parent={parent}&&darkpopout"),
+            format!("https://www.twitch.tv/embed/alpha/chat?&parent={parent}"),
+            format!("https://www.twitch.tv/embed/alpha/chat?parent={parent}&"),
+            // percent-encoded keys or parent spellings never match the raw forms
+            format!("https://www.twitch.tv/embed/alpha/chat?p%61rent={parent}&darkpopout"),
+            format!("https://www.twitch.tv/embed/alpha/chat?parent=parent%2Empdviewer.com"),
+            // case-spelled key, stray '?', and a missing query
+            format!("https://www.twitch.tv/embed/alpha/chat?Parent={parent}"),
+            format!("https://www.twitch.tv/embed/alpha/chat?parent={parent}?darkpopout"),
+            "https://www.twitch.tv/embed/alpha/chat".to_owned(),
+        ] { assert!(!allowed_chat_url(&Url::parse(&invalid).unwrap(), "alpha", parent), "{invalid}"); }
     }
     fn host(production: Option<&str>) -> Host {
         Host { local: Url::parse("http://localhost:4321/index.html").unwrap(),

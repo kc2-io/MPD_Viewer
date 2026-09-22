@@ -34,9 +34,16 @@ function installHostedPlayerAdapter(config, createQualityController) {
   function showError(message) {
     state = 'error';
     if (document.body && !notice) {
+      // App-owned, system-responsive notice styling without touching the host.
+      const style = document.createElement('style');
+      style.textContent = '#mpd-adapter-notice{position:fixed;inset:16px 16px auto;z-index:2147483647;' +
+        'background:#241c30;color:#f0e6f8;padding:16px;font:14px system-ui;border:1px solid #a48ac7}' +
+        '@media (prefers-color-scheme:light){#mpd-adapter-notice{background:#f7f0fb;color:#3a1150;' +
+        'border-color:#9a6bc0}}';
+      document.head.appendChild(style);
       notice = document.createElement('div');
+      notice.setAttribute('id', 'mpd-adapter-notice');
       notice.setAttribute('role', 'alert');
-      notice.style.cssText = 'position:fixed;inset:16px 16px auto;z-index:2147483647;background:#241c30;color:#fff;padding:16px;font:14px system-ui;border:1px solid #a48ac7';
       notice.textContent = message;
       document.body.appendChild(notice);
     }

@@ -45,7 +45,8 @@ function fixture({quality = 'auto', volume = 25, muted = false, session = 7, cha
   }
   for (const name of ['READY', 'PLAYING', 'PAUSE', 'ENDED', 'ONLINE', 'OFFLINE', 'PLAYBACK_BLOCKED']) Player[name] = name;
   const context = { URLSearchParams, location: url, Twitch: {Player},
-    document: {body, visibilityState: 'visible', getElementById: id => id === 'grid' ? grid : null,
+    document: {body, visibilityState: 'visible', head: new Element(),
+      getElementById: id => id === 'grid' ? grid : null,
       createElement: () => new Element(), addEventListener() {}},
     addEventListener: (name, callback, capture = false) => listeners.push({name, callback, capture}),
     postMessage: data => pending.push(data),
@@ -181,6 +182,18 @@ test('initialization timeout is visible, reports error, and never starts or relo
   assert.equal(f.reports.at(-1).report.state, 'error');
   assert.equal(f.instances[0].calls.length, 0);
   f.ready(); assert.equal(f.body.children.length, 0);
+});
+
+test('initialization notice is app-themed across both palettes without touching the host', () => {
+  const f = fixture(); f.timeouts.forEach(callback => callback());
+  const style = f.context.document.head.children[0];
+  assert.ok(style && style.textContent.includes('@media (prefers-color-scheme:light)'));
+  assert.ok(style.textContent.includes('#mpd-adapter-notice{'));
+  const notice = f.body.children[0];
+  assert.equal(notice.attributes.id, 'mpd-adapter-notice');
+  assert.equal(notice.attributes.role, 'alert');
+  assert.equal(f.context.document.head.children.length, 1);
+  assert.equal(f.grid.children.length, 1);
 });
 
 
