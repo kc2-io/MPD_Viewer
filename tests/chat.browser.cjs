@@ -12,6 +12,10 @@ const sdk = `window.instances=[]; class Player {
  constructor(id,options){this.options=options;this.paused=true;this.volume=.25;this.muted=true;this.plays=0;instances.push(this);const f=document.createElement('iframe');f.src='https://player.twitch.tv/?channel='+options.channel;f.width='100%';f.height='100%';document.getElementById(id).append(f);}
  addEventListener(){} setVolume(v){this.volume=v} setMuted(v){this.muted=v} getVolume(){return this.volume} getMuted(){return this.muted} play(){this.plays++;this.paused=false} pause(){this.paused=true}
 } window.Twitch={Player};`;
+async function launchBrowser(){
+ try{return await chromium.launch({channel:'msedge',headless:true});}
+ catch{return chromium.launch({headless:true});}
+}
 (async()=>{
  const server=http.createServer((req,res)=>{
   const name=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';
@@ -20,7 +24,7 @@ const sdk = `window.instances=[]; class Player {
   res.end(fs.readFileSync(path.join(root,'player-wrapper',name)));
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const browser=await chromium.launch({channel:'msedge',headless:true});
+ const browser=await launchBrowser();
  try {
   for(const mode of ['hosted','bundled','demo']){
    const context=await browser.newContext({viewport:{width:1180,height:720}});
@@ -55,8 +59,34 @@ const sdk = `window.instances=[]; class Player {
    assert.ok(narrow.width>=400&&narrow.height>=300); assert.ok(panel.y>=narrow.y+narrow.height-1);
    assert.equal(await page.evaluate(()=>{const b=beforeChat;return b.grid.parentNode===b.gridParent&&(!b.video||(b.video.parentNode===b.parent&&b.video.contentWindow===b.videoWindow))&&(!b.chat||b.chat.contentWindow===b.chatWindow)&&(!b.player||(instances.length===1&&instances[0]===b.player&&b.player.paused&&b.player.plays===0&&b.player.volume===.25&&b.player.muted));}),true);
    assert.equal(navigations,0); assert.deepEqual(violations,[]);
-   if(mode==='demo'){assert.equal(twitchRequests,0);assert.equal(await page.locator('iframe').count(),0);}
-   else {
+   if(mode==='demo'){
+    assert.equal(twitchRequests,0);assert.equal(await page.locator('iframe').count(),0);
+    await page.emulateMedia({colorScheme:'dark'});await page.emulateMedia({colorScheme:'light'});
+    await page.waitForTimeout(150);
+    assert.equal(await page.locator('iframe').count(),0);assert.equal(twitchRequests,0);
+   } else {
+    // OS theme is the only chat-theme authority; the exact frozen URL pair.
+    const parentHost=await page.evaluate(()=>location.hostname);
+    const lightSrc=`https://www.twitch.tv/embed/alpha/chat?parent=${parentHost}`;
+    const darkSrc=`https://www.twitch.tv/embed/alpha/chat?parent=${parentHost}&darkpopout`;
+    const frame=page.locator('#mpd-chat-panel iframe');
+    assert.equal(await frame.getAttribute('src'),lightSrc);
+    const isChatFrame=f=>/^https:\/\/www\.twitch\.tv\/embed\/[^/]+\/chat/.test(f.url());
+    const chatNavs=[]; page.on('framenavigated',f=>{if(isChatFrame(f))chatNavs.push(f.url());});
+    const navDark=page.waitForEvent('framenavigated',isChatFrame);
+    await page.emulateMedia({colorScheme:'dark'});
+    await navDark;
+    assert.equal(await frame.getAttribute('src'),darkSrc);
+    assert.equal(chatNavs.length,1);
+    await page.emulateMedia({colorScheme:'dark'});
+    await page.waitForTimeout(200);
+    assert.equal(chatNavs.length,1);
+    const navLight=page.waitForEvent('framenavigated',isChatFrame);
+    await page.emulateMedia({colorScheme:'light'});
+    await navLight;
+    assert.equal(await frame.getAttribute('src'),lightSrc);
+    assert.equal(chatNavs.length,2);
+    assert.equal(await page.evaluate(()=>{const b=beforeChat;return b.grid.parentNode===b.gridParent&&(!b.video||(b.video.parentNode===b.parent&&b.video.contentWindow===b.videoWindow))&&instances.length===1&&instances[0]===b.player&&b.player.paused&&b.player.plays===0&&b.player.volume===.25&&b.player.muted;}),true);
     await page.locator('#mpd-chat-panel iframe').evaluate(frame=>frame.dispatchEvent(new Event('error')));
     assert.match(await page.locator('#mpd-chat-status').textContent(),/could not load/);
     assert.equal(await page.evaluate(()=>instances[0].paused),true);

@@ -61,22 +61,56 @@ function mpdInstallChat(config) {
       status.textContent = 'Loading Twitch chat…';
       const frame = document.createElement('iframe');
       frame.title = `${config.channel} Twitch chat`;
-      const url = new URL(`https://www.twitch.tv/embed/${config.channel}/chat`);
-      url.searchParams.set('parent', location.hostname);
-      frame.src = url.href;
+      // The OS is the only theme authority. The chat frame does not inherit
+      // this page's prefers-color-scheme, so the theme must cross into its URL.
+      let theme = false;
+      let media = null;
+      try {
+        media = window.matchMedia('(prefers-color-scheme: dark)');
+        theme = media.matches === true;
+      } catch { media = null; theme = false; }
+      const themedURL = () => {
+        const url = new URL(`https://www.twitch.tv/embed/${config.channel}/chat`);
+        url.searchParams.set('parent', location.hostname);
+        if (theme) url.search += '&darkpopout'; // the frozen exact dark shape
+        return url.href;
+      };
       frame.referrerPolicy = 'strict-origin-when-cross-origin';
       // Loading the frame is not proof of a signed-in session or working posting.
-      const timeout = setTimeout(() => {
-        status.hidden = false;
-        status.textContent = 'Chat is taking longer to load. Video playback is independent of chat.';
-      }, 20000);
-      frame.addEventListener('load', () => { clearTimeout(timeout); status.hidden = true; });
+      // Every navigation (initial install or OS theme change) restarts loading
+      // feedback and the 20-second timeout so a stalled frame cannot leave the
+      // status hidden and a previous error cannot survive into a retry.
+      let loading = null;
+      const showStatus = (text) => { status.hidden = false; status.textContent = text; };
+      const navigate = (url) => {
+        if (loading) { clearTimeout(loading); loading = null; }
+        showStatus('Loading Twitch chat…');
+        loading = setTimeout(() => {
+          showStatus('Chat is taking longer to load. Video playback is independent of chat.');
+        }, 20000);
+        frame.src = url; // exactly one assignment per navigation
+      };
+      navigate(themedURL());
+      frame.addEventListener('load', () => {
+        if (loading) { clearTimeout(loading); loading = null; }
+        status.hidden = true;
+      });
       frame.addEventListener('error', () => {
-        clearTimeout(timeout);
-        status.hidden = false;
-        status.textContent = 'Chat could not load. Video playback is still available.';
+        if (loading) { clearTimeout(loading); loading = null; }
+        showStatus('Chat could not load. Video playback is still available.');
       });
       panel.append(note, status, frame);
+      // A real system-theme change reloads only the existing chat frame (this
+      // may discard an unsent cross-origin chat draft). Repeated events for an
+      // already-applied theme are no-ops; nothing else is recreated or played.
+      if (media && typeof media.addEventListener === 'function') {
+        media.addEventListener('change', event => {
+          const nextTheme = event.matches === true;
+          if (nextTheme === theme) return;
+          theme = nextTheme;
+          navigate(themedURL());
+        });
+      }
     }
     // Never move the video or any of its ancestors: that reloads live iframes.
     layout.append(toolbar, panel);
