@@ -180,7 +180,7 @@ mod tests {
             format!("https://www.twitch.tv/embed/alpha/chat?parent={parent}&"),
             // percent-encoded keys or parent spellings never match the raw forms
             format!("https://www.twitch.tv/embed/alpha/chat?p%61rent={parent}&darkpopout"),
-            format!("https://www.twitch.tv/embed/alpha/chat?parent=parent%2Empdviewer.com"),
+            "https://www.twitch.tv/embed/alpha/chat?parent=parent%2Empdviewer.com".to_string(),
             // case-spelled key, stray '?', and a missing query
             format!("https://www.twitch.tv/embed/alpha/chat?Parent={parent}"),
             format!("https://www.twitch.tv/embed/alpha/chat?parent={parent}?darkpopout"),

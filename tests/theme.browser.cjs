@@ -98,7 +98,7 @@ const readFile = {manager: 'ui', wrapper: 'player-wrapper', hosted: 'web/parent.
           const q = s => document.querySelector(s);
           const cs = el => el && getComputedStyle(el);
           const color = (sel, prop) => { const el = q(sel); return el ? cs(el)[prop] : null; };
-          const tokens = Object.fromEntries(['--bg','--panel','--panel-2','--topbar','--line','--text','--muted','--green','--pill','--pill-text','--pill-on','--ctrl-line','--panel-line','--field-bg','--tag-line','--tag-text','--error-bg','--error-line','--error-text','--auth-bg','--auth-line','--footer']
+          const tokens = Object.fromEntries(['--bg','--panel','--panel-2','--topbar','--line','--text','--muted','--green','--pill','--pill-text','--pill-on','--ctrl-line','--panel-line','--field-bg','--tag-line','--tag-text','--error-bg','--error-line','--error-text','--auth-bg','--auth-line','--footer','--demo-high','--demo-low']
             .map(t => [t, getComputedStyle(document.documentElement).getPropertyValue(t).trim()]));
           const focusProbe = (sel) => {
             const el = q(sel); if (!el) return null;
@@ -119,6 +119,7 @@ const readFile = {manager: 'ui', wrapper: 'player-wrapper', hosted: 'web/parent.
             tagLine: color('.tag', 'borderTopColor'), tagText: color('.tag', 'color'),
             button: focusProbe('#refresh'), input: focusProbe('#channel'), select: focusProbe('#quality'),
             footer: q('footer') ? cs(q('footer')).color : null,
+            demoLabel: color('#demo .eyebrow', 'color'),
             // wrapper / hosted chrome
             videoBg: color('#video', 'backgroundColor'), panelBg: color('#mpd-chat-panel', 'backgroundColor'),
             noteColor: color('#mpd-chat-status, .mpd-chat-note', 'color'),
@@ -160,6 +161,7 @@ const readFile = {manager: 'ui', wrapper: 'player-wrapper', hosted: 'web/parent.
         for (const [phase, w] of [['dark', d], ['light', l]]) {
           assertAA(w.bodyColor, w.bodyBg, `manager body ${phase}`);
           assertAA(w.primaryColor, w.primaryBg, `manager primary ${phase}`);
+          assertAA(w.footer, w.bodyBg, `manager footer ${phase}`);
           assertManagers(w);
         }
         if (external.length) console.error('manager external:', external);
@@ -167,6 +169,8 @@ const readFile = {manager: 'ui', wrapper: 'player-wrapper', hosted: 'web/parent.
       } else if (schema === 'wrapper') {
         for (const [phase, w] of [['dark', d], ['light', l]]) {
           assertAA(w.bodyColor, w.htmlBg, `wrapper body ${phase}`);
+          assertAA(w.demoLabel, w.tokens['--demo-high'], `demo label gradient high ${phase}`);
+          assertAA(w.demoLabel, w.tokens['--demo-low'], `demo label gradient low ${phase}`);
           assert.equal(w.videoBg, 'rgb(5, 10, 13)', 'wrapper video letterbox stays dark');
           assertAA(w.toolbarButton.border, w.toolbarButton.bg, `wrapper toolbar boundary ${phase}`, false);
           assertAA(w.toolbarButton.outline, w.toolbarButton.bg, `wrapper toolbar focus ${phase}`, false);
@@ -199,12 +203,32 @@ const readFile = {manager: 'ui', wrapper: 'player-wrapper', hosted: 'web/parent.
       const liveBefore = schema === 'hosted'
         ? await live.evaluate(() => getComputedStyle(document.querySelector('.mpd-chat-layout')).backgroundColor)
         : await live.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim());
-      await live.emulateMedia({colorScheme: 'dark'});
-      await live.waitForFunction((prev, mode) => {
-        return mode === 'hosted'
-          ? getComputedStyle(document.querySelector('.mpd-chat-layout')).backgroundColor !== prev
-          : getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() !== prev;
-      }, liveBefore, schema);
+      await live.evaluate(() => {
+        window.themeIdentity = {
+          document,
+          video: document.querySelector('#grid, #video'),
+          chat: document.querySelector('#mpd-chat-panel iframe'),
+        };
+      });
+      for (const phase of ['dark', 'light']) {
+        await live.emulateMedia({colorScheme: phase});
+        const expected = schema === 'hosted'
+          ? (phase === 'dark' ? 'rgb(10, 17, 22)' : 'rgb(242, 245, 247)')
+          : (phase === 'dark' ? d.tokens['--bg'] : l.tokens['--bg']);
+        await live.waitForFunction(({expected, schema}) => {
+          const actual = schema === 'hosted'
+            ? getComputedStyle(document.querySelector('.mpd-chat-layout')).backgroundColor
+            : getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+          return actual === expected;
+        }, {expected, schema});
+        assert.equal(await live.evaluate(() => {
+          const before = window.themeIdentity;
+          return before.document === document
+            && before.video === document.querySelector('#grid, #video')
+            && before.chat === document.querySelector('#mpd-chat-panel iframe');
+        }), true, `${schema}: document/video/chat nodes survive ${phase}`);
+      }
+      assert.ok(liveBefore, `${schema}: initial light color exists`);
       console.log(`PASS ${schema}: both palettes, AA bounds + focus indicators, live switch without reload, offline routes`);
     }
   } finally {

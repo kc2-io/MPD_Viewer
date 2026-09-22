@@ -32,7 +32,7 @@ Frozen from DM-000 (fresh-profile deterministic):
 
 `theme=` is ignored by the separate chat embed and is rejected. Only the two shapes above may navigate.
 
-Residual (non-blocking for this implementation, blocking for release acceptance): a signed-in profile's remembered theme may render the plain (light) URL dark. The native owner confirms identity/session behavior under `docs/dark-mode/acceptance.md`; the chat-only reload disclosure below always applies.
+Mandatory P1 acceptance: a signed-in profile with a remembered dark preference must visibly render light chat in light-system mode and dark chat in dark-system mode. A correct URL alone is insufficient. Any mismatch blocks acceptance and requires an architecture decision under `dark_mode_code_review.md`; the chat-only reload disclosure below always applies.
 
 ## Startup and live-change behavior
 
@@ -64,7 +64,7 @@ Frozen rule for Rust:
 
 - If `matchMedia` is unavailable or throws, chat installs with the light URL shape (same as today's behavior) and never navigates; no retry loop or timer-driven reload.
 - If the OS theme events don't fire in a supported webview, app chrome still renders correctly on cold start per OS preference; live propagation is a blockable defect recorded under native acceptance.
-- If native acceptance finds the signed-in remembered-theme case unacceptable at release time, the fix must go through an approved plan (no silent style injection into the Twitch frame, no broaden-website navigation, no combined-embed migration without a separate ADR/plan).
+- If native acceptance finds signed-in chat does not match the OS theme, acceptance fails. Escalate the architecture decision through an approved plan (no style injection into the Twitch frame, no broadened navigation, no combined-embed migration without a separate ADR/plan).
 
 ## Redirect/verification guard
 
