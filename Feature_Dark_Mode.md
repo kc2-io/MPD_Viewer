@@ -111,7 +111,7 @@ The coordinator must replace `TBD` with the assigned worktree, base commit, agen
 | DM-020 | `player-wrapper/chat.js`, `tests/chat.test.cjs`, `tests/chat.browser.cjs` | Medium-high JS/browser | main `b167bdc` / coordinator / DONE 2026-09-21 |
 | Integration | conflict resolution only; `scripts/ci-check.sh` if a new test must be wired in | Coordinator | main / coordinator / DONE 2026-09-21 (no ci-check change needed; browser suites are opt-in) |
 | DM-030 | `src-tauri/src/player.rs`, `src-tauri/hosted-player-adapter.js`, their adjacent Rust tests, `tests/hosted-player-adapter.test.cjs` | High native/security | main `b167bdc` / coordinator / DONE-locally 2026-09-21 (native cargo compile blocked: missing libdbus-1-dev/webkit2gtk; allowlist logic verified by standalone url-crate mirror) |
-| DM-040 | Read-only; coordinator may later lease a new QA-only fixture | High independent review | main / independent reviewer / IN PROGRESS |
+| DM-040 | Read-only; coordinator may later lease a new QA-only fixture | High independent review | feature/dark-mode `45ed672` / independent reviewer / DONE — two read-only passes, no blocking findings (pre-fix pass flagged P1/P2/quality items that are all addressed; post-fix pass closed with no blocking, 6 non-blocking cosmetic notes) |
 | DM-050 | `docs/dark-mode/acceptance.md` and evidence paths only | High native QA | main / coordinator / BLOCKED (no native runtime on this machine) |
 
 No worker may edit `web/parent.mpdviewer.com/index.html`. Shared controller/model/storage/permission files are outside all leases. A worker needing an out-of-scope file must stop and ask the coordinator to re-plan ownership; it must not expand its own lease.
