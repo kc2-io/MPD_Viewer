@@ -11,6 +11,10 @@ test('demo playback is explicitly labeled simulated',()=>assert.match(playbackLa
 test('offline player is not confused with authoritative live monitoring',()=>assert.equal(playbackLabel(player({state:'offline'})),'Player reports offline'));
 test('paused state is preserved',()=>assert.equal(playbackLabel(player({state:'paused'})),'Paused'));
 test('unknown SDK state is not claimed to be playing',()=>assert.equal(playbackLabel(player({state:'mystery'})),'Unknown'));
+test('full Twitch page does not fabricate unavailable playback telemetry',()=>assert.equal(
+  playbackLabel(player({report_age_seconds:null}),false,false),'Twitch channel page · playback managed by Twitch'));
+test('closing state remains authoritative without Twitch page telemetry',()=>assert.equal(
+  playbackLabel(player({closing:true,report_age_seconds:null}),false,false),'Closing · capacity reserved'));
 test('last check handles unknown',()=>assert.equal(secondsAgo(null),'No status check yet'));
 test('last check renders seconds',()=>assert.equal(secondsAgo(12),'Last successful check 12s ago'));
 test('last check renders minutes',()=>assert.equal(secondsAgo(130),'Last successful check 2m ago'));

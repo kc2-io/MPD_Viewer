@@ -128,6 +128,33 @@ pub struct PlayerView {
     pub volume: Option<f64>,
     pub muted: Option<bool>,
 }
+
+#[derive(Clone, Serialize)]
+pub struct ViewerCapabilities {
+    pub backend: String,
+    pub telemetry: bool,
+    pub media_controls: bool,
+    pub twitch_channel_page: bool,
+}
+impl ViewerCapabilities {
+    pub fn twitch_page() -> Self {
+        Self { backend: "twitch-page".into(), telemetry: false,
+            media_controls: false, twitch_channel_page: true }
+    }
+    pub fn wrapper(backend: &str) -> Self {
+        Self { backend: backend.into(), telemetry: true,
+            media_controls: true, twitch_channel_page: false }
+    }
+    pub fn compiled() -> Self {
+        #[cfg(feature = "twitch-page-viewer")]
+        return Self::twitch_page();
+        #[cfg(feature = "twitch-embed-viewer")]
+        return Self::wrapper("twitch-embed");
+        #[allow(unreachable_code)]
+        Self::twitch_page()
+    }
+}
+
 #[derive(Clone, Serialize)]
 pub struct View {
     pub mode: Mode,
@@ -140,6 +167,7 @@ pub struct View {
     pub last_check_seconds: Option<u64>,
     pub polling: bool,
     pub next_check_seconds: u64,
+    pub viewer: ViewerCapabilities,
     pub player_origin: String,
     pub error: Option<String>,
     pub events: Vec<String>,
@@ -148,7 +176,8 @@ impl Default for View {
     fn default() -> Self {
         Self { mode: Mode::Stopped, settings: Settings::default(), favorites: vec![], players: vec![],
             connected_as: None, auth_pending: false, user_code: None, last_check_seconds: None,
-            polling: false, next_check_seconds: 0, player_origin: String::new(), error: None, events: vec![] }
+            polling: false, next_check_seconds: 0, viewer: ViewerCapabilities::compiled(),
+            player_origin: String::new(), error: None, events: vec![] }
     }
 }
 

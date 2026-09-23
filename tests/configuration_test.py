@@ -5,6 +5,7 @@ import io
 import shutil
 import sys
 import tempfile
+import tomllib
 from contextlib import redirect_stdout
 from unittest.mock import patch
 import unittest
@@ -15,6 +16,23 @@ configure=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(configure)
 
 class ConfigurationTests(unittest.TestCase):
+    def test_default_build_uses_only_the_top_level_twitch_page_backend(self):
+        manifest=tomllib.loads((ROOT/'src-tauri/Cargo.toml').read_text(encoding='utf-8'))
+        features=manifest['features']
+        self.assertEqual(features['default'],['twitch-page-viewer'])
+        self.assertEqual(features['twitch-page-viewer'],[])
+        self.assertEqual(features['twitch-embed-viewer'],[])
+        source=(ROOT/'src-tauri/src/player.rs').read_text(encoding='utf-8')
+        self.assertIn('compile_error!("Choose exactly one viewer backend',source)
+        self.assertIn('format!("twitch-page-{id}")',source)
+        self.assertIn('const TWITCH_PAGE_ROOT: &str = "https://www.twitch.tv/";',source)
+
+    def test_top_level_twitch_pages_receive_no_native_capability(self):
+        capability=json.loads((ROOT/'src-tauri/capabilities/players.json').read_text())
+        self.assertEqual(capability['windows'],['player-*'])
+        self.assertNotIn('https://www.twitch.tv/*',capability['remote']['urls'])
+        self.assertNotIn('twitch-page-*',capability['windows'])
+
     def test_manager_allows_html_ranking_drags(self):
         config=json.loads((ROOT/'src-tauri/tauri.conf.json').read_text(encoding='utf-8'))
         windows=config['app']['windows']
