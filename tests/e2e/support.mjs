@@ -29,6 +29,25 @@ export async function freePort() {
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port;
 }
+function exited(child) { return child.exitCode !== null || child.signalCode !== null; }
+async function terminateOwned(child) {
+  if (exited(child)) return;
+  // The process object remains owned until exit is confirmed. Never target an executable name.
+  if (process.platform === 'win32') {
+    spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, timeout: 10000, stdio: 'ignore' });
+    await until(() => exited(child), 'Owned Windows process tree did not terminate', 10000);
+    return;
+  }
+  try { process.kill(-child.pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+  try { await until(() => exited(child), 'Owned process ignored SIGTERM', 10000); }
+  catch {
+    // Only this still-owned process group is escalated; retain its handle if SIGKILL also fails.
+    if (!exited(child)) {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      await until(() => exited(child), 'Owned process group did not terminate after SIGKILL', 10000);
+    }
+  }
+}
 export class Desktop {
   constructor(options) { Object.assign(this, options); this.launches = []; }
   async start(scenario = 'demo', args = []) {
@@ -58,7 +77,7 @@ export class Desktop {
     }, 'Embedded driver not ready', 45000);
     this.browser = await remote({ hostname: '127.0.0.1', port, path: '/', logLevel: 'silent', connectionRetryCount: 0,
       connectionRetryTimeout: 15000, capabilities: { browserName: 'wry', 'tauri:options': { application: this.binary } } });
-    await until(() => this.browser.execute(() => { const backend = document.querySelector('#viewer-backend')?.textContent?.trim(); return Boolean(backend && backend !== 'unknown'); }), 'Manager did not render its first Rust state');
+    await until(() => this.browser.execute(() => { const backend = document.querySelector('#viewer-backend')?.textContent?.trim(); const origin = document.querySelector('#player-origin')?.textContent?.trim(); return Boolean(backend && backend !== 'unknown' && origin); }), 'Manager did not render its first Rust state');
     this.manager = await this.browser.getWindowHandle();
     await this.browser.setWindowRect(0, 0, 1400, 1000);
     this.launches.at(-1).renderer = await this.browser.execute(() => ({ userAgent: navigator.userAgent, width: innerWidth, height: innerHeight, scale: devicePixelRatio }));
@@ -118,24 +137,32 @@ export class Desktop {
     await rename(temporary, path.join(this.root, 'fixture-state.json'));
   }
   async cleanupRoot(root, runId) {
+    if (this.child || this.cleanupChild) throw new Error('Cannot clean credentials while an owned process remains unresolved');
     const port = await freePort();
-    const child = spawn(this.binary, ['--e2e-cleanup'], { shell: false, windowsHide: true, stdio: 'ignore', env: environment({ MPD_E2E_ROOT: root, MPD_E2E_RUN_ID: runId, TAURI_WEBDRIVER_PORT: String(port) }) });
+    const child = spawn(this.binary, ['--e2e-cleanup'], { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: 'ignore', env: environment({ MPD_E2E_ROOT: root, MPD_E2E_RUN_ID: runId, TAURI_WEBDRIVER_PORT: String(port) }) });
+    this.cleanupChild = child;
     let error; child.on('error', value => { error = value; });
     try {
-      await until(() => { if (error) throw error; return child.exitCode !== null; }, 'Scoped credential cleanup did not exit', 15000);
+      await until(() => { if (error) throw error; return exited(child); }, 'Scoped credential cleanup did not exit', 15000);
       if (child.exitCode !== 0) throw new Error(`Scoped credential cleanup exited ${child.exitCode}`);
-    } finally { if (child.exitCode === null && child.signalCode === null) child.kill(); }
+    } finally {
+      await terminateOwned(child);
+      this.cleanupChild = null;
+    }
   }
   async stop() {
     try { await this.browser?.deleteSession(); } catch {}
     this.browser = null;
-    const child = this.child; this.child = null;
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    // Only this exact child, and its process tree/group, may be terminated. Never kill by executable name.
-    if (process.platform === 'win32') spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, timeout: 10000, stdio: 'ignore' });
-    else { try { process.kill(-child.pid, 'SIGTERM'); } catch {} }
-    await until(() => child.exitCode !== null || child.signalCode !== null, 'Owned app did not terminate', 10000);
+    if (this.child) {
+      await terminateOwned(this.child);
+      this.child = null;
+    }
+    if (this.cleanupChild) {
+      await terminateOwned(this.cleanupChild);
+      this.cleanupChild = null;
+    }
   }
+
 }
 export async function visibleText(browser, selector) { return (await browser.$(selector)).getText(); }
 export async function click(browser, selector) { await (await browser.$(selector)).click(); }

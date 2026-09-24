@@ -83,3 +83,9 @@ binary. It records the binary SHA-256 and fails if its bytes change during a run
 Set `MPD_E2E_BUILD_COMMIT` to a verified 40-character native source commit when
 building elsewhere; otherwise that field is null. A local harness worktree commit
 alone is not evidence of the compiled application's source revision.
+
+Shutdown retains each owned child handle until exit is confirmed. Unix cleanup
+escalates an unresponsive owned process group from SIGTERM to SIGKILL with bounded
+waits. If shutdown or scoped credential cleanup remains unresolved, the runner
+fails and retains the marked test root for recovery instead of deleting an active
+profile. Reports record cleanup success and whether the root was removed.

@@ -70,16 +70,26 @@ try {
 } finally {
   clearTimeout(deadline);
   process.removeListener('SIGINT', onInterrupt); process.removeListener('SIGTERM', onInterrupt);
-  try { await app.stop(); } catch (error) { results.push({ name: 'owned process cleanup', seconds: 0, failure: sanitize(error.message) }); process.exitCode = 1; }
-  for (const ownedRoot of roots) {
-    try { await app.cleanupRoot(ownedRoot.root, ownedRoot.runId); } catch (error) { results.push({ name: 'scoped credential cleanup', seconds: 0, failure: sanitize(error.message) }); process.exitCode = 1; }
+  let cleanupComplete = true, rootRemoved = false;
+  try { await app.stop(); } catch (error) { results.push({ name: 'owned process cleanup', seconds: 0, failure: sanitize(error.message) }); cleanupComplete = false; process.exitCode = 1; }
+  if (cleanupComplete) for (const ownedRoot of roots) {
+    try { await app.cleanupRoot(ownedRoot.root, ownedRoot.runId); }
+    catch (error) { results.push({ name: 'scoped credential cleanup', seconds: 0, failure: sanitize(error.message) }); cleanupComplete = false; process.exitCode = 1; break; }
   }
+  // Never remove profiles/markers while an app or cleanup process may still hold them.
+  if (cleanupComplete && !app.child && !app.cleanupChild) {
+    try {
+      if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith('mpd-desktop-e2e-') || await readFile(path.join(root, '.mpd-e2e-root'), 'utf8') !== runId) throw new Error('Refusing cleanup of unverified test root');
+      await rm(root, { recursive: true }); rootRemoved = true;
+    } catch (error) { results.push({ name: 'isolated profile cleanup', seconds: 0, failure: sanitize(error.message) }); cleanupComplete = false; process.exitCode = 1; }
+  }
+  if (!rootRemoved) console.error(`Retaining isolated test root after unresolved cleanup: ${root}`);
   let commit = 'unknown'; try { commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: here, encoding: 'utf8' }).trim(); } catch {}
   let harnessDirty = null; try { harnessDirty = execFileSync('git', ['status', '--porcelain'], { cwd: here, encoding: 'utf8' }).trim().length > 0; } catch {}
   const binaryUnchanged = await binaryHash() === binarySha256;
   if (!binaryUnchanged) { results.push({ name: 'binary provenance', seconds: 0, failure: 'Binary changed during suite execution' }); process.exitCode = 1; }
   const manifest = {
-    schema: 1, harnessCommit: commit, harnessDirty, binarySha256, binaryUnchanged, buildCommit: /^[0-9a-f]{40}$/.test(process.env.MPD_E2E_BUILD_COMMIT || '') ? process.env.MPD_E2E_BUILD_COMMIT : null, platform: process.platform, architecture: process.arch, osRelease: os.release(), node: process.version,
+    schema: 1, cleanup: { complete: cleanupComplete, rootRemoved, unresolvedOwnedProcess: Boolean(app.child || app.cleanupChild) }, harnessCommit: commit, harnessDirty, binarySha256, binaryUnchanged, buildCommit: /^[0-9a-f]{40}$/.test(process.env.MPD_E2E_BUILD_COMMIT || '') ? process.env.MPD_E2E_BUILD_COMMIT : null, platform: process.platform, architecture: process.arch, osRelease: os.release(), node: process.version,
     webdriverio: '9.32.0', driver: 'tauri-plugin-wdio-webdriver 1.4.0 (embedded W3C)',
     runnerImage: process.env.ImageOS || null, runnerImageVersion: process.env.ImageVersion || null,
     elapsedSeconds: (Date.now() - started) / 1000, extended, launches: app.launches, tests: results.map(({ name, failure }) => ({ name, result: failure ? 'failed' : 'passed' })),
@@ -88,9 +98,6 @@ try {
   };
   await writeFile(path.join(output, 'manifest.json'), JSON.stringify(manifest, null, 2));
   await writeFile(path.join(output, 'results.xml'), `<?xml version="1.0" encoding="UTF-8"?><testsuites><testsuite name="MPD desktop GUI" tests="${results.length}" failures="${results.filter(result => result.failure).length}">${results.map(result => `<testcase name="${xml(result.name)}" time="${result.seconds}">${result.failure ? `<failure>${xml(result.failure)}</failure>` : ''}</testcase>`).join('')}</testsuite></testsuites>`);
-  // Remove only a root created by this process and still bearing its exact ownership marker.
-  if (path.dirname(root) === os.tmpdir() && path.basename(root).startsWith('mpd-desktop-e2e-') && await readFile(path.join(root, '.mpd-e2e-root'), 'utf8') === runId) await rm(root, { recursive: true });
-  else { console.error('Refusing cleanup of unverified test root'); process.exitCode = 1; }
   console.log(`Evidence: ${output}`);
 }
 

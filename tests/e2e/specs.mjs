@@ -41,10 +41,16 @@ export async function demoSmoke(app, test, extended) {
     await click(browser, '#start');
     await until(async () => await visibleText(browser, '#run-status') === 'Monitoring', 'Start did not enter monitoring');
     const handles = await windows(browser, 3);
+    const channels = [];
     for (const handle of handles.filter(handle => handle !== app.manager)) {
       await browser.switchToWindow(handle);
-      assert.ok((await visibleText(browser, 'body')).length > 0, 'Native viewer document is blank');
+      const channel = await until(() => browser.execute(() => {
+        const name = document.querySelector('#demo-channel')?.textContent?.trim();
+        return document.readyState === 'complete' && document.querySelector('#demo')?.hidden === false && /^(bravo|charlie)_demo$/.test(name || '') && name;
+      }), 'Expected initialized simulated viewer document');
+      channels.push(channel);
     }
+    assert.deepEqual(channels.sort(), ['bravo_demo', 'charlie_demo']);
     await browser.switchToWindow(app.manager);
     await click(browser, '#pause');
     await until(async () => await visibleText(browser, '#run-status') === 'Automation paused', 'Pause did not render');
@@ -94,8 +100,7 @@ export async function webSmoke(app, test, extended) {
     const channels = [];
     for (const handle of handles.filter(handle => handle !== app.manager)) {
       await browser.switchToWindow(handle);
-      assert.equal(await visibleText(browser, 'h1'), 'MPD E2E local viewer');
-      channels.push(await visibleText(browser, '#channel'));
+      channels.push(await fixtureViewerReady(browser));
       await browser.execute(nonce => localStorage.setItem('mpd-e2e-test-nonce', nonce), app.runId);
     }
     assert.deepEqual(channels.sort(), ['alpha_fixture', 'bravo_fixture']);
@@ -172,6 +177,7 @@ export async function webSmoke(app, test, extended) {
     await click(browser, '#start');
     const handles = await windows(browser, 2);
     await browser.switchToWindow(handles.find(handle => handle !== app.manager));
+    await fixtureViewerReady(browser);
     assert.equal(await browser.execute(() => localStorage.getItem('mpd-e2e-test-nonce')), app.runId, 'Disposable browser profile did not survive full process restart');
     await browser.switchToWindow(app.manager);
     await click(browser, '#stop'); await windows(browser, 1);
@@ -209,7 +215,7 @@ export async function authSmoke(app, test) {
     await click(browser, '#connect');
     const handles = await windows(browser, 2);
     await browser.switchToWindow(handles.find(handle => handle !== app.manager));
-    await until(async () => (await browser.$('#authorize')).isExisting(), 'Local fake activation UI missing');
+    await until(async () => await visibleText(browser, '#authorize') === 'Authorize simulation', 'Local fake activation UI missing');
     await click(browser, '#authorize');
     await browser.switchToWindow(app.manager);
     await until(async () => (await visibleText(browser, '#auth-status')).startsWith('Monitoring as '), 'Fake authorization did not complete', 30000);
@@ -226,6 +232,14 @@ export async function authSmoke(app, test) {
   await app.stop(); browser = await app.start('auth');
   await test('Windows Disconnect deletes fake vault authorization across restart', async () => {
     await until(async () => await visibleText(browser, '#auth-status') === 'Not connected', 'Authorization did not settle disconnected', 30000);
+    assert.equal(await (await browser.$('#error')).isDisplayed(), false, 'Credential recovery error must not masquerade as successful Disconnect');
     await windows(browser, 1);
   });
+}
+
+async function fixtureViewerReady(browser) {
+  return until(() => browser.execute(() => {
+    const channel = document.querySelector('#channel')?.textContent?.trim();
+    return document.readyState === 'complete' && document.querySelector('h1')?.textContent?.trim() === 'MPD E2E local viewer' && /^[a-z]+_fixture$/.test(channel || '') && channel;
+  }), 'Expected initialized local full-page fixture document');
 }
