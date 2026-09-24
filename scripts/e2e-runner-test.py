@@ -58,5 +58,28 @@ class EvidenceBoundaryTests(unittest.TestCase):
             self.assertTrue(result["missing_evidence"])
 
 
+class ReleaseGraphBoundaryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        boundary_spec = importlib.util.spec_from_file_location("boundary", Path(__file__).with_name("e2e-release-boundary.py"))
+        cls.boundary = importlib.util.module_from_spec(boundary_spec)
+        boundary_spec.loader.exec_module(cls.boundary)
+
+    def test_rejects_transitive_fixture_even_without_driver(self):
+        graph = "mpd-tabber v0.1.0|custom-protocol\nmpd-twitch v0.1.0|e2e-tests\n"
+        result = self.boundary.assess_graph(graph)
+        self.assertEqual(result["violations"], ["Test fixture feature is active: mpd-twitch/e2e-tests"])
+
+    def test_rejects_driver_even_without_named_feature(self):
+        graph = "mpd-tabber v0.1.0|custom-protocol\ntauri-plugin-wdio-webdriver v1.4.0|default (*)\n"
+        result = self.boundary.assess_graph(graph)
+        self.assertEqual(result["violations"], ["Automation dependency is reachable: tauri-plugin-wdio-webdriver"])
+
+    def test_empty_or_unexpected_graph_cannot_pass(self):
+        for graph in ("", "cargo resolution failed", "unrelated v1.0.0|default\n"):
+            with self.subTest(graph=graph), self.assertRaises(ValueError):
+                self.boundary.assess_graph(graph)
+
+
 if __name__ == "__main__":
     unittest.main()

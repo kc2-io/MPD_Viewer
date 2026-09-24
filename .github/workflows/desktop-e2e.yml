@@ -62,6 +62,8 @@ jobs:
         run: npm ci --prefix tests/e2e
       - name: Verify artifact isolation
         run: python scripts/e2e-runner-test.py
+      - name: Verify production excludes automation and fixture features
+        run: python scripts/e2e-release-boundary.py
       - name: Build isolated UNSIGNED GUI test binary
         run: cargo build --locked -p mpd-tabber --features custom-protocol,e2e-tests
       - name: Run native GUI suite (Windows and macOS)
