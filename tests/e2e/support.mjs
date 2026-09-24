@@ -15,6 +15,12 @@ export async function until(check, message, timeout = 15000) {
   }
   throw new Error(`${message}${last ? `: ${last.message}` : ''}`);
 }
+export async function documentTitle(browser, expected) {
+  // Driver 1.4.0 getTitle is one document.title evaluation. execute/sync instead
+  // stores a result in a window-global then polls it; initial navigation can
+  // destroy that global. Wait for the final document before any execute call.
+  await until(async () => await browser.getTitle() === expected, `Expected final document title: ${expected}`);
+}
 export function sanitize(text) {
   return String(text).replace(/https?:\/\/[^\s"<>]+/g, value => value.replace(/[?#].*/, '?[redacted]'))
     .replace(/\bBearer\s+[^\s,}"']+/gi, 'Bearer [redacted]')
@@ -77,6 +83,7 @@ export class Desktop {
     }, 'Embedded driver not ready', 45000);
     this.browser = await remote({ hostname: '127.0.0.1', port, path: '/', logLevel: 'silent', connectionRetryCount: 0,
       connectionRetryTimeout: 15000, capabilities: { browserName: 'wry', 'tauri:options': { application: this.binary } } });
+    await documentTitle(this.browser, 'MPD Viewer');
     await until(() => this.browser.execute(() => { const backend = document.querySelector('#viewer-backend')?.textContent?.trim(); const origin = document.querySelector('#player-origin')?.textContent?.trim(); return Boolean(backend && backend !== 'unknown' && origin); }), 'Manager did not render its first Rust state');
     this.manager = await this.browser.getWindowHandle();
     await this.browser.setWindowRect(0, 0, 1400, 1000);

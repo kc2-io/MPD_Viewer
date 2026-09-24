@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { click, input, byLabel, order, until, visibleText, windows, delay, selectValue, dragBefore } from './support.mjs';
+import { click, input, byLabel, order, until, visibleText, windows, delay, selectValue, dragBefore, documentTitle } from './support.mjs';
 
 const expectedOrder = ['bravo_demo', 'alpha_demo', 'charlie_demo', 'delta_demo'];
 export async function demoSmoke(app, test, extended) {
@@ -65,6 +65,7 @@ export async function demoSmoke(app, test, extended) {
     const channels = [];
     for (const handle of handles.filter(handle => handle !== app.manager)) {
       await browser.switchToWindow(handle);
+      await documentTitle(browser, 'MPD Player');
       const channel = await until(() => browser.execute(() => {
         const name = document.querySelector('#demo-channel')?.textContent?.trim();
         return document.readyState === 'complete' && document.querySelector('#demo')?.hidden === false && /^(bravo|charlie)_demo$/.test(name || '') && name;
@@ -236,6 +237,7 @@ export async function authSmoke(app, test) {
     await click(browser, '#connect');
     const handles = await windows(browser, 2);
     await browser.switchToWindow(handles.find(handle => handle !== app.manager));
+    await documentTitle(browser, 'MPD E2E authorization fixture');
     await until(async () => await visibleText(browser, '#authorize') === 'Authorize simulation', 'Local fake activation UI missing');
     await click(browser, '#authorize');
     await browser.switchToWindow(app.manager);
@@ -259,6 +261,7 @@ export async function authSmoke(app, test) {
 }
 
 async function fixtureViewerReady(browser) {
+  await documentTitle(browser, 'MPD E2E local viewer');
   return until(() => browser.execute(() => {
     const channel = document.querySelector('#channel')?.textContent?.trim();
     return document.readyState === 'complete' && document.querySelector('h1')?.textContent?.trim() === 'MPD E2E local viewer' && /^[a-z]+_fixture$/.test(channel || '') && channel;
@@ -277,6 +280,7 @@ export async function embeddedSmoke(app, test) {
     for (const handle of handles.filter(handle => handle !== app.manager)) {
       assert.match(handle, /^player-/);
       await browser.switchToWindow(handle);
+      await documentTitle(browser, 'MPD Player');
       channels.push(await until(() => browser.execute(() => {
         const name = document.querySelector('#demo-channel')?.textContent?.trim();
         return document.readyState === 'complete' && document.querySelector('#demo')?.hidden === false && /^(alpha|bravo)_fixture$/.test(name || '') && name;

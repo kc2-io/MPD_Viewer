@@ -89,3 +89,13 @@ escalates an unresponsive owned process group from SIGTERM to SIGKILL with bound
 waits. If shutdown or scoped credential cleanup remains unresolved, the runner
 fails and retains the marked test root for recovery instead of deleting an active
 profile. Reports record cleanup success and whether the root was removed.
+
+Fresh-document readiness first polls W3C `getTitle()` for the exact final HTML
+title, then checks the expected rendered content. Source inspection of
+`tauri-plugin-wdio-webdriver` 1.4.0 (`src/platform/executor.rs`, `get_title` and
+`execute_script`) found that getTitle uses one document-title evaluation, while
+execute/sync stores a result in a window-global and polls it in another evaluation.
+Initial navigation can discard that global and time out even when the final page
+subsequently renders. This source-based race mitigation adds no action retries,
+arbitrary readiness sleeps or larger command timeouts. Platform evidence must
+still demonstrate it fixes the observed hosted failures.
