@@ -42,7 +42,7 @@ impl Host {
                     #[cfg(feature = "e2e-tests")]
                     eprintln!("E2E asset begin {asset_name}");
                     #[cfg(feature = "e2e-tests")]
-                    let body = if mime.starts_with("text/html") { crate::e2e::scope_wrapper_script(body, request.url()) } else { body.into() };
+                    let body = if mime.starts_with("text/html") { crate::e2e::scope_wrapper_assets(body, request.url()) } else { body.into() };
                     let mut response = tiny_http::Response::from_string(body);
                     for (name, value) in [("Content-Type", mime), ("Cache-Control", "no-store"),
                         ("X-Content-Type-Options", "nosniff"), ("Referrer-Policy", "strict-origin-when-cross-origin")] {

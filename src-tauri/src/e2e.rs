@@ -43,14 +43,20 @@ pub fn twitch() -> Result<mpd_twitch::Twitch, mpd_twitch::ApiError> { mpd_twitch
 pub fn scenario() -> &'static str { &config().scenario }
 pub fn url(path: &str) -> url::Url { url::Url::parse(&format!("http://localhost:{}{path}", config().fixture_port)).expect("local fixture URL") }
 pub fn is_fixture(target: &url::Url) -> bool { target.origin() == url("/").origin() }
-pub fn scope_wrapper_script(html: &str, target: &str) -> String {
+pub fn scope_wrapper_assets(html: &str, target: &str) -> String {
     let values: Vec<_> = url::form_urlencoded::parse(target.split_once('?').map_or("", |(_, query)| query).as_bytes())
         .filter(|(key, _)| key == "e2e_session").map(|(_, value)| value.into_owned()).collect();
     let Some(value) = values.first().filter(|value| values.len() == 1 && !value.is_empty()
         && value.bytes().all(|byte| byte.is_ascii_digit())) else { return html.into(); };
     let Ok(id) = value.parse::<u64>() else { return html.into(); };
     if id == 0 || id.to_string() != *value { return html.into(); }
-    html.replace("src=\"player.js\"", &format!("src=\"player.js?e2e_session={id}\""))
+    let mut scoped = html.to_owned();
+    for (attribute, asset) in [("href", "style.css"), ("href", "chat.css"),
+        ("src", "chat.js"), ("src", "quality.js"), ("src", "player.js")] {
+        scoped = scoped.replace(&format!("{attribute}=\"{asset}\""),
+            &format!("{attribute}=\"{asset}?e2e_session={id}\""));
+    }
+    scoped
 }
 pub fn seed_settings(store: &mut crate::storage::Store) -> Result<(), String> {
     if scenario() == "demo" || config().root.join(".settings-seeded").exists() { return Ok(()); }
@@ -153,11 +159,18 @@ fn bundled_manager_url(url: &url::Url) -> bool {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn wrapper_script_scope_accepts_only_one_canonical_session_number() {
+    fn wrapper_asset_scope_accepts_only_one_canonical_session_number() {
+        let html = include_str!("../../player-wrapper/index.html");
+        let scoped = super::scope_wrapper_assets(html, "/index.html?e2e_session=42");
+        for asset in ["style.css", "chat.css", "chat.js", "quality.js", "player.js"] {
+            assert!(scoped.contains(&format!("{asset}?e2e_session=42\"")));
+        }
+        assert!(scoped.contains("https://player.twitch.tv"));
+        assert_eq!(super::scope_wrapper_assets("<script src=\"other.js\"></script>", "/?e2e_session=42"), "<script src=\"other.js\"></script>");
         let html = "<script src=\"player.js\" defer></script>";
-        assert_eq!(super::scope_wrapper_script(html, "/index.html?e2e_session=42"), "<script src=\"player.js?e2e_session=42\" defer></script>");
+        assert_eq!(super::scope_wrapper_assets(html, "/index.html?e2e_session=42"), "<script src=\"player.js?e2e_session=42\" defer></script>");
         for target in ["/index.html", "/index.html?e2e_session=0", "/index.html?e2e_session=01", "/index.html?e2e_session=1&e2e_session=2", "/index.html?e2e_session=%22evil", "/index.html?e2e_session=18446744073709551616"] {
-            assert_eq!(super::scope_wrapper_script(html, target), html);
+            assert_eq!(super::scope_wrapper_assets(html, target), html);
         }
     }
     #[test]
