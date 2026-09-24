@@ -16,14 +16,13 @@ configure=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(configure)
 
 class ConfigurationTests(unittest.TestCase):
-    def test_default_build_uses_only_the_top_level_twitch_page_backend(self):
+    def test_both_viewers_ship_without_feature_selected_builds(self):
         manifest=tomllib.loads((ROOT/'src-tauri/Cargo.toml').read_text(encoding='utf-8'))
-        features=manifest['features']
-        self.assertEqual(features['default'],['twitch-page-viewer'])
-        self.assertEqual(features['twitch-page-viewer'],[])
-        self.assertEqual(features['twitch-embed-viewer'],[])
+        self.assertEqual(manifest['features']['default'],[])
+        self.assertNotIn('twitch-page-viewer',manifest['features'])
+        self.assertNotIn('twitch-embed-viewer',manifest['features'])
         source=(ROOT/'src-tauri/src/player.rs').read_text(encoding='utf-8')
-        self.assertIn('compile_error!("Choose exactly one viewer backend',source)
+        self.assertNotIn('compile_error!',source)
         self.assertIn('format!("twitch-page-{id}")',source)
         self.assertIn('const TWITCH_PAGE_ROOT: &str = "https://www.twitch.tv/";',source)
 

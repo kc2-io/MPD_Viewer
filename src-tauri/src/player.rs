@@ -3,17 +3,13 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 use crate::model::{Settings, ViewerCapabilities, ViewerCount};
 
-#[cfg(all(feature = "twitch-page-viewer", feature = "twitch-embed-viewer"))]
-compile_error!("Choose exactly one viewer backend; twitch-page-viewer and twitch-embed-viewer cannot both be enabled.");
-#[cfg(not(any(feature = "twitch-page-viewer", feature = "twitch-embed-viewer")))]
-compile_error!("Choose exactly one viewer backend; enable twitch-page-viewer or twitch-embed-viewer.");
+use crate::viewer_mode::{self, ViewerMode};
 
-#[cfg(feature = "twitch-page-viewer")]
 const TWITCH_PAGE_ROOT: &str = "https://www.twitch.tv/";
 
 pub struct Host {
     local: Url,
-    #[cfg(feature = "twitch-embed-viewer")]
+    mode: ViewerMode,
     production: Option<Url>,
 }
 impl Host {
@@ -50,7 +46,6 @@ impl Host {
                 } else { let _ = request.respond(tiny_http::Response::empty(404)); }
             }
         })?;
-        #[cfg(feature = "twitch-embed-viewer")]
         {
             let config: serde_json::Value = serde_json::from_str(include_str!("../player-origin.json"))?;
             let production = config.get("url").and_then(|v| v.as_str()).map(Url::parse).transpose()?;
@@ -59,14 +54,12 @@ impl Host {
                     return Err(std::io::Error::other("Production player URL must be HTTPS with no credentials.").into());
                 }
             }
-            return Ok(Self { local: Url::parse(&format!("http://localhost:{port}/index.html"))?, production });
+            Ok(Self { local: Url::parse(&format!("http://localhost:{port}/index.html"))?, production, mode: viewer_mode::selected() })
         }
-        #[cfg(feature = "twitch-page-viewer")]
-        return Ok(Self { local: Url::parse(&format!("http://localhost:{port}/index.html"))? });
     }
 
     pub fn label(&self, id: u64, demo: bool) -> String {
-        if demo || cfg!(feature = "twitch-embed-viewer") { format!("player-{id}") }
+        if demo || self.mode == ViewerMode::Embedded { format!("player-{id}") }
         else { format!("twitch-page-{id}") }
     }
 
@@ -74,18 +67,18 @@ impl Host {
         if demo {
             return ViewerCapabilities::wrapper("bundled-demo");
         }
-        #[cfg(feature = "twitch-page-viewer")]
-        return ViewerCapabilities::twitch_page();
-        #[cfg(feature = "twitch-embed-viewer")]
-        return ViewerCapabilities::wrapper("twitch-embed");
+        match self.mode {
+            ViewerMode::TwitchPage => ViewerCapabilities::twitch_page(),
+            ViewerMode::Embedded => ViewerCapabilities::wrapper("twitch-embed"),
+        }
     }
 
     pub fn diagnostic_origin(&self, demo: bool) -> String {
         if demo { return self.local.as_str().to_owned(); }
-        #[cfg(feature = "twitch-page-viewer")]
-        return TWITCH_PAGE_ROOT.to_owned();
-        #[cfg(feature = "twitch-embed-viewer")]
-        return self.production.as_ref().unwrap_or(&self.local).as_str().to_owned();
+        match self.mode {
+            ViewerMode::TwitchPage => TWITCH_PAGE_ROOT.to_owned(),
+            ViewerMode::Embedded => self.production.as_ref().unwrap_or(&self.local).as_str().to_owned(),
+        }
     }
 
     fn player_url(&self, login: &str, id: u64, settings: &Settings) -> Url {
@@ -98,13 +91,11 @@ impl Host {
             url.set_fragment(Some(&fragment));
             return url;
         }
-        #[cfg(feature = "twitch-page-viewer")]
-        {
+        if self.mode == ViewerMode::TwitchPage {
             let mut url = Url::parse(TWITCH_PAGE_ROOT).expect("static Twitch channel-page origin");
             url.path_segments_mut().expect("Twitch root is a base URL").push(login);
             return url;
         }
-        #[cfg(feature = "twitch-embed-viewer")]
         {
             let mut url = self.production.as_ref().unwrap_or(&self.local).clone();
             if self.production.is_some() {
@@ -127,7 +118,7 @@ impl Host {
                     .append_pair("demo", "false").append_pair("quality", &settings.preferred_quality).finish();
                 url.set_fragment(Some(&fragment));
             }
-            return url;
+            url
         }
     }
     pub fn open(&self, app: &AppHandle, login: &str, id: u64, settings: &Settings) -> Result<String, String> {
@@ -137,12 +128,12 @@ impl Host {
         let label = self.label(id, settings.demo);
         let origin = url.origin();
         let demo = settings.demo;
+        let mode = self.mode;
         let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url.clone()))
             .title(window_title(login, settings.demo, None))
             .inner_size(1180.0, 720.0).min_inner_size(430.0, 480.0)
             .focused(false);
-        #[cfg(feature = "twitch-embed-viewer")]
-        let builder = if !settings.demo && self.production.is_some() {
+        let builder = if self.mode == ViewerMode::Embedded && !settings.demo && self.production.is_some() {
             let mut adapter = format!("({})({}, {});", include_str!("../hosted-player-adapter.js"), serde_json::json!({
                 "origin": url.origin().ascii_serialization(), "path": url.path(),
                 "channel": login, "session": id, "volume": settings.volume, "muted": settings.muted,
@@ -157,7 +148,7 @@ impl Host {
         } else { builder };
         builder
             .on_navigation(move |target| {
-                allowed_navigation(target, &origin, demo, &chat_channel, &chat_parent)
+                allowed_navigation(target, &origin, demo, mode, &chat_channel, &chat_parent)
             })
             .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
             .on_download(|_, _| false)
@@ -166,28 +157,24 @@ impl Host {
     }
 }
 
-#[cfg(feature = "twitch-page-viewer")]
 fn official_twitch_navigation(url: &Url) -> bool {
     url.scheme() == "https" && matches!(url.host_str(), Some("www.twitch.tv" | "player.twitch.tv"))
         && url.username().is_empty() && url.password().is_none() && url.port().is_none()
 }
 
-fn allowed_navigation(target: &Url, origin: &url::Origin, demo: bool, channel: &str, parent: &str) -> bool {
+fn allowed_navigation(target: &Url, origin: &url::Origin, demo: bool, mode: ViewerMode, channel: &str, parent: &str) -> bool {
     if demo {
         return target.origin() == origin.clone()
             || (target.scheme() == "https" && target.host_str() == Some("player.twitch.tv"));
     }
-    #[cfg(feature = "twitch-page-viewer")]
-    {
-        let _ = (origin, channel, parent);
+    if mode == ViewerMode::TwitchPage {
         // This is a top-level first-party Twitch document, not an embed. Keep
         // arbitrary sites, credential-bearing URLs, ports and custom schemes out.
         return official_twitch_navigation(target);
     }
-    #[cfg(feature = "twitch-embed-viewer")]
-    return target.origin() == origin.clone()
+    target.origin() == origin.clone()
         || (target.scheme() == "https" && target.host_str() == Some("player.twitch.tv"))
-        || allowed_chat_url(target, channel, parent);
+        || allowed_chat_url(target, channel, parent)
 }
 
 // Only the assigned official chat frame is allowed; it receives no native
@@ -195,7 +182,6 @@ fn allowed_navigation(target: &Url, origin: &url::Origin, demo: bool, channel: &
 // docs/dark-mode/theme-contract.md) to the otherwise exact light shape. The
 // query is compared byte-for-byte, so only the two raw strings the chat
 // helper emits can navigate; encoded or reordered spellings never match.
-#[cfg(feature = "twitch-embed-viewer")]
 fn allowed_chat_url(url: &Url, channel: &str, parent: &str) -> bool {
     if url.scheme() != "https" || url.host_str() != Some("www.twitch.tv")
         || !url.username().is_empty() || url.password().is_some() || url.port().is_some()
@@ -234,7 +220,6 @@ pub fn audio(app: &AppHandle, label: &str, settings: &Settings) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "twitch-embed-viewer")]
     #[test]
     fn chat_navigation_is_bound_to_assignment_and_parent() {
         let light = "https://www.twitch.tv/embed/alpha/chat?parent=parent.mpdviewer.com";
@@ -269,13 +254,10 @@ mod tests {
         ] { assert!(!allowed_chat_url(&Url::parse(&invalid).unwrap(), "alpha", parent), "{invalid}"); }
     }
     fn host(production: Option<&str>) -> Host {
-        #[cfg(feature = "twitch-page-viewer")]
-        let _ = production;
         Host { local: Url::parse("http://localhost:4321/index.html").unwrap(),
-            #[cfg(feature = "twitch-embed-viewer")]
+            mode: ViewerMode::Embedded,
             production: production.map(|url| Url::parse(url).unwrap()) }
     }
-    #[cfg(feature = "twitch-embed-viewer")]
     #[test]
     fn hosted_bootstrap_replaces_old_assignments_and_converts_volume() {
         let host = host(Some("https://parent.mpdviewer.com/?channel=old&channel=other&active=old&volume=1&pauseInactive=true&keep=yes#old"));
@@ -291,13 +273,31 @@ mod tests {
         assert!(mpd_core::normalize_login("__mpd-native-pending__").is_err());
     }
     #[test]
+    fn runtime_mode_keeps_remote_pages_outside_the_wrapper_boundary() {
+        let mut h = host(Some("https://parent.mpdviewer.com/"));
+        let origin = Url::parse("https://parent.mpdviewer.com/").unwrap().origin();
+        let page = Url::parse("https://www.twitch.tv/alpha").unwrap();
+        let wrapper = Url::parse("https://parent.mpdviewer.com/").unwrap();
+        assert_eq!(h.label(3, false), "player-3");
+        assert!(h.capabilities(false).media_controls);
+        assert!(!allowed_navigation(&page, &origin, false, h.mode, "alpha", "parent.mpdviewer.com"));
+        assert!(allowed_navigation(&wrapper, &origin, false, h.mode, "alpha", "parent.mpdviewer.com"));
+        h.mode = ViewerMode::TwitchPage;
+        assert_eq!(h.label(3, false), "twitch-page-3");
+        assert!(!h.capabilities(false).media_controls);
+        assert!(allowed_navigation(&page, &page.origin(), false, h.mode, "alpha", "www.twitch.tv"));
+        assert!(!allowed_navigation(&wrapper, &page.origin(), false, h.mode, "alpha", "www.twitch.tv"));
+        assert_eq!(h.label(3, true), "player-3");
+        assert!(h.capabilities(true).media_controls);
+    }
+
+    #[test]
     fn demo_keeps_bundled_fragment_protocol() {
         let host = host(Some("https://parent.mpdviewer.com/"));
         let url = host.player_url("alpha", 7, &Settings::default());
         assert_eq!(url.host_str(), Some("localhost"));
         assert_eq!(url.fragment(), Some("channel=alpha&session=7&volume=25&muted=false&demo=true&quality=auto"));
     }
-    #[cfg(feature = "twitch-embed-viewer")]
     #[test]
     fn local_live_fallback_keeps_bundled_protocol() {
         let host = host(None);
@@ -306,10 +306,10 @@ mod tests {
         assert_eq!(url.host_str(), Some("localhost"));
         assert_eq!(url.fragment(), Some("channel=alpha&session=7&volume=25&muted=false&demo=false&quality=auto"));
     }
-    #[cfg(feature = "twitch-page-viewer")]
     #[test]
     fn default_backend_opens_a_top_level_channel_page_without_embed_parameters() {
-        let host = host(None);
+        let mut host = host(None);
+        host.mode = ViewerMode::TwitchPage;
         let settings = Settings { demo: false, ..Settings::default() };
         let url = host.player_url("alpha", 7, &settings);
         assert_eq!(url.as_str(), "https://www.twitch.tv/alpha");
@@ -321,7 +321,6 @@ mod tests {
         assert!(!capabilities.media_controls);
         assert!(capabilities.twitch_channel_page);
     }
-    #[cfg(feature = "twitch-page-viewer")]
     #[test]
     fn channel_page_navigation_stays_on_credential_free_first_party_https() {
         for valid in ["https://www.twitch.tv/alpha", "https://www.twitch.tv/login",
