@@ -2,6 +2,7 @@ name: Desktop E2E
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -26,12 +27,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON((github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.extended)) && '[{"os":"windows-2025","platform":"Windows-x64"},{"os":"macos-15","platform":"macOS-arm64"},{"os":"ubuntu-22.04","platform":"Linux-x64"},{"os":"macos-15-intel","platform":"macOS-x64"}]' || '[{"os":"windows-2025","platform":"Windows-x64"},{"os":"macos-15","platform":"macOS-arm64"},{"os":"ubuntu-22.04","platform":"Linux-x64"}]') }}
+        include: ${{ fromJSON((github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.extended) || contains(github.event.pull_request.labels.*.name, 'desktop-e2e-extended')) && '[{"os":"windows-2025","platform":"Windows-x64"},{"os":"macos-15","platform":"macOS-arm64"},{"os":"ubuntu-22.04","platform":"Linux-x64"},{"os":"macos-15-intel","platform":"macOS-x64"}]' || '[{"os":"windows-2025","platform":"Windows-x64"},{"os":"macos-15","platform":"macOS-arm64"},{"os":"ubuntu-22.04","platform":"Linux-x64"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
-      MPD_E2E_BINARY: ${{ github.workspace }}/target/debug/mpd-tabber${{ matrix.platform == 'Windows-x64' && '.exe' || '' }}
-      MPD_E2E_EXTENDED: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.extended)) && '1' || '0' }}
+      CARGO_TARGET_DIR: target/e2e-ci
+      MPD_E2E_BINARY: ${{ github.workspace }}/target/e2e-ci/debug/mpd-tabber${{ matrix.platform == 'Windows-x64' && '.exe' || '' }}
+      MPD_E2E_EXTENDED: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.extended) || contains(github.event.pull_request.labels.*.name, 'desktop-e2e-extended')) && '1' || '0' }}
       MPD_E2E_PLATFORM: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -64,6 +66,21 @@ jobs:
         run: python scripts/e2e-runner-test.py
       - name: Verify production excludes automation and fixture features
         run: python scripts/e2e-release-boundary.py
+      # Cache only fetched Cargo packages and this feature-specific target. Never
+      # cache Cargo home wholesale, browser profiles, preferences or evidence.
+      - name: Restore isolated Cargo E2E build cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/registry/src/
+            ~/.cargo/git/db/
+            ~/.cargo/git/checkouts/
+            target/e2e-ci/
+          key: desktop-e2e-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-custom-protocol-e2e-tests-${{ github.sha }}
+          restore-keys: |
+            desktop-e2e-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-custom-protocol-e2e-tests-
       - name: Build isolated UNSIGNED GUI test binary
         run: cargo build --locked -p mpd-tabber --features custom-protocol,e2e-tests
       - name: Run native GUI suite (Windows and macOS)

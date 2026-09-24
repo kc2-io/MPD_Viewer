@@ -10,7 +10,7 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[1]
 PATTERN = re.compile(r'^(\s*(?:-\s*)?uses:\s*)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)([^\n]*)$', re.M)
 SHA = re.compile(r'[0-9a-f]{40}')
-ALLOW = {'actions/checkout', 'actions/setup-node', 'actions/setup-python', 'actions/upload-artifact',
+ALLOW = {'actions/cache', 'actions/checkout', 'actions/setup-node', 'actions/setup-python', 'actions/upload-artifact',
          'actions/download-artifact', 'azure/login', 'azure/artifact-signing-action'}
 
 def api(path):
