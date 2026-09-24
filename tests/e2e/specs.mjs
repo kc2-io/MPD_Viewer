@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { click, input, byLabel, order, until, visibleText, windows, delay } from './support.mjs';
+import { click, input, byLabel, order, until, visibleText, windows, delay, selectValue, dragBefore } from './support.mjs';
 
 const expectedOrder = ['bravo_demo', 'alpha_demo', 'charlie_demo', 'delta_demo'];
 export async function demoSmoke(app, test, extended) {
@@ -10,7 +10,7 @@ export async function demoSmoke(app, test, extended) {
     await windows(browser, 1);
   });
   await test('load demo, add/remove and arrow ranking through real UI', async () => {
-    await (await browser.$('#source')).selectByAttribute('value', 'demo');
+    await selectValue(browser, '#source', 'demo');
     await click(browser, '#load-demo');
     await until(async () => (await order(browser)).length === 4, 'Demo channels not loaded');
     await input(browser, '#channel', 'e2e_temporary'); await click(browser, '#add-form button');
@@ -22,12 +22,20 @@ export async function demoSmoke(app, test, extended) {
     await click(browser, byLabel('Enable alpha_demo'));
     await until(async () => (await browser.$('li[data-login="alpha_demo"]')).getAttribute('aria-disabled').then(value => value === 'true'), 'Enable change missing');
   });
+  await test('synthetic HTML5 drag persists order through real UI handler', async () => {
+    await dragBefore(browser, 'charlie_demo', 'bravo_demo');
+    await until(async () => (await order(browser))[0] === 'charlie_demo', 'Drag rank not saved');
+    await dragBefore(browser, 'bravo_demo', 'charlie_demo');
+    await until(async () => (await order(browser))[0] === 'bravo_demo', 'First restored drag rank not saved');
+    await dragBefore(browser, 'alpha_demo', 'charlie_demo');
+    await until(async () => JSON.stringify(await order(browser)) === JSON.stringify(expectedOrder), 'Restored drag rank not saved');
+  });
   await test('timer presets and settings save through production dispatch', async () => {
     await click(browser, byLabel('Set bravo_demo timer to 10 minutes'));
     await until(async () => (await visibleText(browser, 'li[data-login="bravo_demo"]')).includes('10 min assigned time'), 'Timer preset not saved');
     await input(browser, '#limit', 2); await click(browser, 'h1');
     await until(async () => (await visibleText(browser, '#session-count')).includes('/ 2'), 'Limit not saved');
-    await (await browser.$('#quality')).selectByAttribute('value', '360p');
+    await selectValue(browser, '#quality', '360p');
   });
   await test('two viewer handles render; pause/resume and Stop clean up', async () => {
     await click(browser, '#start');
@@ -43,7 +51,7 @@ export async function demoSmoke(app, test, extended) {
     await windows(browser, 3);
     await click(browser, '#start');
     await until(async () => await visibleText(browser, '#run-status') === 'Monitoring', 'Resume did not render');
-    await app.screenshot('demo-two-windows');
+    assert.equal(await app.screenshot('demo-two-windows'), 3, 'Screenshot capture must work for every native window');
     await click(browser, '#stop');
     await windows(browser, 1);
     await until(async () => (await browser.$$('#players > article')).length === 0, 'Stopped session cards retained');
@@ -71,6 +79,67 @@ export async function demoSmoke(app, test, extended) {
     assert.equal(await (await browser.$('#quality')).getValue(), '360p');
     assert.equal(await (await browser.$(byLabel('Assignment timer minutes for bravo_demo'))).getValue(), '10');
     assert.equal(await (await browser.$('li[data-login="alpha_demo"]')).getAttribute('aria-disabled'), 'true');
-    await windows(browser, 1); await app.screenshot('restart-persistence');
+    await windows(browser, 1); assert.equal(await app.screenshot('restart-persistence'), 1);
   });
 }
+
+export async function webSmoke(app, test) {
+  let browser = await app.start('web');
+  await test('full-page mode hides central media controls and starts two local viewers', async () => {
+    assert.equal(await visibleText(browser, '#run-status'), 'Stopped');
+    assert.equal(await (await browser.$('#media-controls')).isDisplayed(), false);
+    assert.equal(await (await browser.$('#twitch-page-note')).isDisplayed(), true);
+    await click(browser, '#start');
+    const handles = await windows(browser, 3);
+    const channels = [];
+    for (const handle of handles.filter(handle => handle !== app.manager)) {
+      await browser.switchToWindow(handle);
+      assert.equal(await visibleText(browser, 'h1'), 'MPD E2E local viewer');
+      channels.push(await visibleText(browser, '#channel'));
+      await browser.execute(nonce => localStorage.setItem('mpd-e2e-test-nonce', nonce), app.runId);
+    }
+    assert.deepEqual(channels.sort(), ['alpha_fixture', 'bravo_fixture']);
+    await browser.switchToWindow(app.manager);
+    assert.equal(await app.screenshot('web-two-windows'), 3);
+  });
+  await test('native theme API changes manager scheme without replacing viewers', async () => {
+    const handles = await browser.getWindowHandles();
+    await app.nativeCommand({ action: 'theme', label: app.manager, theme: 'dark' });
+    await until(() => browser.execute(() => matchMedia('(prefers-color-scheme: dark)').matches), 'Native dark scheme not applied');
+    assert.deepEqual((await browser.getWindowHandles()).sort(), [...handles].sort());
+    await app.nativeCommand({ action: 'theme', label: app.manager, theme: 'light' });
+    await until(async () => !(await browser.execute(() => matchMedia('(prefers-color-scheme: dark)').matches)), 'Native light scheme not applied');
+    assert.deepEqual((await browser.getWindowHandles()).sort(), [...handles].sort());
+  });
+  await test('native close API skips a full-page assignment and replaces its window', async () => {
+    const old = (await browser.getWindowHandles()).find(handle => handle !== app.manager);
+    await app.nativeCommand({ action: 'close', label: old });
+    await until(async () => { const current = await browser.getWindowHandles(); return current.length === 3 && !current.includes(old); }, 'Closed viewer was not replaced');
+    await until(async () => (await visibleText(browser, '#favorites')).includes('SKIPPED'), 'Native CloseRequested did not produce skip');
+  });
+  await test('full-page native windows honor capacity reduction and Stop', async () => {
+    await input(browser, '#limit', 1); await click(browser, 'h1');
+    await windows(browser, 2);
+    await until(async () => (await browser.$$('#players > article')).length === 1, 'Capacity reduction not reflected');
+    await click(browser, '#stop'); await windows(browser, 1);
+  });
+  await app.stop();
+  browser = await app.start('web');
+  await test('full-page preferences restart stopped with no viewer handles', async () => {
+    assert.equal(await visibleText(browser, '#run-status'), 'Stopped');
+    assert.equal(await (await browser.$('#limit')).getValue(), '1');
+    assert.equal(await (await browser.$('#media-controls')).isDisplayed(), false);
+    await windows(browser, 1);
+    await click(browser, '#start');
+    const handles = await windows(browser, 2);
+    await browser.switchToWindow(handles.find(handle => handle !== app.manager));
+    assert.equal(await browser.execute(() => localStorage.getItem('mpd-e2e-test-nonce')), app.runId, 'Disposable browser profile did not survive full process restart');
+    await browser.switchToWindow(app.manager);
+    await click(browser, '#stop'); await windows(browser, 1);
+  });
+  await test('native manager close exits the owned process', async () => {
+    await app.nativeCommand({ action: 'close', label: app.manager });
+    await until(() => app.child.exitCode !== null || app.child.signalCode !== null, 'Manager close did not exit the process');
+  });
+}
+

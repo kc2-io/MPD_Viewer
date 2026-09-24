@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, writeFile, rename, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { remote } from 'webdriverio';
 
@@ -32,6 +32,7 @@ export class Desktop {
   constructor(options) { Object.assign(this, options); this.launches = []; }
   async start(scenario = 'demo', args = []) {
     if (this.child) throw new Error('Previous owned app must be stopped before launch');
+    this.spawnError = null;
     const port = await freePort();
     const logFile = path.join(this.output, `app-${this.launches.length + 1}.log`);
     let logBytes = 0;
@@ -57,21 +58,37 @@ export class Desktop {
     await until(async () => (await this.browser.$('#run-status')).isExisting(), 'Manager did not render');
     this.manager = await this.browser.getWindowHandle();
     await this.browser.setWindowRect(0, 0, 1400, 1000);
+    this.launches.at(-1).renderer = await this.browser.execute(() => ({ userAgent: navigator.userAgent, width: innerWidth, height: innerHeight, scale: devicePixelRatio }));
     return this.browser;
+  }
+  async nativeCommand(command) {
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const temporary = path.join(this.root, `command-${id}.tmp`);
+    await writeFile(temporary, JSON.stringify({ ...command, id }));
+    await rename(temporary, path.join(this.root, 'native-command.json'));
+    return until(async () => {
+      const result = JSON.parse(await readFile(path.join(this.root, 'native-command-result.json'), 'utf8'));
+      if (result.id !== id) return false;
+      if (!result.ok) throw new Error(`Native ${command.action} failed: ${result.error}`);
+      return true;
+    }, `Native ${command.action} acknowledgement missing`);
   }
   async screenshot(name) {
     if (!this.browser) return;
     let handles;
     try { handles = await this.browser.getWindowHandles(); } catch { return; }
+    let captured = 0;
     for (const [index, handle] of handles.slice(0, 8).entries()) {
       try {
         await this.browser.switchToWindow(handle);
         const base64 = await this.browser.takeScreenshot();
         const buffer = Buffer.from(base64, 'base64');
+        if (buffer.length > 0 && buffer.length <= 8 * 1024 * 1024) captured++;
         if (buffer.length <= 8 * 1024 * 1024) await writeFile(path.join(this.output, `${name}-${index}.png`), buffer);
       } catch (error) { await appendFile(path.join(this.output, 'capture.log'), `${sanitize(error.message).slice(0, 1000)}\n`); }
     }
     try { await this.browser.switchToWindow(this.manager); } catch {}
+    return captured;
   }
   async stop() {
     try { await this.browser?.deleteSession(); } catch {}
@@ -88,5 +105,35 @@ export async function visibleText(browser, selector) { return (await browser.$(s
 export async function click(browser, selector) { await (await browser.$(selector)).click(); }
 export async function input(browser, selector, value) { const element = await browser.$(selector); await element.setValue(String(value)); }
 export const byLabel = label => `[aria-label="${label}"]`;
-export async function order(browser) { return Promise.all((await browser.$$('#favorites > li')).map(row => row.getAttribute('data-login'))); }
+export async function order(browser) { return (await browser.$$('#favorites > li')).map(row => row.getAttribute('data-login')); }
 export async function windows(browser, count) { return until(async () => { const handles = await browser.getWindowHandles(); return handles.length === count && handles; }, `Expected ${count} actual native window handles`); }
+
+
+// The embedded driver cannot select OPTIONs or start HTML5 drags. These narrowly
+// scoped DOM input helpers exercise the real UI handlers, never native dispatch.
+// They are synthetic input coverage, not OS pointer/keyboard acceptance.
+export async function selectValue(browser, selector, value) {
+  await browser.execute((selector, value) => {
+    const select = document.querySelector(selector);
+    if (!(select instanceof HTMLSelectElement) || ![...select.options].some(option => option.value === value)) throw new Error('Expected select and option');
+    select.focus(); select.value = value;
+    select.dispatchEvent(new Event('input', { bubbles: true }));
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    select.blur();
+  }, selector, value);
+}
+export async function dragBefore(browser, sourceLogin, targetLogin) {
+  await browser.execute((sourceLogin, targetLogin) => {
+    const rows = [...document.querySelectorAll('#favorites > li')];
+    const source = rows.find(row => row.dataset.login === sourceLogin);
+    const target = rows.find(row => row.dataset.login === targetLogin);
+    if (!source || !target) throw new Error('Drag source/target missing');
+    const transfer = new DataTransfer();
+    const rect = target.getBoundingClientRect();
+    source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    const options = { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: rect.left + rect.width / 2, clientY: rect.top + 1 };
+    target.dispatchEvent(new DragEvent('dragover', options));
+    target.dispatchEvent(new DragEvent('drop', options));
+    source.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: transfer }));
+  }, sourceLogin, targetLogin);
+}
