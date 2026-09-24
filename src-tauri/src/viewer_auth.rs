@@ -121,11 +121,18 @@ pub fn open(app: &tauri::AppHandle, epoch: u64, activation: Activation) -> Resul
     let activation = std::sync::Arc::new(activation);
     let completion = activation.clone();
     // Preserve the default viewer profile. No capability, adapter, or auth script.
-    WebviewWindowBuilder::new(app, &label, WebviewUrl::External(activation.url.clone()))
+    #[cfg(not(feature = "e2e-tests"))]
+    let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(activation.url.clone()));
+    #[cfg(feature = "e2e-tests")]
+    let builder = crate::e2e::isolate(WebviewWindowBuilder::new(app, &label, WebviewUrl::External(crate::e2e::url("/activation"))));
+    builder
         .title("Connect Twitch · www.twitch.tv")
         .inner_size(600.0, 760.0).min_inner_size(480.0, 600.0)
         .on_navigation(move |url| {
+            #[cfg(not(feature = "e2e-tests"))]
             let allowed = activation.allows(url);
+            #[cfg(feature = "e2e-tests")]
+            let allowed = crate::e2e::is_fixture(url);
             if !allowed {
                 if let Some(window) = handle.get_webview_window(&window_label) {
                     let _ = window.set_title("Connect Twitch · unsupported navigation blocked");
@@ -134,8 +141,11 @@ pub fn open(app: &tauri::AppHandle, epoch: u64, activation: Activation) -> Resul
             allowed
         })
         .on_page_load(move |window, payload| {
-            if payload.event() == tauri::webview::PageLoadEvent::Finished
-                && completion.is_return(payload.url()) {
+            #[cfg(not(feature = "e2e-tests"))]
+            let returned = completion.is_return(payload.url());
+            #[cfg(feature = "e2e-tests")]
+            let returned = crate::e2e::is_fixture(payload.url()) && payload.url().path()=="/authorize";
+            if payload.event() == tauri::webview::PageLoadEvent::Finished && returned {
                 if let Some(controller) = window.app_handle().try_state::<crate::controller::Handle>() {
                     let tx = controller.tx.clone();
                     tauri::async_runtime::spawn(async move {

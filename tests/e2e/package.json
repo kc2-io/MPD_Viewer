@@ -1,0 +1,21 @@
+{
+  "name": "mpd-viewer-desktop-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node run.mjs",
+    "check": "node --check run.mjs && node --check support.mjs && node --check specs.mjs"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "devDependencies": {
+    "webdriverio": "9.32.0"
+  },
+  "dependencies": {
+    "mpd-tabber-poc-checks": "file:../.."
+  },
+  "overrides": {
+    "@puppeteer/browsers": "3.2.3"
+  }
+}

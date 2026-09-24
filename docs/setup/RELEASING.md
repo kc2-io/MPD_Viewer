@@ -22,6 +22,12 @@ Use an annotated tag identifying a reviewed commit on main. Build metadata and a
 
 ## Release sequence
 
+Once the [desktop E2E rollout](DESKTOP-E2E.md) is accepted, run `Desktop E2E`
+with extended cases on all four platforms against the exact candidate commit
+before tagging. Record its run URL and commit alongside existing native/signing
+evidence. Fixture GUI success does not replace live Twitch checks or signing
+verification; E2E binaries are unsigned test tools and never release inputs.
+
 1. Complete setup, signing configuration, workflow review and native build validation. Keep the reference repositories unchanged.
 2. Prepare and merge a version PR. For the POC, a prerelease such as `0.1.0-rc.1` is preferable to implying production acceptance. This is a proposed first version, not a tag already created.
 3. On clean local main identical to origin/main, create/push explicitly:

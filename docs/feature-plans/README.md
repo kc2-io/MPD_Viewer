@@ -1,5 +1,8 @@
 # MPD Viewer — Implementation planning packet
 
+Current testing proposal: [Multiplatform desktop E2E plan](MULTIPLATFORM-E2E-PLAN.md)
+(2026-09-24, alpha.4 baseline; planning only). Grid work remains paused.
+
 This packet plans the next feature milestone. It does not contain an updated app binary, modified application source, or a claim that any feature test passed.
 
 Start with [PLAN.md](PLAN.md). The detailed contracts are in [CONTRACTS.md](CONTRACTS.md), inspected-source evidence in [SOURCE-REVIEW.md](SOURCE-REVIEW.md), and official references in [SOURCES.md](SOURCES.md).

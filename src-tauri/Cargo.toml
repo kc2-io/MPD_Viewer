@@ -19,7 +19,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 tiny_http = "0.12"
 webbrowser = "1"
 url = "2"
+tauri-plugin-wdio-webdriver = { version = "=1.4.0", optional = true }
 
 [features]
 default = []
 custom-protocol = ["tauri/custom-protocol"]
+e2e-tests = ["dep:tauri-plugin-wdio-webdriver", "mpd-twitch/e2e-tests"]

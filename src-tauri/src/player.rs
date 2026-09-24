@@ -37,12 +37,25 @@ impl Host {
                     _ => None,
                 };
                 if let Some((body, mime)) = asset {
+                    #[cfg(feature = "e2e-tests")]
+                    let asset_name = path.to_owned(); // Only the fixed asset allowlist above.
+                    #[cfg(feature = "e2e-tests")]
+                    eprintln!("E2E asset begin {asset_name}");
                     let mut response = tiny_http::Response::from_string(body);
                     for (name, value) in [("Content-Type", mime), ("Cache-Control", "no-store"),
                         ("X-Content-Type-Options", "nosniff"), ("Referrer-Policy", "strict-origin-when-cross-origin")] {
                         if let Ok(header) = tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()) { response.add_header(header); }
                     }
+                    #[cfg(feature = "e2e-tests")]
+                    response.add_header(tiny_http::Header::from_bytes("Content-Security-Policy",
+                        "default-src 'self'; script-src 'self'; style-src 'self'; connect-src ipc: http://ipc.localhost https://ipc.localhost; frame-src 'none'; object-src 'none'").unwrap());
+                    #[cfg(not(feature = "e2e-tests"))]
                     let _ = request.respond(response);
+                    #[cfg(feature = "e2e-tests")]
+                    {
+                        let respond_ok = request.respond(response).is_ok();
+                        eprintln!("E2E asset end {asset_name}: respond_ok={respond_ok}");
+                    }
                 } else { let _ = request.respond(tiny_http::Response::empty(404)); }
             }
         })?;
@@ -92,10 +105,22 @@ impl Host {
             return url;
         }
         if self.mode == ViewerMode::TwitchPage {
+            #[cfg(feature = "e2e-tests")]
+            return crate::e2e::url(&format!("/web/{login}"));
+            #[cfg(not(feature = "e2e-tests"))]
+            {
             let mut url = Url::parse(TWITCH_PAGE_ROOT).expect("static Twitch channel-page origin");
             url.path_segments_mut().expect("Twitch root is a base URL").push(login);
             return url;
+            }
         }
+        #[cfg(feature = "e2e-tests")]
+        {
+            // Test builds never load the hosted player or Twitch SDK.
+            let mut simulated = settings.clone(); simulated.demo = true;
+            return self.player_url(login, id, &simulated);
+        }
+        #[cfg(not(feature = "e2e-tests"))]
         {
             let mut url = self.production.as_ref().unwrap_or(&self.local).clone();
             if self.production.is_some() {
@@ -122,17 +147,30 @@ impl Host {
         }
     }
     pub fn open(&self, app: &AppHandle, login: &str, id: u64, settings: &Settings) -> Result<String, String> {
+        #[cfg(feature = "e2e-tests")]
+        if crate::e2e::fail_open(login) { return Err("Simulated native viewer-open failure".into()); }
         let url = self.player_url(login, id, settings);
+        #[cfg(not(feature = "e2e-tests"))]
         let chat_parent = url.host_str().unwrap_or_default().to_owned();
+        #[cfg(not(feature = "e2e-tests"))]
         let chat_channel = login.to_owned();
         let label = self.label(id, settings.demo);
         let origin = url.origin();
+        #[cfg(not(feature = "e2e-tests"))]
         let demo = settings.demo;
+        #[cfg(not(feature = "e2e-tests"))]
         let mode = self.mode;
         let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url.clone()))
             .title(window_title(login, settings.demo, None))
             .inner_size(1180.0, 720.0).min_inner_size(430.0, 480.0)
             .focused(false);
+        #[cfg(feature = "e2e-tests")]
+        let builder = crate::e2e::isolate(builder);
+        #[cfg(feature = "e2e-tests")]
+        let builder = if crate::e2e_probe::enabled() {
+            builder.initialization_script(crate::e2e_probe::script(&label, id))
+        } else { builder };
+        #[cfg(not(feature = "e2e-tests"))]
         let builder = if self.mode == ViewerMode::Embedded && !settings.demo && self.production.is_some() {
             let mut adapter = format!("({})({}, {});", include_str!("../hosted-player-adapter.js"), serde_json::json!({
                 "origin": url.origin().ascii_serialization(), "path": url.path(),
@@ -148,6 +186,9 @@ impl Host {
         } else { builder };
         builder
             .on_navigation(move |target| {
+                #[cfg(feature = "e2e-tests")]
+                return target.origin() == origin;
+                #[cfg(not(feature = "e2e-tests"))]
                 allowed_navigation(target, &origin, demo, mode, &chat_channel, &chat_parent)
             })
             .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)

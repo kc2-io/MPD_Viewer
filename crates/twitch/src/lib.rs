@@ -26,7 +26,7 @@ impl std::fmt::Display for ApiError {
 impl std::error::Error for ApiError {}
 
 #[derive(Clone)]
-pub struct Twitch { http: Client, oauth: String }
+pub struct Twitch { http: Client, oauth: String, helix: String }
 
 #[derive(Deserialize)]
 pub struct DeviceCode {
@@ -145,7 +145,15 @@ impl Twitch {
         let http = Client::builder().timeout(Duration::from_secs(20))
             .user_agent("MPD-Tabber-POC/0.1")
             .redirect(reqwest::redirect::Policy::none()).build().map_err(ApiError::network)?;
-        Ok(Self { http, oauth: OAUTH.into() })
+        Ok(Self { http, oauth: OAUTH.into(), helix: HELIX.into() })
+    }
+
+    /// Compiled only into isolated E2E builds. Never follows external redirects.
+    #[cfg(feature = "e2e-tests")]
+    pub fn local_fixture(port: u16) -> Result<Self, ApiError> {
+        let http = Client::builder().no_proxy().timeout(Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none()).build().map_err(ApiError::network)?;
+        Ok(Self { http, oauth: format!("http://localhost:{port}/oauth"), helix: format!("http://localhost:{port}/helix") })
     }
 
     pub async fn device_code(&self, client_id: &str) -> Result<DeviceCode, ApiError> {
@@ -248,7 +256,7 @@ impl Twitch {
                 let mut query = vec![("first", "100".to_owned())];
                 query.extend(batch.iter().map(|s| ("user_login", s.clone())));
                 if let Some(value) = &cursor { query.push(("after", value.clone())); }
-                let response = self.http.get(format!("{HELIX}/streams")).query(&query)
+                let response = self.http.get(format!("{}/streams", self.helix)).query(&query)
                     .header("Client-Id", &session.client_id).bearer_auth(&session.access)
                     .send().await.map_err(ApiError::network)?;
                 let page: Page = checked(response)?.json().await.map_err(|_| ApiError::new("Invalid streams response; observation discarded."))?;

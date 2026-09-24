@@ -2,6 +2,7 @@
 members = ["crates/core", "crates/twitch", "src-tauri"]
 default-members = ["crates/core", "crates/twitch"]
 resolver = "2"
+exclude = ["vendor/tiny_http"]
 
 [workspace.package]
 version = "0.1.0-alpha.4"
@@ -12,3 +13,6 @@ license = "MIT"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+[patch.crates-io]
+tiny_http = { path = "vendor/tiny_http" }

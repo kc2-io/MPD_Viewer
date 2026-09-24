@@ -2,6 +2,7 @@
 use mpd_twitch::{SessionStore, StoredSession};
 use std::sync::{Arc, Mutex};
 
+#[cfg(not(feature = "e2e-tests"))]
 const TARGET: &str = "com.modpackdad.mpdtabber.poc/TwitchOAuth/v1";
 trait Backend: Send + Sync {
     fn load(&self) -> Result<Option<StoredSession>, String>;
@@ -15,7 +16,13 @@ pub struct CredentialStore { state: Arc<Mutex<State>> }
 pub struct ScopedStore { state: Arc<Mutex<State>>, epoch: u64 }
 impl CredentialStore {
     pub fn new() -> Self {
-        Self { state: Arc::new(Mutex::new(State { epoch: 0, backend: Box::new(PlatformVault::new(TARGET)) })) }
+        #[cfg(feature = "e2e-tests")]
+        let target = crate::e2e::vault_target();
+        #[cfg(feature = "e2e-tests")]
+        let target = target.as_str();
+        #[cfg(not(feature = "e2e-tests"))]
+        let target = TARGET;
+        Self { state: Arc::new(Mutex::new(State { epoch: 0, backend: Box::new(PlatformVault::new(target)) })) }
     }
     /// Advance before starting any new Connect/restore task. Older tasks can no longer write.
     pub fn begin_epoch(&self, epoch: u64) -> Result<ScopedStore, String> {
