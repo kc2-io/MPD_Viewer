@@ -8,15 +8,16 @@ import subprocess
 import sys
 from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[1]
-PATTERN = re.compile(r'^(\s*(?:-\s*)?uses:\s*)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)([^\n]*)$', re.M)
+PATTERN = re.compile(r'^(\s*(?:-\s*)?uses:\s*)(actions/cache/(?:restore|save)|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)([^\n]*)$', re.M)
 SHA = re.compile(r'[0-9a-f]{40}')
-ALLOW = {'actions/cache', 'actions/checkout', 'actions/setup-node', 'actions/setup-python', 'actions/upload-artifact',
+ALLOW = {'actions/cache', 'actions/cache/restore', 'actions/cache/save', 'actions/checkout', 'actions/setup-node', 'actions/setup-python', 'actions/upload-artifact',
          'actions/download-artifact', 'azure/login', 'azure/artifact-signing-action'}
 
 def api(path):
     return json.loads(subprocess.run(['gh','api',path],check=True,text=True,stdout=subprocess.PIPE).stdout)
 
 def resolve(repo, ref):
+    if repo in {'actions/cache/restore', 'actions/cache/save'}: repo = 'actions/cache'
     obj=api(f'repos/{repo}/git/ref/tags/{quote(ref,safe="")}')['object']
     for _ in range(6):
         if obj['type']=='commit' and SHA.fullmatch(obj['sha']): return obj['sha']
@@ -31,7 +32,7 @@ def main():
     for path in sorted(p for p in (ROOT/'.github/workflows').iterdir() if p.suffix in ('.yml', '.yaml')):
         text=path.read_text(encoding="utf-8")
         # Accept only the simple block-style uses syntax handled below. Fail closed
-        # for quoted, flow-style, subpath or multiline uses rather than skipping it.
+        # for quoted, flow-style, unreviewed subpaths or multiline uses rather than skipping it.
         for number, line in enumerate(text.splitlines(), 1):
             if line.lstrip().startswith('#'):
                 continue

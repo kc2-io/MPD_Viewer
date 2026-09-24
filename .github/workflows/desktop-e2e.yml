@@ -70,7 +70,8 @@ jobs:
       # Cache only fetched Cargo packages and this feature-specific target. Never
       # cache Cargo home wholesale, browser profiles, preferences or evidence.
       - name: Restore isolated Cargo E2E build cache
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        id: cargo-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry/index/
@@ -91,6 +92,20 @@ jobs:
           python scripts/e2e-no-driver-probe.py stage
       - name: Build isolated UNSIGNED GUI test binary
         run: cargo build --locked -p mpd-tabber --features custom-protocol,e2e-tests
+      # Preserve successfully compiled dependencies even when subsequent GUI
+      # acceptance fails; this does not alter the GUI step's failure status.
+      - name: Cache successfully built native binaries
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/registry/src/
+            ~/.cargo/git/db/
+            ~/.cargo/git/checkouts/
+            target/e2e-ci/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Run native GUI suite (Windows and macOS)
         if: runner.os != 'Linux'
         env:
