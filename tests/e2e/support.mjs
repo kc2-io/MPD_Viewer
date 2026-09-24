@@ -55,7 +55,7 @@ async function terminateOwned(child) {
   }
 }
 export class Desktop {
-  constructor(options) { Object.assign(this, options); this.launches = []; this.readiness = []; }
+  constructor(options) { Object.assign(this, options); this.launches = []; this.readiness = []; this.logWrites = Promise.resolve(); this.logErrors = []; }
   async start(scenario = 'demo', args = []) {
     if (this.cancelled) throw new Error(this.cancelled);
     if (this.child) throw new Error('Previous owned app must be stopped before launch');
@@ -69,10 +69,18 @@ export class Desktop {
       TAURI_WEBDRIVER_PORT: String(port), WDIO_EMBEDDED_SERVER: 'true', RUST_LOG: 'warn'
     }) });
     this.child = child;
+    this.logClosed = new Promise(resolve => child.once('close', resolve));
     this.launches.push({ pid: child.pid, scenario, args, port });
     for (const stream of [child.stdout, child.stderr]) stream.on('data', data => {
       const text = sanitize(data.toString()); const available = Math.max(0, 256 * 1024 - logBytes);
-      logBytes += Buffer.byteLength(text); if (available) void appendFile(logFile, Buffer.from(text).subarray(0, available)).catch(() => {});
+      logBytes += Buffer.byteLength(text);
+      if (available) {
+        const chunk = Buffer.from(text).subarray(0, available);
+        // Preserve arrival order across both streams and finish writes before evidence.
+        this.logWrites = this.logWrites.then(() => appendFile(logFile, chunk)).catch(error => {
+          if (this.logErrors.length < 4) this.logErrors.push(sanitize(error.message).slice(0, 512));
+        });
+      }
     });
     child.on('error', error => { this.spawnError = error; });
     await until(async () => {
@@ -86,7 +94,10 @@ export class Desktop {
     await documentTitle(this.browser, 'MPD Viewer');
     await until(() => this.browser.execute(() => { const backend = document.querySelector('#viewer-backend')?.textContent?.trim(); const origin = document.querySelector('#player-origin')?.textContent?.trim(); return Boolean(backend && backend !== 'unknown' && origin); }), 'Manager did not render its first Rust state');
     this.manager = await this.browser.getWindowHandle();
-    await this.browser.setWindowRect(0, 0, 1400, 1000);
+    // Driver 1.4.0 setWindowRect uses one-shot event callbacks that can panic
+    // when Linux replays resize events. Use the narrow native API mailbox.
+    await this.nativeCommand({ action: 'resize', label: this.manager, width: 1400, height: 800 });
+    await until(() => this.browser.execute(() => innerWidth === 1400 && innerHeight === 800), 'Native manager resize did not reach its requested logical viewport');
     this.launches.at(-1).renderer = await this.browser.execute(() => ({ userAgent: navigator.userAgent, width: innerWidth, height: innerHeight, scale: devicePixelRatio }));
     return this.browser;
   }
@@ -102,6 +113,13 @@ export class Desktop {
             bridge: text('#bridge'), marker: text('h1'), visibility: document.visibilityState, focused: document.hasFocus(),
             qualityType: typeof window.createQualityController, chatType: typeof window.mpdInstallChat,
             nativeInvokeType: typeof window.__TAURI__?.core?.invoke, audioSetterType: typeof window.mpdSetAudio,
+            assets: [...document.querySelectorAll('script[src],link[rel=stylesheet][href]')].flatMap(element => {
+              let asset; try { asset = new URL(element.getAttribute(element.tagName === 'SCRIPT' ? 'src' : 'href'), location.href); } catch { return []; }
+              const name = asset.pathname.split('/').pop();
+              if (!['chat.js', 'quality.js', 'player.js', 'style.css', 'chat.css'].includes(name)) return [];
+              const session = asset.searchParams.get('e2e_session');
+              return [{ name, session: /^(0|[1-9][0-9]{0,19})$/.test(session ?? '') ? session : null }];
+            }).slice(0, 5),
             resources: performance.getEntriesByType('resource').flatMap(entry => {
               let name; try { name = new URL(entry.name).pathname.split('/').pop(); } catch { return []; }
               if (!['chat.js', 'quality.js', 'player.js', 'index.html', 'style.css', 'chat.css', 'fixture.js'].includes(name)) return [];
@@ -115,6 +133,8 @@ export class Desktop {
           hidden: typeof record.hidden === 'boolean' ? record.hidden : null, bridge: short(record.bridge), marker: short(record.marker),
           visibility: short(record.visibility), focused: typeof record.focused === 'boolean' ? record.focused : null,
           qualityType: short(record.qualityType), chatType: short(record.chatType), nativeInvokeType: short(record.nativeInvokeType), audioSetterType: short(record.audioSetterType),
+          assets: Array.isArray(record.assets) ? record.assets.slice(0, 5).flatMap(entry =>
+            ['chat.js', 'quality.js', 'player.js', 'style.css', 'chat.css'].includes(entry?.name) ? [{ name: entry.name, session: typeof entry.session === 'string' && /^(0|[1-9][0-9]{0,19})$/.test(entry.session) ? entry.session : null }] : []) : [],
           resources: Array.isArray(record.resources) ? record.resources.slice(-12).map(entry => ({ name: short(entry.name), duration: Number.isFinite(entry.duration) ? entry.duration : null,
             transferSize: Number.isFinite(entry.transferSize) ? entry.transferSize : null, responseStatus: Number.isFinite(entry.responseStatus) ? entry.responseStatus : null })) : [] };
         const ready = record.readyState === 'complete' && channels.includes(record.channel) &&
@@ -233,6 +253,17 @@ export class Desktop {
       this.cleanupChild = null;
     }
   }
+  async flushLogs() {
+    let timeout;
+    try {
+      await Promise.race([
+        (async () => { if (this.logClosed) await this.logClosed; await this.logWrites; })(),
+        new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Application log drain did not complete')), 10000); })
+      ]);
+      if (this.logErrors.length) throw new Error(`Application log write failed: ${this.logErrors.join('; ')}`);
+      this.logClosed = null;
+    } finally { clearTimeout(timeout); }
+  }
   async stop() {
     try { await this.browser?.deleteSession(); } catch {}
     this.browser = null;
@@ -244,6 +275,7 @@ export class Desktop {
       await terminateOwned(this.cleanupChild);
       this.cleanupChild = null;
     }
+    await this.flushLogs();
   }
 
 }

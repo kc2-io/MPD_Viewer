@@ -87,6 +87,7 @@ try {
     } catch (error) { results.push({ name: 'isolated profile cleanup', seconds: 0, failure: sanitize(error.message) }); cleanupComplete = false; process.exitCode = 1; }
   }
   if (!rootRemoved) console.error(`Retaining isolated test root after unresolved cleanup: ${root}`);
+  try { await app.flushLogs(); } catch (error) { results.push({ name: 'application log drain', seconds: 0, failure: sanitize(error.message) }); process.exitCode = 1; }
   let commit = 'unknown'; try { commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: here, encoding: 'utf8' }).trim(); } catch {}
   let harnessDirty = null; try { harnessDirty = execFileSync('git', ['status', '--porcelain'], { cwd: here, encoding: 'utf8' }).trim().length > 0; } catch {}
   const binaryUnchanged = await binaryHash() === binarySha256;

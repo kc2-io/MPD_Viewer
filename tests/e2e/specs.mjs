@@ -210,9 +210,15 @@ export async function webSmoke(app, test, extended) {
     await until(async () => await visibleText(browser, '#players > article > strong') === 'alpha_fixture', 'Reenabled higher priority did not preempt');
     await windows(browser, 2); await click(browser, '#stop'); await windows(browser, 1);
   });
-  await test('native manager close exits the owned process', async () => {
+  await test('native manager close exits with an active viewer', async () => {
+    await click(browser, '#start');
+    const handles = await windows(browser, 2);
+    await browser.switchToWindow(handles.find(handle => handle !== app.manager));
+    await fixtureViewerReady(app);
+    await browser.switchToWindow(app.manager);
     await app.nativeCommand({ action: 'close', label: app.manager });
     await until(() => app.child.exitCode !== null || app.child.signalCode !== null, 'Manager close did not exit the process');
+    await assert.rejects(() => browser.getWindowHandles(), 'Driver handles must become unavailable after native manager exit');
   });
 }
 

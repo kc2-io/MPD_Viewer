@@ -114,3 +114,12 @@ and samples readiness for at most five seconds after focusing that same native
 window. The `afterFocus` diagnostic records any recovery or diagnostic error, but
 **always rethrows the original failure**; it is not a passing-test retry or a
 normal-suite focus workaround. No raw URL or fragment is retained.
+
+Startup size setup uses the narrow native resize mailbox and verifies the rendered
+logical viewport. It avoids the published driver's `setWindowRect`, whose
+one-shot move/resize callbacks can be consumed twice during Linux event replay.
+This is native API geometry coverage, not OS pointer resizing. Application log
+chunks are appended serially in arrival order, bounded to 256 KiB per launch,
+and drained after process/stdio closure before reports are finalized.
+Readiness also records five allowlisted wrapper asset DOM basenames and only a
+canonical numeric `e2e_session` suffix, never a raw asset URL or arbitrary query.
