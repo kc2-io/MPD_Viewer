@@ -55,18 +55,6 @@ jobs:
         run: |
           bash scripts/install-linux-deps.sh
           sudo apt-get install -y xvfb dbus-x11 openbox x11-utils
-      - name: Verify native host and locked toolchain
-        shell: bash
-        run: |
-          rustup show
-          python scripts/verify-native-host.py "$MPD_E2E_PLATFORM"
-          python scripts/release-tools.py require-lock
-      - name: Install locked GUI harness
-        run: npm ci --prefix tests/e2e
-      - name: Verify artifact isolation
-        run: python scripts/e2e-runner-test.py
-      - name: Verify production excludes automation and fixture features
-        run: python scripts/e2e-release-boundary.py
       # Cache only fetched Cargo packages and this feature-specific target. Never
       # cache Cargo home wholesale, browser profiles, preferences or evidence.
       # Keep one immutable cache per dependency/toolchain/platform combination;
@@ -85,6 +73,18 @@ jobs:
           key: desktop-e2e-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-custom-protocol-normal-and-e2e-tests
           restore-keys: |
             desktop-e2e-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-custom-protocol-normal-and-e2e-tests-
+      - name: Verify native host and locked toolchain
+        shell: bash
+        run: |
+          rustup show
+          python scripts/verify-native-host.py "$MPD_E2E_PLATFORM"
+          python scripts/release-tools.py require-lock
+      - name: Install locked GUI harness
+        run: npm ci --prefix tests/e2e
+      - name: Verify artifact isolation
+        run: python scripts/e2e-runner-test.py
+      - name: Verify production excludes automation and fixture features
+        run: python scripts/e2e-release-boundary.py
       - name: Build and stage normal production-feature binary for exclusion probe
         env:
           MPD_E2E_RUNNER_ENVIRONMENT: ${{ runner.environment }}
