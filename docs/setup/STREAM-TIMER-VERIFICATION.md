@@ -25,7 +25,7 @@ are visible and retry no more often than once per 30 seconds.
 
 ## Automated evidence (Windows, September 24, 2026)
 
-- `cargo test -p mpd-core`: 35 passed. Deterministic clock/policy coverage includes
+- `cargo test -p mpd-core`: 39 passed. Deterministic clock/policy coverage includes
   all-Always subset/cap equivalence, one-channel wait, one-slot wrap, three-channel
   two-slot and five-channel three-slot waves, fresh/stale candidates, unlimited
   destination, failed candidates, recovery source, pause/sleep, retry, new
@@ -60,3 +60,14 @@ acceleration flag. No native elapsed-time/sleep evidence is claimed here.
 No player wrapper, hosted source, authentication, app/profile identity, native
 capability, release configuration, or deployment is changed by this timer patch.
 Independent scheduling/lifecycle review is required before acceptance.
+
+## Pending-target review correction
+
+A native close can outlast a live-status poll. Every selection now revalidates the
+reserved replacement using fresh-open eligibility, retargets to the next fresh
+candidate, or recovers the still-fresh overdue source. The actual next open is
+pinned to that reservation. Successfully bypassed targets are deferred for the
+new turn, so a first-miss channel returning on the next poll cannot preempt its
+replacement. If all alternatives become stale, cancellation leaves no permanent
+bypass deferral. Four deterministic regressions cover these transitions and the
+actual-open/pending-target identity. Native lifecycle evidence remains pending.

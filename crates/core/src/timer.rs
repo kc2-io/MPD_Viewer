@@ -26,6 +26,7 @@ pub struct Rotation {
     admitted: HashSet<String>,
     reset_on_open: HashSet<String>,
     pub pending: Option<(String, String)>,
+    pending_bypassed: HashSet<String>,
     eligible: Vec<(String, String)>,
 }
 impl Rotation {
@@ -33,6 +34,7 @@ impl Rotation {
         self.deferred.clear();
         self.admitted.clear();
         self.pending = None;
+        self.pending_bypassed.clear();
     }
     pub fn remove(&mut self, login: &str) {
         self.turns.remove(login);
@@ -80,6 +82,10 @@ impl Rotation {
             if target == login {
                 self.reset_on_open.insert(source.clone());
                 self.admitted.insert(login.into());
+                // A transiently unavailable earlier target must not preempt the
+                // newly admitted turn as soon as its next poll succeeds.
+                self.deferred
+                    .extend(self.pending_bypassed.drain().filter(|id| id != login));
                 self.pending = None;
             }
         }
@@ -125,7 +131,29 @@ impl Rotation {
         limit: usize,
         allow_rotation: bool,
     ) -> Vec<String> {
-        let selectable: Vec<_> = ranked
+        // Closing can span a poll. A retained broadcast ID alone is not enough
+        // to open the reserved target after its first missing/stale observation.
+        if let Some((source, target)) = self.pending.clone() {
+            let fresh: HashSet<_> =
+                crate::select(ranked, presence, &HashSet::new(), skipped, usize::MAX)
+                    .into_iter()
+                    .filter(|id| {
+                        !existing.contains(id) && !failed.contains(id) && !self.deferred(id)
+                    })
+                    .collect();
+            if !fresh.contains(&target) {
+                let order: Vec<_> = ranked.iter().map(|f| f.login.clone()).collect();
+                if let Some(next) = next_waiting(&order, &source, &fresh) {
+                    self.pending_bypassed.insert(target);
+                    self.pending = Some((source, next));
+                } else {
+                    // Preserve the source's overdue budget and let ordinary fresh
+                    // eligibility reopen it once destruction releases capacity.
+                    self.failed_target();
+                }
+            }
+        }
+        let mut selectable: Vec<_> = ranked
             .iter()
             .filter(|f| {
                 !self.deferred(&f.login)
@@ -133,6 +161,15 @@ impl Rotation {
             })
             .cloned()
             .collect();
+        // The reserved target must be the channel actually opened. Other slots
+        // retain normal priority order; native close acknowledgements still gate
+        // all opening in the controller.
+        if let Some((_, target)) = &self.pending {
+            if let Some(index) = selectable.iter().position(|f| &f.login == target) {
+                let reserved = selectable.remove(index);
+                selectable.insert(0, reserved);
+            }
+        }
         let mut desired = crate::select(&selectable, presence, existing, skipped, limit);
         if !allow_rotation
             || self.pending.is_some()
@@ -188,6 +225,7 @@ impl Rotation {
     }
     /// Failed target: keep the expired source available as a final recovery option.
     pub fn failed_target(&mut self) -> Option<String> {
+        self.pending_bypassed.clear();
         self.pending.take().map(|(source, _)| {
             self.deferred.remove(&source);
             source
@@ -453,6 +491,71 @@ mod policy_tests {
         assert_eq!(h.desired(true), vec!["b"]);
         h.failed.insert("b".into());
         assert_eq!(h.desired(true), vec!["c"]);
+    }
+    #[test]
+    fn target_first_miss_during_close_retargets_and_return_does_not_preempt() {
+        let mut h = Harness::new(&["a", "b", "c"], 1);
+        let desired = h.desired(true);
+        h.apply(desired, Some(1));
+        h.expire("a");
+        assert_eq!(h.desired(true), vec!["b"]);
+        // Native A is still closing/reserving capacity, absent from non-closing set.
+        h.active.clear();
+        h.presence.get_mut("b").unwrap().observe(None);
+        assert_eq!(h.desired(false), vec!["c"]);
+        assert_eq!(h.r.pending, Some(("a".into(), "c".into())));
+        // Destruction acknowledged; actual successful open resolves pending C.
+        let desired = h.desired(false);
+        h.apply(desired, Some(1));
+        assert!(h.r.pending.is_none());
+        h.presence.get_mut("b").unwrap().observe(Some("b-1"));
+        assert_eq!(h.desired(true), vec!["c"]);
+        h.expire("c");
+        assert_eq!(h.desired(true), vec!["a"]);
+    }
+    #[test]
+    fn target_first_miss_without_alternative_recovers_overdue_source() {
+        let mut h = Harness::new(&["a", "b"], 1);
+        let desired = h.desired(true);
+        h.apply(desired, Some(1));
+        h.expire("a");
+        assert_eq!(h.desired(true), vec!["b"]);
+        h.active.clear();
+        h.presence.get_mut("b").unwrap().observe(None);
+        assert_eq!(h.desired(false), vec!["a"]);
+        assert!(h.r.pending.is_none());
+        let desired = h.desired(false);
+        h.apply(desired, Some(1));
+        assert!(h.r.overdue("a"));
+        h.presence.get_mut("b").unwrap().observe(Some("b-1"));
+        assert_eq!(h.desired(true), vec!["b"]);
+    }
+    #[test]
+    fn chained_stale_targets_recover_without_permanent_bypass_deferrals() {
+        let mut h = Harness::new(&["a", "b", "c"], 1);
+        let desired = h.desired(true);
+        h.apply(desired, Some(1));
+        h.expire("a");
+        h.desired(true);
+        h.active.clear();
+        h.presence.get_mut("b").unwrap().stale();
+        assert_eq!(h.desired(false), vec!["c"]);
+        h.presence.get_mut("c").unwrap().stale();
+        assert_eq!(h.desired(false), vec!["a"]);
+        let desired = h.desired(false);
+        h.apply(desired, Some(1));
+        assert!(h.r.overdue("a"));
+        h.presence.get_mut("b").unwrap().fresh = true;
+        assert_eq!(h.desired(true), vec!["b"]);
+    }
+    #[test]
+    fn pending_target_is_pinned_to_actual_open_after_rank_scan_wraps() {
+        let mut h = Harness::new(&["a", "b", "c"], 1);
+        h.r.begin("a".into(), "c".into());
+        assert_eq!(h.desired(false), vec!["c"]);
+        let desired = h.desired(false);
+        h.apply(desired, Some(1));
+        assert!(h.r.pending.is_none());
     }
     #[test]
     fn five_channels_three_slots_keep_other_deferred_members_out() {
