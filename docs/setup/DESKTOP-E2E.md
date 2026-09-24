@@ -1,7 +1,8 @@
 # Desktop GUI end-to-end testing
 
-Implementation status: in review in PR #22. Hosted cross-platform acceptance and
-repeatability runs are in progress; this record does not claim they have passed.
+Implementation and rollout evidence: [PR #22](https://github.com/kc2-io/MPD_Viewer/pull/22).
+The PR records the tested commit, hosted run attempts and repeatability outcome;
+the existence of this workflow alone does not establish acceptance.
 The design is in `docs/feature-plans/MULTIPLATFORM-E2E-PLAN.md`.
 
 ## What runs
@@ -70,17 +71,23 @@ neither create a driver listener on the selected port nor modify the marked test
 root. This is a bounded negative probe, not proof of GUI readiness or of absence
 of all network listeners (the ordinary local player server is legitimate).
 
-## Acceptance record to complete
+## Validation and rollout
 
 - Local Windows: normal 84 Rust tests passed; test-build manager-origin regression
   passed; GUI smoke, fake auth and driverless native IPC probes passed.
-- Local extended harness: a real one-minute timer rotated, and an intentional
-  assertion failure produced nonzero status, screenshots, JUnit and cleanup.
-- First hosted experiment: Windows passed its then-current GUI suite; macOS and
-  Linux launched the GUI but exposed stale row-element assertions during refresh.
-  The assertion was changed to one read-only DOM snapshot; reruns are pending.
-- Normal-build runtime probe, four-platform extended acceptance and five clean
-  primary-matrix repetitions still need recorded hosted results.
+- Local extended Windows harness: 25 cases passed, including a real one-minute
+  timer and API-outage recovery. An intentional assertion failure separately
+  produced nonzero status, screenshots, JUnit and cleanup.
+- Hosted experiments found stale row references and a fresh-document driver race.
+  Ranking observations now use one read-only DOM snapshot. Fresh windows wait for
+  their final document title using the driver's atomic getter before its two-step
+  script evaluator; expected initialized content is then checked independently.
+- Independent review covered startup/recovery ordering, bounded shutdown,
+  scenario-specific identities, production exclusion, driver limitations and CI.
+  Unresolved process shutdown fails the suite and preserves its isolated root.
+- Record four-platform extended acceptance and five consecutive clean primary
+  matrices in PR #22 with run/attempt links, exact commit and measured duration.
+  Include normal-build runtime-probe results and bounded failure evidence.
 
 Do not add required branch checks until the plan's repeatability and independent
 review gates are met. No grid feature, stable release or website deployment is
