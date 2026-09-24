@@ -21,4 +21,7 @@ webbrowser = "1"
 url = "2"
 
 [features]
+default = ["twitch-page-viewer"]
+twitch-page-viewer = []
+twitch-embed-viewer = []
 custom-protocol = ["tauri/custom-protocol"]

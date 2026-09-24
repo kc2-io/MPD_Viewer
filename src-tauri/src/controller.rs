@@ -279,7 +279,8 @@ impl Controller {
             if self.players.len() >= self.settings.limit { break; }
             if self.players.values().any(|p| p.login == login) || self.failed.contains_key(&login) { continue; }
             self.next_id += 1; let id = self.next_id;
-            self.players.insert(id, PlayerSession { id, login: login.clone(), label: format!("player-{id}"),
+            let label = self.host.label(id, self.settings.demo);
+            self.players.insert(id, PlayerSession { id, login: login.clone(), label,
                 closing: false, report: None, reported: None, rate_start: Instant::now(), rate_count: 0, quality_dirty: true });
             match self.host.open(&self.app, &login, id, &self.settings) {
                 Ok(_) => self.log(format!("Opened {login} (session {id}).")),
@@ -362,7 +363,8 @@ impl Controller {
             }).collect(), players, connected_as: self.connected_as.clone(), auth_pending: self.auth_pending,
             user_code: self.user_code.clone(), last_check_seconds: self.last_check.map(|t| t.elapsed().as_secs()),
             polling: self.polling.is_some(), next_check_seconds: self.next_poll.saturating_duration_since(Instant::now()).as_secs(),
-            player_origin: self.host.base(self.settings.demo).as_str().to_owned(),
+            viewer: self.host.capabilities(self.settings.demo),
+            player_origin: self.host.diagnostic_origin(self.settings.demo),
             error: self.error.clone(), events: self.events.iter().cloned().collect() }
     }
     pub async fn run(mut self, mut rx: mpsc::Receiver<Message>) {

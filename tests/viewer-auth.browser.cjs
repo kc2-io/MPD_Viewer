@@ -22,8 +22,17 @@ const root = process.env.MPD_TEST_ROOT || path.resolve(__dirname, '..');
     assert(await page.locator('#connect').isDisabled());
     assert.equal(await page.locator('#client-id').count(),0);
     assert.equal(await page.locator('#viewer-signin').count(),0);
-    await page.evaluate(() => {window.__fixture.settings.demo=false;});
+    await page.evaluate(() => {
+      window.__fixture.settings.demo=false;
+      window.__fixture.viewer={backend:'twitch-page',telemetry:false,media_controls:false,twitch_channel_page:true};
+      window.__fixture.player_origin='https://www.twitch.tv/';
+    });
     await page.waitForFunction(() => !document.getElementById('connect').disabled);
+    assert(await page.locator('#media-controls').isHidden());
+    assert(await page.locator('#twitch-page-note').isVisible());
+    assert.equal(await page.locator('#viewer-backend').textContent(),'twitch-page');
+    assert.equal(await page.locator('#playing-heading').textContent(),'TWITCH CHANNEL PAGE');
+    assert.match(await page.locator('.player-state').first().textContent(),/playback managed by Twitch/);
     await page.locator('#connect').click();
     await page.waitForFunction(() => window.__actions.length===1);
     assert.deepEqual(await page.evaluate(() => window.__actions),[{type:'connect'}]);

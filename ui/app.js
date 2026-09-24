@@ -151,14 +151,19 @@ function favorites(s) {
   }));
 }
 function players(s) {
-  const key=JSON.stringify([s.players,s.settings.demo]); if(key===playersKey)return; playersKey=key;
+  const telemetry=s.settings.demo||s.viewer?.telemetry!==false;
+  const key=JSON.stringify([s.players,s.settings.demo,s.viewer]); if(key===playersKey)return; playersKey=key;
   $('players').replaceChildren(...s.players.map(p=>{
     const card=node('article','','player-card'); card.append(node('strong',p.login));
-    card.append(node('span',playbackLabel(p,s.settings.demo),'player-state'));
-    const volume=p.volume==null?'unknown':`${Math.round(p.volume*100)}%`;
-    const muted=p.muted==null?'unknown':p.muted?'yes':'no';
-    const visibility=p.visible==null?'unknown':p.visible?'visible':'hidden';
-    card.append(node('div',`Session ${p.session} · Document ${visibility}\nObserved volume ${volume} · Muted ${muted}`,'player-meta'));
+    card.append(node('span',playbackLabel(p,s.settings.demo,telemetry),'player-state'));
+    if(telemetry) {
+      const volume=p.volume==null?'unknown':`${Math.round(p.volume*100)}%`;
+      const muted=p.muted==null?'unknown':p.muted?'yes':'no';
+      const visibility=p.visible==null?'unknown':p.visible?'visible':'hidden';
+      card.append(node('div',`Session ${p.session} · Document ${visibility}\nObserved volume ${volume} · Muted ${muted}`,'player-meta'));
+    } else {
+      card.append(node('div',`Session ${p.session}\nPoints, streaks, and playback state are reported only inside Twitch.`,'player-meta'));
+    }
     const actions=node('div','','button-row'); actions.append(button('Focus player',`Focus ${p.login}`,{type:'focus',login:p.login},''),button('Skip',`Skip ${p.login}`,{type:'skip',login:p.login},''),button('Retry',`Retry ${p.login}`,{type:'retry',login:p.login},'')); card.append(actions); return card;
   }));
 }
@@ -170,10 +175,17 @@ function render(s) {
   $('pause').disabled=s.mode!=='running'; $('stop').disabled=s.mode==='stopped'&&s.players.length===0;
   $('refresh').disabled=s.polling||s.mode==='stopped';
   $('session-count').replaceChildren(document.createTextNode(`${s.players.length} `),node('small',`/ ${s.settings.limit}`));
-  $('playing-count').textContent=String(observedPlaying(s.players));
-  $('playing-heading').textContent=s.settings.demo?'SIMULATED PLAYBACK':'OBSERVED PLAYBACK';
-  const blocked=s.players.filter(p=>p.state==='blocked'&&!p.closing).length;
-  $('playing-detail').textContent=blocked?`${blocked} player${blocked===1?'':'s'} need a click`:'Based on recent player telemetry, not viewer credit';
+  const telemetry=s.settings.demo||s.viewer?.telemetry!==false;
+  if(telemetry) {
+    $('playing-count').textContent=String(observedPlaying(s.players));
+    $('playing-heading').textContent=s.settings.demo?'SIMULATED PLAYBACK':'OBSERVED PLAYBACK';
+    const blocked=s.players.filter(p=>p.state==='blocked'&&!p.closing).length;
+    $('playing-detail').textContent=blocked?`${blocked} player${blocked===1?'':'s'} need a click`:'Based on recent player telemetry, not viewer credit';
+  } else {
+    $('playing-count').textContent='—';
+    $('playing-heading').textContent='TWITCH CHANNEL PAGE';
+    $('playing-detail').textContent='Twitch owns playback and determines rewards eligibility';
+  }
   $('monitor-heading').textContent=s.mode==='stopped'?'Not running':s.settings.demo?'Demo source':s.polling?'Checking…':s.mode==='paused'?'Selection paused':'Every 30s';
   $('monitor-detail').textContent=secondsAgo(s.last_check_seconds);
   $('favorite-count').textContent=String(s.favorites.length);
@@ -184,6 +196,8 @@ function render(s) {
   if(document.activeElement!==$('limit'))$('limit').value=s.settings.limit;
   if(document.activeElement!==$('volume')){$('volume').value=s.settings.volume;$('volume-value').textContent=`${s.settings.volume}%`;}
   if(document.activeElement!==$('muted'))$('muted').checked=s.settings.muted;
+  const mediaControls=s.settings.demo||s.viewer?.media_controls!==false;
+  $('media-controls').hidden=!mediaControls; $('twitch-page-note').hidden=mediaControls;
   $('auth-status').textContent=s.connected_as?`Monitoring as ${s.connected_as}`:s.auth_pending?'Waiting for authorization…':'Not connected';
   $('connect').disabled=s.settings.demo||(s.auth_pending&&!s.user_code);
   $('connect').textContent=s.auth_pending?(s.user_code?'Continue in Twitch':'Opening Twitch…'):s.connected_as?'Reconnect Twitch':'Connect Twitch';
@@ -191,6 +205,7 @@ function render(s) {
   $('disconnect').textContent=s.auth_pending?'Cancel':'Disconnect';
   $('device-auth').hidden=!s.user_code; $('device-code').textContent=s.user_code??'';
   $('empty-players').hidden=s.players.length>0;
+  $('viewer-backend').textContent=s.viewer?.backend??'unknown';
   $('player-origin').textContent=s.player_origin; $('events').textContent=s.events.join('\n');
   const error=s.error??localError;
   $('error').hidden=!error; if(error)$('error-text').textContent=error;
