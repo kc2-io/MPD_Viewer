@@ -41,3 +41,28 @@ native-window lifecycle and backend behavior under fixtures, **not native OS
 pointer/drag fidelity, titlebar close events, Twitch login/playback or rewards**.
 The manifest enumerates exclusions rather than silently skipping acceptance.
 Platform runtime results must be recorded separately from this harness source.
+
+Dropdown and HTML5 drag coverage uses explicit synthetic DOM input helpers because
+the embedded driver's `option.click()` does not change a select, and its mouse
+events do not initiate HTML5 drag. These helpers target rendered controls and
+trigger their existing handlers; they never call the native action bridge.
+Native theme and close coverage uses the narrow file mailbox to call native
+window APIs, so it proves theme propagation / CloseRequested handling, not an OS
+settings click or a titlebar click. The full-page negative IPC probe invokes
+real Tauri IPC from the instrumented fixture caller and checks permission denial;
+it does not replace a non-instrumented production-origin security probe.
+
+Windows fake OAuth coverage uses only local activation and synthetic tokens,
+then restarts, verifies Windows Credential Manager restoration and Disconnect.
+Other platforms assert the existing unsupported Connect behavior. Cleanup invokes
+`--e2e-cleanup` with the exact owned root/run ID, deleting only that namespaced
+fake vault record even after failure. The macOS WebKit data store uses an isolated
+UUID outside the test root; hosted runner teardown removes it. Local macOS users
+should account for that isolated store remaining after the harness root is removed.
+
+`webdriverio` is pinned to 9.32.0. A scoped override pins
+`@puppeteer/browsers` to 3.2.3 because WDIO's 2.x dependency retains vulnerable
+`extract-zip`; 3.2.3 removes that dependency. Node >=22.12 is required. The harness
+uses a prebuilt app and existing embedded driver, never browser downloads. The
+imported client and actual Windows session were exercised with the override;
+`npm audit` reported zero findings when the lockfile was generated.

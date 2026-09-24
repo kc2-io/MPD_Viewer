@@ -31,6 +31,7 @@ export async function freePort() {
 export class Desktop {
   constructor(options) { Object.assign(this, options); this.launches = []; }
   async start(scenario = 'demo', args = []) {
+    if (this.cancelled) throw new Error(this.cancelled);
     if (this.child) throw new Error('Previous owned app must be stopped before launch');
     this.spawnError = null;
     const port = await freePort();
@@ -89,6 +90,15 @@ export class Desktop {
     }
     try { await this.browser.switchToWindow(this.manager); } catch {}
     return captured;
+  }
+  async cleanupRoot(root) {
+    const port = await freePort();
+    const child = spawn(this.binary, ['--e2e-cleanup'], { shell: false, windowsHide: true, stdio: 'ignore', env: environment({ MPD_E2E_ROOT: root, MPD_E2E_RUN_ID: this.runId, TAURI_WEBDRIVER_PORT: String(port) }) });
+    let error; child.on('error', value => { error = value; });
+    try {
+      await until(() => { if (error) throw error; return child.exitCode !== null; }, 'Scoped credential cleanup did not exit', 15000);
+      if (child.exitCode !== 0) throw new Error(`Scoped credential cleanup exited ${child.exitCode}`);
+    } finally { if (child.exitCode === null && child.signalCode === null) child.kill(); }
   }
   async stop() {
     try { await this.browser?.deleteSession(); } catch {}

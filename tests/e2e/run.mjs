@@ -5,11 +5,11 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Desktop, sanitize } from './support.mjs';
-import { demoSmoke, webSmoke } from './specs.mjs';
+import { demoSmoke, webSmoke, authSmoke } from './specs.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const results = [];
-const xml = value => String(value).replace(/[<>&"']/g, char => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[char]));
+const xml = value => String(value).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').replace(/[<>&"']/g, char => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[char]));
 const binaryInput = process.env.MPD_E2E_BINARY;
 if (!binaryInput || !path.isAbsolute(binaryInput)) throw new Error('MPD_E2E_BINARY must be an absolute path to an e2e-tests build');
 const binary = await realpath(binaryInput);
@@ -20,10 +20,12 @@ const root = await mkdtemp(path.join(os.tmpdir(), 'mpd-desktop-e2e-'));
 const runId = randomBytes(16).toString('hex');
 await writeFile(path.join(root, '.mpd-e2e-root'), runId, { flag: 'wx' });
 const app = new Desktop({ binary, root, runId, output });
+const roots = [root];
 const started = Date.now();
 const extended = process.env.MPD_E2E_EXTENDED === '1';
 let active = 'initialization';
 async function test(name, action) {
+  if (app.cancelled) throw new Error(app.cancelled);
   active = name; const begin = Date.now();
   try { await action(); results.push({ name, seconds: (Date.now() - begin) / 1000 }); console.log(`PASS ${name}`); }
   catch (error) {
@@ -31,24 +33,36 @@ async function test(name, action) {
     await app.screenshot(`failure-${results.length}`); throw error;
   }
 }
-const deadline = setTimeout(() => {
-  console.error('Desktop suite exceeded its overall deadline'); process.exitCode = 1;
-  void app.stop();
-}, (extended ? 20 : 10) * 60 * 1000);
+let interrupt;
+const interruption = new Promise((_, reject) => { interrupt = reason => { app.cancelled = reason; reject(new Error(reason)); }; });
+const onInterrupt = () => interrupt('Desktop suite interrupted by signal');
+process.once('SIGINT', onInterrupt); process.once('SIGTERM', onInterrupt);
+const deadline = setTimeout(() => interrupt('Desktop suite exceeded its overall deadline'), (extended ? 20 : 10) * 60 * 1000);
 try {
-  await demoSmoke(app, test, extended);
-  await app.stop();
-  app.root = path.join(root, 'web');
-  await mkdir(app.root);
-  await writeFile(path.join(app.root, '.mpd-e2e-root'), runId, { flag: 'wx' });
-  await webSmoke(app, test);
-  if (process.env.MPD_E2E_FORCE_FAILURE === '1') await test('intentional harness failure probe', () => { throw new Error('Requested failure to verify reports and cleanup'); });
+  await Promise.race([interruption, (async () => {
+    await demoSmoke(app, test, extended);
+    await app.stop();
+    app.root = path.join(root, 'web'); roots.push(app.root);
+    await mkdir(app.root);
+    await writeFile(path.join(app.root, '.mpd-e2e-root'), runId, { flag: 'wx' });
+    await webSmoke(app, test);
+    await app.stop();
+    app.root = path.join(root, 'auth'); roots.push(app.root);
+    await mkdir(app.root);
+    await writeFile(path.join(app.root, '.mpd-e2e-root'), runId, { flag: 'wx' });
+    await authSmoke(app, test);
+    if (process.env.MPD_E2E_FORCE_FAILURE === '1') await test('intentional harness failure probe', () => { throw new Error('Requested failure to verify reports and cleanup'); });
+  })()]);
 } catch (error) {
   if (!results.some(result => result.failure)) results.push({ name: active, seconds: 0, failure: sanitize(error.stack).slice(0, 12000) });
   console.error(sanitize(error.message)); process.exitCode = 1;
 } finally {
   clearTimeout(deadline);
+  process.removeListener('SIGINT', onInterrupt); process.removeListener('SIGTERM', onInterrupt);
   try { await app.stop(); } catch (error) { results.push({ name: 'owned process cleanup', seconds: 0, failure: sanitize(error.message) }); process.exitCode = 1; }
+  for (const ownedRoot of roots) {
+    try { await app.cleanupRoot(ownedRoot); } catch (error) { results.push({ name: 'scoped credential cleanup', seconds: 0, failure: sanitize(error.message) }); process.exitCode = 1; }
+  }
   let commit = 'unknown'; try { commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: here, encoding: 'utf8' }).trim(); } catch {}
   const manifest = {
     schema: 1, commit, platform: process.platform, architecture: process.arch, osRelease: os.release(), node: process.version,
@@ -56,7 +70,7 @@ try {
     runnerImage: process.env.ImageOS || null, runnerImageVersion: process.env.ImageVersion || null,
     elapsedSeconds: (Date.now() - started) / 1000, extended, launches: app.launches, tests: results.map(({ name, failure }) => ({ name, result: failure ? 'failed' : 'passed' })),
     evidenceBoundary: 'Real native Tauri windows and Rust backend with demo data. Embedded driver synthesizes DOM input; not OS input or Twitch acceptance.',
-    notCovered: ['Native OS select/dropdown input (coverage uses labeled synthetic DOM events)', 'Native OS pointer/HTML5 drag', 'OS titlebar click (CloseRequested covered via native close API)', 'OS settings app theme toggle (window theme API covered)', 'Live Twitch authentication/playback/rewards', 'Native credential vault recovery', 'Unprivileged native IPC probes']
+    notCovered: ['Native OS select/dropdown input (coverage uses labeled synthetic DOM events)', 'Native OS pointer/HTML5 drag', 'OS titlebar click (CloseRequested covered via native close API)', 'OS settings app theme toggle (window theme API covered)', 'Live Twitch authentication/playback/rewards', 'Real credential vault/account recovery (fake-token lifecycle covered)', 'Non-instrumented production-origin native IPC probe']
   };
   await writeFile(path.join(output, 'manifest.json'), JSON.stringify(manifest, null, 2));
   await writeFile(path.join(output, 'results.xml'), `<?xml version="1.0" encoding="UTF-8"?><testsuites><testsuite name="MPD desktop GUI" tests="${results.length}" failures="${results.filter(result => result.failure).length}">${results.map(result => `<testcase name="${xml(result.name)}" time="${result.seconds}">${result.failure ? `<failure>${xml(result.failure)}</failure>` : ''}</testcase>`).join('')}</testsuite></testsuites>`);

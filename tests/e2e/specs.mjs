@@ -102,6 +102,24 @@ export async function webSmoke(app, test) {
     await browser.switchToWindow(app.manager);
     assert.equal(await app.screenshot('web-two-windows'), 3);
   });
+  await test('instrumented full-page caller is denied real manager IPC', async () => {
+    const handle = (await browser.getWindowHandles()).find(value => value !== app.manager);
+    await browser.switchToWindow(handle);
+    const probes = await browser.execute(async () => {
+      const invoke = window.__TAURI__?.core?.invoke;
+      if (!invoke) return { missingNativeBridge: true };
+      const results = [];
+      for (const [command, args] of [['get_state', {}], ['dispatch', { action: { type: 'stop' } }], ['player_report', { report: {} }]]) {
+        try { await invoke(command, args); results.push({ command, denied: false }); }
+        catch (error) { results.push({ command, denied: /not allowed|denied|forbidden|permission|not authorized/i.test(String(error)) }); }
+      }
+      return { results };
+    });
+    assert.equal(probes.missingNativeBridge, undefined, 'Native IPC bridge must exist for a genuine denial probe');
+    assert.deepEqual(probes.results, ['get_state', 'dispatch', 'player_report'].map(command => ({ command, denied: true })));
+    await browser.switchToWindow(app.manager);
+    assert.equal(await visibleText(browser, '#run-status'), 'Monitoring');
+  });
   await test('native theme API changes manager scheme without replacing viewers', async () => {
     const handles = await browser.getWindowHandles();
     await app.nativeCommand({ action: 'theme', label: app.manager, theme: 'dark' });
@@ -143,3 +161,40 @@ export async function webSmoke(app, test) {
   });
 }
 
+
+export async function authSmoke(app, test) {
+  let browser = await app.start('auth');
+  if (process.platform !== 'win32') {
+    await test('non-Windows Connect reports the existing unsupported capability', async () => {
+      await click(browser, '#connect');
+      await until(async () => /Windows|not supported|unavailable/i.test(await visibleText(browser, '#error-text')), 'Unsupported Connect did not report its limitation');
+      assert.equal(await visibleText(browser, '#auth-status'), 'Not connected');
+      await windows(browser, 1);
+    });
+    return;
+  }
+  await test('Windows Connect authorizes only the local fake OAuth fixture', async () => {
+    assert.equal(await visibleText(browser, '#auth-status'), 'Not connected');
+    await click(browser, '#connect');
+    const handles = await windows(browser, 2);
+    await browser.switchToWindow(handles.find(handle => handle !== app.manager));
+    await until(async () => (await browser.$('#authorize')).isExisting(), 'Local fake activation UI missing');
+    await click(browser, '#authorize');
+    await browser.switchToWindow(app.manager);
+    await until(async () => (await visibleText(browser, '#auth-status')).startsWith('Monitoring as '), 'Fake authorization did not complete', 30000);
+    await windows(browser, 1);
+  });
+  await app.stop(); browser = await app.start('auth');
+  await test('Windows native vault restores fake authorization after process restart', async () => {
+    await until(async () => (await visibleText(browser, '#auth-status')).startsWith('Monitoring as '), 'Fake vault authorization was not restored', 30000);
+    await windows(browser, 1);
+    assert.equal(await visibleText(browser, '#run-status'), 'Stopped');
+    await click(browser, '#disconnect');
+    await until(async () => await visibleText(browser, '#auth-status') === 'Not connected', 'Disconnect did not clear authorization');
+  });
+  await app.stop(); browser = await app.start('auth');
+  await test('Windows Disconnect deletes fake vault authorization across restart', async () => {
+    assert.equal(await visibleText(browser, '#auth-status'), 'Not connected');
+    await windows(browser, 1);
+  });
+}
