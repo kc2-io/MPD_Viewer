@@ -7,7 +7,7 @@ state, or the Rust controller with JavaScript mocks.
 ```powershell
 npm ci --prefix tests/e2e
 $env:MPD_E2E_BINARY = (Resolve-Path target/debug/mpd-tabber.exe).Path
-$env:MPD_E2E_OUTPUT_DIR = "$env:RUNNER_TEMP/desktop-e2e-evidence"
+$env:MPD_E2E_OUTPUT_DIR = Join-Path $env:TEMP ("mpd-e2e-evidence-" + [guid]::NewGuid().ToString("N"))
 npm test --prefix tests/e2e
 ```
 
@@ -73,3 +73,13 @@ WebDriver plugin being registered. The probe writes only bounded booleans/errors
 to `policy-demo.json` / `policy-web.json`; a nonzero native exit fails the suite.
 They use bundled/local test origins, not a live Twitch domain. Fixture seeding in
 that security probe is not GUI-action evidence.
+
+Each demo/web/auth/policy case gets a different random run ID as well as a fresh
+root, so Windows vault targets and macOS UUID profiles cannot cross case
+boundaries. The same ID/root is retained only for that case's restart assertions.
+
+The manifest distinguishes `harnessCommit` (and dirty status) from the compiled
+binary. It records the binary SHA-256 and fails if its bytes change during a run.
+Set `MPD_E2E_BUILD_COMMIT` to a verified 40-character native source commit when
+building elsewhere; otherwise that field is null. A local harness worktree commit
+alone is not evidence of the compiled application's source revision.

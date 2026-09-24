@@ -83,7 +83,7 @@ export async function demoSmoke(app, test, extended) {
   });
 }
 
-export async function webSmoke(app, test) {
+export async function webSmoke(app, test, extended) {
   let browser = await app.start('web');
   await test('full-page mode hides central media controls and starts two local viewers', async () => {
     assert.equal(await visibleText(browser, '#run-status'), 'Stopped');
@@ -109,6 +109,19 @@ export async function webSmoke(app, test) {
     await click(browser, '#refresh');
     await until(async () => (await visibleText(browser, 'li[data-login="alpha_fixture"]')).includes('777 viewers'), 'Updated live viewer count missing');
     assert.deepEqual((await browser.getWindowHandles()).sort(), [...handles].sort());
+  });
+  if (extended) await test('API outage marks counts stale, preserves viewers and recovers after backoff', async () => {
+    const handles = await browser.getWindowHandles();
+    await app.fixtureState({ fail_api: true, count: 777 });
+    await click(browser, '#refresh');
+    await until(async () => (await visibleText(browser, 'li[data-login="alpha_fixture"]')).includes('(stale)'), 'Failed API did not mark count stale');
+    assert.equal(await (await browser.$('#error')).isDisplayed(), true);
+    assert.deepEqual((await browser.getWindowHandles()).sort(), [...handles].sort());
+    await app.fixtureState({ count: 888 });
+    await click(browser, '#refresh');
+    await until(async () => (await visibleText(browser, 'li[data-login="alpha_fixture"]')).includes('888 viewers'), 'API did not recover through production backoff', 45000);
+    assert.deepEqual((await browser.getWindowHandles()).sort(), [...handles].sort());
+    await click(browser, '#dismiss-error');
   });
   await test('instrumented full-page caller is denied real manager IPC', async () => {
     const handle = (await browser.getWindowHandles()).find(value => value !== app.manager);

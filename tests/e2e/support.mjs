@@ -17,7 +17,8 @@ export async function until(check, message, timeout = 15000) {
 }
 export function sanitize(text) {
   return String(text).replace(/https?:\/\/[^\s"<>]+/g, value => value.replace(/[?#].*/, '?[redacted]'))
-    .replace(/((?:access_token|refresh_token|authorization|password|device_code|user_code)\s*[=:]\s*)[^\s,}]+/gi, '$1[redacted]');
+    .replace(/\bBearer\s+[^\s,}"']+/gi, 'Bearer [redacted]')
+    .replace(/(["']?(?:access_token|refresh_token|authorization|password|device_code|user_code)["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,}]+)/gi, '$1[redacted]');
 }
 function environment(extra) {
   const allowed = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|TMPDIR|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMFILES.*|COMMONPROGRAMFILES.*|DISPLAY|WAYLAND_DISPLAY|XAUTHORITY|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|LANG|LC_.*|LD_LIBRARY_PATH|DYLD_.*|WEBVIEW2_BROWSER_EXECUTABLE_FOLDER)$/i;
@@ -46,7 +47,7 @@ export class Desktop {
     this.launches.push({ pid: child.pid, scenario, args, port });
     for (const stream of [child.stdout, child.stderr]) stream.on('data', data => {
       const text = sanitize(data.toString()); const available = Math.max(0, 256 * 1024 - logBytes);
-      logBytes += Buffer.byteLength(text); if (available) void appendFile(logFile, text.slice(0, available)).catch(() => {});
+      logBytes += Buffer.byteLength(text); if (available) void appendFile(logFile, Buffer.from(text).subarray(0, available)).catch(() => {});
     });
     child.on('error', error => { this.spawnError = error; });
     await until(async () => {
@@ -106,6 +107,9 @@ export class Desktop {
     if (Buffer.byteLength(report) > 64 * 1024) throw new Error('Native policy report exceeds artifact limit');
     const parsed = JSON.parse(report);
     await writeFile(path.join(this.output, `policy-${scenario}.json`), sanitize(JSON.stringify(parsed, null, 2)));
+    if (parsed.passed !== true || parsed.driver_registered !== false || parsed.scenario !== scenario || !Array.isArray(parsed.results) || parsed.results.length < 2) throw new Error('Driverless policy report did not establish expected native coverage');
+    const expected = scenario === 'demo' ? ['dispatch_denied', 'get_state_denied', 'own_report_allowed', 'wrong_session_denied'] : ['dispatch_denied', 'get_state_denied', 'player_report_denied'];
+    if (parsed.results.some(result => expected.some(key => result.checks?.[key] !== true))) throw new Error('Driverless policy assertion failed');
     if (child.exitCode !== 0) throw new Error(`Driverless native policy probe exited ${child.exitCode}; see policy-${scenario}.json`);
   }
   async fixtureState(state) {
@@ -113,9 +117,9 @@ export class Desktop {
     await writeFile(temporary, JSON.stringify(state));
     await rename(temporary, path.join(this.root, 'fixture-state.json'));
   }
-  async cleanupRoot(root) {
+  async cleanupRoot(root, runId) {
     const port = await freePort();
-    const child = spawn(this.binary, ['--e2e-cleanup'], { shell: false, windowsHide: true, stdio: 'ignore', env: environment({ MPD_E2E_ROOT: root, MPD_E2E_RUN_ID: this.runId, TAURI_WEBDRIVER_PORT: String(port) }) });
+    const child = spawn(this.binary, ['--e2e-cleanup'], { shell: false, windowsHide: true, stdio: 'ignore', env: environment({ MPD_E2E_ROOT: root, MPD_E2E_RUN_ID: runId, TAURI_WEBDRIVER_PORT: String(port) }) });
     let error; child.on('error', value => { error = value; });
     try {
       await until(() => { if (error) throw error; return child.exitCode !== null; }, 'Scoped credential cleanup did not exit', 15000);

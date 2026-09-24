@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, writeFile, readFile, rm, realpath, stat } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +14,8 @@ const xml = value => String(value).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').
 const binaryInput = process.env.MPD_E2E_BINARY;
 if (!binaryInput || !path.isAbsolute(binaryInput)) throw new Error('MPD_E2E_BINARY must be an absolute path to an e2e-tests build');
 const binary = await realpath(binaryInput);
+async function binaryHash() { const hash = createHash('sha256'); for await (const chunk of createReadStream(binary)) hash.update(chunk); return hash.digest('hex'); }
+const binarySha256 = await binaryHash();
 if (!(await stat(binary)).isFile()) throw new Error('MPD_E2E_BINARY must be a file');
 const output = path.resolve(process.env.MPD_E2E_OUTPUT_DIR || path.join(here, 'artifacts', `${Date.now()}`));
 await mkdir(output, { recursive: true });
@@ -20,7 +23,13 @@ const root = await mkdtemp(path.join(os.tmpdir(), 'mpd-desktop-e2e-'));
 const runId = randomBytes(16).toString('hex');
 await writeFile(path.join(root, '.mpd-e2e-root'), runId, { flag: 'wx' });
 const app = new Desktop({ binary, root, runId, output });
-const roots = [root];
+const roots = [{ root, runId }];
+async function activateRoot(name) {
+  app.root = path.join(root, name); app.runId = randomBytes(16).toString('hex');
+  roots.push({ root: app.root, runId: app.runId });
+  await mkdir(app.root);
+  await writeFile(path.join(app.root, '.mpd-e2e-root'), app.runId, { flag: 'wx' });
+}
 const started = Date.now();
 const extended = process.env.MPD_E2E_EXTENDED === '1';
 let active = 'initialization';
@@ -42,21 +51,15 @@ try {
   await Promise.race([interruption, (async () => {
     await demoSmoke(app, test, extended);
     await app.stop();
-    app.root = path.join(root, 'web'); roots.push(app.root);
-    await mkdir(app.root);
-    await writeFile(path.join(app.root, '.mpd-e2e-root'), runId, { flag: 'wx' });
-    await webSmoke(app, test);
+    await activateRoot('web');
+    await webSmoke(app, test, extended);
     await app.stop();
-    app.root = path.join(root, 'auth'); roots.push(app.root);
-    await mkdir(app.root);
-    await writeFile(path.join(app.root, '.mpd-e2e-root'), runId, { flag: 'wx' });
+    await activateRoot('auth');
     await authSmoke(app, test);
     if (process.env.MPD_E2E_FORCE_FAILURE === '1') await test('intentional harness failure probe', () => { throw new Error('Requested failure to verify reports and cleanup'); });
     await app.stop();
     for (const scenario of ['demo', 'web']) {
-      app.root = path.join(root, `policy-${scenario}`); roots.push(app.root);
-      await mkdir(app.root);
-      await writeFile(path.join(app.root, '.mpd-e2e-root'), runId, { flag: 'wx' });
+      await activateRoot(`policy-${scenario}`);
       await test(`driverless ${scenario} native policy probe`, () => app.policyProbe(scenario));
       await app.stop();
     }
@@ -69,11 +72,14 @@ try {
   process.removeListener('SIGINT', onInterrupt); process.removeListener('SIGTERM', onInterrupt);
   try { await app.stop(); } catch (error) { results.push({ name: 'owned process cleanup', seconds: 0, failure: sanitize(error.message) }); process.exitCode = 1; }
   for (const ownedRoot of roots) {
-    try { await app.cleanupRoot(ownedRoot); } catch (error) { results.push({ name: 'scoped credential cleanup', seconds: 0, failure: sanitize(error.message) }); process.exitCode = 1; }
+    try { await app.cleanupRoot(ownedRoot.root, ownedRoot.runId); } catch (error) { results.push({ name: 'scoped credential cleanup', seconds: 0, failure: sanitize(error.message) }); process.exitCode = 1; }
   }
   let commit = 'unknown'; try { commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: here, encoding: 'utf8' }).trim(); } catch {}
+  let harnessDirty = null; try { harnessDirty = execFileSync('git', ['status', '--porcelain'], { cwd: here, encoding: 'utf8' }).trim().length > 0; } catch {}
+  const binaryUnchanged = await binaryHash() === binarySha256;
+  if (!binaryUnchanged) { results.push({ name: 'binary provenance', seconds: 0, failure: 'Binary changed during suite execution' }); process.exitCode = 1; }
   const manifest = {
-    schema: 1, commit, platform: process.platform, architecture: process.arch, osRelease: os.release(), node: process.version,
+    schema: 1, harnessCommit: commit, harnessDirty, binarySha256, binaryUnchanged, buildCommit: /^[0-9a-f]{40}$/.test(process.env.MPD_E2E_BUILD_COMMIT || '') ? process.env.MPD_E2E_BUILD_COMMIT : null, platform: process.platform, architecture: process.arch, osRelease: os.release(), node: process.version,
     webdriverio: '9.32.0', driver: 'tauri-plugin-wdio-webdriver 1.4.0 (embedded W3C)',
     runnerImage: process.env.ImageOS || null, runnerImageVersion: process.env.ImageVersion || null,
     elapsedSeconds: (Date.now() - started) / 1000, extended, launches: app.launches, tests: results.map(({ name, failure }) => ({ name, result: failure ? 'failed' : 'passed' })),
