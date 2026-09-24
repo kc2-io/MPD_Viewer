@@ -199,13 +199,13 @@ export async function authSmoke(app, test) {
     await test('non-Windows Connect reports the existing unsupported capability', async () => {
       await click(browser, '#connect');
       await until(async () => /Windows|not supported|unavailable/i.test(await visibleText(browser, '#error-text')), 'Unsupported Connect did not report its limitation');
-      assert.equal(await visibleText(browser, '#auth-status'), 'Not connected');
+      await until(async () => await visibleText(browser, '#auth-status') === 'Not connected', 'Authorization did not settle disconnected', 30000);
       await windows(browser, 1);
     });
     return;
   }
   await test('Windows Connect authorizes only the local fake OAuth fixture', async () => {
-    assert.equal(await visibleText(browser, '#auth-status'), 'Not connected');
+    await until(async () => await visibleText(browser, '#auth-status') === 'Not connected', 'Authorization did not settle disconnected', 30000);
     await click(browser, '#connect');
     const handles = await windows(browser, 2);
     await browser.switchToWindow(handles.find(handle => handle !== app.manager));
@@ -225,7 +225,7 @@ export async function authSmoke(app, test) {
   });
   await app.stop(); browser = await app.start('auth');
   await test('Windows Disconnect deletes fake vault authorization across restart', async () => {
-    assert.equal(await visibleText(browser, '#auth-status'), 'Not connected');
+    await until(async () => await visibleText(browser, '#auth-status') === 'Not connected', 'Authorization did not settle disconnected', 30000);
     await windows(browser, 1);
   });
 }

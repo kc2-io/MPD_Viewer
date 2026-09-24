@@ -58,7 +58,7 @@ export class Desktop {
     }, 'Embedded driver not ready', 45000);
     this.browser = await remote({ hostname: '127.0.0.1', port, path: '/', logLevel: 'silent', connectionRetryCount: 0,
       connectionRetryTimeout: 15000, capabilities: { browserName: 'wry', 'tauri:options': { application: this.binary } } });
-    await until(async () => (await this.browser.$('#run-status')).isExisting(), 'Manager did not render');
+    await until(() => this.browser.execute(() => { const backend = document.querySelector('#viewer-backend')?.textContent?.trim(); return Boolean(backend && backend !== 'unknown'); }), 'Manager did not render its first Rust state');
     this.manager = await this.browser.getWindowHandle();
     await this.browser.setWindowRect(0, 0, 1400, 1000);
     this.launches.at(-1).renderer = await this.browser.execute(() => ({ userAgent: navigator.userAgent, width: innerWidth, height: innerHeight, scale: devicePixelRatio }));
