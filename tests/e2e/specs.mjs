@@ -80,7 +80,7 @@ export async function demoSmoke(app, test, extended) {
     await windows(browser, 1);
     await until(async () => (await browser.$$('#players > article')).length === 0, 'Stopped session cards retained');
   });
-  if (extended) await test('real one-minute assignment timer rotates to the next live channel', async () => {
+  if (extended) await test('real timer preserves paused time and rotates without observed capacity overshoot', async () => {
     await input(browser, '#limit', 1); await click(browser, 'h1');
     await input(browser, byLabel('Assignment timer minutes for bravo_demo'), 1);
     await click(browser, byLabel('Save timer for bravo_demo'));
@@ -88,8 +88,28 @@ export async function demoSmoke(app, test, extended) {
     const start = Date.now();
     await click(browser, '#start'); await windows(browser, 2);
     await until(async () => await visibleText(browser, '#players > article > strong') === 'bravo_demo', 'Expected first timed channel');
-    await until(async () => await visibleText(browser, '#players > article > strong') === 'charlie_demo', 'Real elapsed timer did not rotate', 85000);
-    assert.ok(Date.now() - start >= 55000, 'Rotation happened before the real assignment duration');
+    const timerText = () => browser.execute(() => document.querySelector('.player-timer')?.textContent?.trim() ?? null);
+    await until(async () => /0:5[0-9] assigned time left/.test(await timerText()), 'Expected a running assignment countdown');
+    await click(browser, '#pause');
+    await until(async () => (await timerText()).startsWith('Automation paused'), 'Timer did not show paused accounting');
+    const pausedLabel = await timerText();
+    const pauseStart = Date.now();
+    while (Date.now() - pauseStart < 5000) {
+      assert.equal(await timerText(), pausedLabel, 'Assignment time decreased while automation was paused');
+      assert.equal((await browser.getWindowHandles()).length, 2, 'Paused assignment changed native capacity');
+      await delay(150);
+    }
+    const pausedDuration = Date.now() - pauseStart;
+    await click(browser, '#start');
+    const remaining = text => { const match = text.match(/(\d+):(\d{2}) assigned time left/); return match ? Number(match[1]) * 60 + Number(match[2]) : null; };
+    await until(async () => { const text = await timerText(); const seconds = remaining(text); return !text.startsWith('Automation paused') && seconds !== null && seconds < remaining(pausedLabel); }, 'Assignment countdown did not resume');
+    let observedOvershoot = false;
+    await until(async () => {
+      if ((await browser.getWindowHandles()).length > 2) observedOvershoot = true;
+      return await visibleText(browser, '#players > article > strong') === 'charlie_demo';
+    }, 'Real elapsed timer did not rotate', 85000);
+    assert.equal(observedOvershoot, false, 'Observed native windows exceeded capacity during timer replacement');
+    assert.ok(Date.now() - start >= 59000 + pausedDuration, 'Rotation did not preserve the paused assignment duration');
     await windows(browser, 2); await click(browser, '#stop'); await windows(browser, 1);
     await click(browser, byLabel('Set bravo_demo timer to 10 minutes'));
     await input(browser, '#limit', 2); await click(browser, 'h1');
@@ -209,6 +229,26 @@ export async function webSmoke(app, test, extended) {
     await click(browser, byLabel('Enable alpha_fixture'));
     await until(async () => await visibleText(browser, '#players > article > strong') === 'alpha_fixture', 'Reenabled higher priority did not preempt');
     await windows(browser, 2); await click(browser, '#stop'); await windows(browser, 1);
+  });
+  await test('native open failure offers Retry and recovers the preferred viewer', async () => {
+    await app.fixtureState({ fail_open: ['alpha_fixture'] });
+    await click(browser, '#start');
+    await until(async () => await (await browser.$('li[data-login="alpha_fixture"] [aria-label="Retry alpha_fixture"]')).isExisting(), 'Failed native open did not offer Retry');
+    await until(async () => await visibleText(browser, '#players > article > strong') === 'bravo_fixture', 'Failed open did not select the next live priority');
+    const before = await windows(browser, 2);
+    await browser.switchToWindow(before.find(handle => handle !== app.manager));
+    assert.equal(await fixtureViewerReady(app), 'bravo_fixture');
+    await browser.switchToWindow(app.manager);
+    await app.fixtureState({});
+    await click(browser, 'li[data-login="alpha_fixture"] [aria-label="Retry alpha_fixture"]');
+    await until(async () => await visibleText(browser, '#players > article > strong') === 'alpha_fixture', 'Retry did not reopen the preferred live channel');
+    const after = await windows(browser, 2);
+    assert.notDeepEqual([...after].sort(), [...before].sort(), 'Retry did not replace the actual native viewer');
+    await browser.switchToWindow(after.find(handle => handle !== app.manager));
+    assert.equal(await fixtureViewerReady(app), 'alpha_fixture');
+    await browser.switchToWindow(app.manager);
+    assert.equal(await (await browser.$('li[data-login="alpha_fixture"] [aria-label="Retry alpha_fixture"]')).isExisting(), false, 'Successful Retry retained the favorite open error');
+    await click(browser, '#stop'); await windows(browser, 1);
   });
   await test('native manager close exits with an active viewer', async () => {
     await click(browser, '#start');

@@ -123,3 +123,15 @@ chunks are appended serially in arrival order, bounded to 256 KiB per launch,
 and drained after process/stdio closure before reports are finalized.
 Readiness also records five allowlisted wrapper asset DOM basenames and only a
 canonical numeric `e2e_session` suffix, never a raw asset URL or arbitrary query.
+
+The extended timer case observes five real seconds of paused assignment time,
+then resumes and requires the elapsed rotation to include that pause. Native
+window counts are sampled through replacement; this detects observed overshoot,
+while exhaustive scheduler ordering remains covered by Rust tests. The open-fault
+case injects failure only at the native window-opening boundary, checks the
+rendered Retry control, clears the fault and uses that control to recover.
+
+The manager requests an exact 1100×650 logical viewport so its frame fits the
+hosted macOS work area. Geometry readiness records requested/observed dimensions,
+display available area and scale even on failure; it does not silently accept a
+clamped or unknown size.

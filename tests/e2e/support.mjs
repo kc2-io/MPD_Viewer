@@ -96,9 +96,19 @@ export class Desktop {
     this.manager = await this.browser.getWindowHandle();
     // Driver 1.4.0 setWindowRect uses one-shot event callbacks that can panic
     // when Linux replays resize events. Use the narrow native API mailbox.
-    await this.nativeCommand({ action: 'resize', label: this.manager, width: 1400, height: 800 });
-    await until(() => this.browser.execute(() => innerWidth === 1400 && innerHeight === 800), 'Native manager resize did not reach its requested logical viewport');
-    this.launches.at(-1).renderer = await this.browser.execute(() => ({ userAgent: navigator.userAgent, width: innerWidth, height: innerHeight, scale: devicePixelRatio }));
+    const geometry = { requested: { width: 1100, height: 650 }, confirmed: false, last: null };
+    this.launches.at(-1).geometry = geometry;
+    await this.nativeCommand({ action: 'resize', label: this.manager, ...geometry.requested });
+    const observeGeometry = () => this.browser.execute(() => ({ width: innerWidth, height: innerHeight, scale: devicePixelRatio,
+      screenWidth: screen.width, screenHeight: screen.height, availableWidth: screen.availWidth, availableHeight: screen.availHeight }));
+    try {
+      await until(async () => {
+        geometry.last = await observeGeometry();
+        geometry.confirmed = geometry.last?.width === geometry.requested.width && geometry.last?.height === geometry.requested.height;
+        return geometry.confirmed;
+      }, 'Native manager resize did not reach its requested logical viewport');
+    } catch (error) { throw new Error(`${error.message}; observed geometry: ${JSON.stringify(geometry)}`); }
+    this.launches.at(-1).renderer = { ...geometry.last, userAgent: await this.browser.execute(() => navigator.userAgent) };
     return this.browser;
   }
   async viewerReady({ title, channels, demo = false }) {
