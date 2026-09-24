@@ -246,3 +246,6 @@ mod audience_tests {
         assert_eq!(p.viewer_count, None);
     }
 }
+
+/// Controller-owned assignment timing and bounded rotation rounds.
+pub mod timer;

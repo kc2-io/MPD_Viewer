@@ -5,6 +5,7 @@
   const s={mode:'running',settings,favorites:names.map((login,i)=>({login,enabled:true,presence:i?'live':'offline',skipped:false,demo_live:!!i,open_error:null})),
     players:names.slice(1).map((login,i)=>({login,session:i+1,closing:false,state:'playing',report_age_seconds:0,visible:true,volume:.25,muted:false})),
     connected_as:null,auth_pending:false,user_code:null,last_check_seconds:12,polling:false,next_check_seconds:18,
+    viewer:{backend:'bundled-demo',telemetry:true,media_controls:true,twitch_channel_page:false},
     player_origin:'http://localhost:49152/index.html',error:null,events:['+12s  Opened delta_demo (session 3).','+12s  Opened charlie_demo (session 2).','+12s  Opened bravo_demo (session 1).','+11s  Monitoring started.','+0s  Demo loaded.']};
   window.__fixture=s;window.__actions=[];
   window.__TAURI__={core:{invoke:async(command,args)=>{

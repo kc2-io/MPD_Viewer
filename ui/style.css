@@ -13,3 +13,11 @@
 .rank-status{min-height:1.6em;margin-top:8px}
 
 .channel-sub>span{max-width:100%;overflow-wrap:anywhere}.viewer-count{font-variant-numeric:tabular-nums}
+
+.timer-editor{grid-column:2 / -1;display:flex;align-items:center;gap:6px;flex-wrap:wrap;cursor:default;color:var(--muted);font-size:11px}
+.timer-editor input[type=number]{width:90px;padding:6px 8px}.timer-editor button{font-size:11px;padding:6px 8px}
+.player-timer{font-size:11px;color:var(--accent-text);margin-bottom:12px;font-variant-numeric:tabular-nums;line-height:1.5}
+@media(max-width:500px){.favorite{grid-template-columns:30px minmax(0,1fr)}.favorite>.row-controls{grid-column:2}.timer-editor{grid-column:2}}
+
+.favorite>.row-controls{grid-column:3;grid-row:1}
+@media(max-width:500px){.favorite>.row-controls{grid-column:2;grid-row:auto}}

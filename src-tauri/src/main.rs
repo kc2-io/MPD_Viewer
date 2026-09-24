@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod controller;
+mod credential_store;
+mod viewer_mode;
 mod model;
 mod player;
 mod storage;
@@ -38,6 +40,7 @@ fn player_report(window: WebviewWindow, state: State<'_, Handle>, report: Report
 }
 
 fn main() {
+    viewer_mode::initialize(std::env::args_os().skip(1));
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![get_state, dispatch, player_report])
         .setup(|app| {

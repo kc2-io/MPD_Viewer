@@ -5,8 +5,9 @@ export function viewerCountLabel(value) {
 }
 
 // Presentation helpers only. Selection policy lives exclusively in mpd-core.
-export function playbackLabel(player, demo = false) {
+export function playbackLabel(player, demo = false, telemetry = true) {
   if (player.closing) return 'Closing · capacity reserved';
+  if (!telemetry) return 'Twitch channel page · playback managed by Twitch';
   if (player.report_age_seconds == null) return 'Waiting for player telemetry';
   if (player.report_age_seconds > 20) return 'Telemetry stale · playback unknown';
   const labels = { loading:'Loading', ready:'Ready', buffering:'Buffering', playing:'Playing',
@@ -22,4 +23,13 @@ export function secondsAgo(value) {
   if (value == null) return 'No status check yet';
   if (value < 60) return `Last successful check ${value}s ago`;
   return `Last successful check ${Math.floor(value / 60)}m ago`;
+}
+
+export function timerLabel(timer) {
+  if (!timer || timer.state === 'unlimited') return 'Always · no assignment timer';
+  if (timer.state === 'closing_for_rotation') return 'Timer reached · rotating to next live channel';
+  if (timer.state === 'waiting_for_alternative') return 'Time reached · waiting for another live channel';
+  const seconds = Number.isSafeInteger(timer.remaining_seconds) && timer.remaining_seconds >= 0 ? timer.remaining_seconds : 0;
+  const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2,'0')}`;
+  return `${timer.state === 'automation_paused' ? 'Automation paused · ' : ''}${clock} assigned time left`;
 }

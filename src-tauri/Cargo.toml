@@ -21,4 +21,5 @@ webbrowser = "1"
 url = "2"
 
 [features]
+default = []
 custom-protocol = ["tauri/custom-protocol"]

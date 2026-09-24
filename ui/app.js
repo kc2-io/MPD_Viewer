@@ -1,4 +1,4 @@
-import { playbackLabel, observedPlaying, secondsAgo, viewerCountLabel } from './view-model.js';
+import { playbackLabel, observedPlaying, secondsAgo, viewerCountLabel, timerLabel } from './view-model.js';
 const $ = id => document.getElementById(id);
 let state, listKey = '', playersKey = '', dragging = null, moving = false, rankRecovery = null, refreshTask = null, audioTimer, localError = null;
 const native = () => window.__TAURI__?.core;
@@ -112,7 +112,7 @@ document.addEventListener('keydown',event=>{if(event.key==='Escape')cancelDrag()
 document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelDrag();});
 function favorites(s) {
   const key=JSON.stringify([s.favorites,s.players.map(p=>[p.login,p.closing]),s.settings.demo]);
-  if (key===listKey || dragging || moving) return;
+  if (key===listKey || dragging || moving || $('favorites').contains(document.activeElement) && document.activeElement.closest('.timer-editor')) return;
   listKey=key; const assigned=new Set(s.players.filter(p=>!p.closing).map(p=>p.login));
   $('favorites').replaceChildren(...s.favorites.map((f,i)=>{
     const li=node('li','','favorite'); li.draggable=true; li.dataset.login=f.login; li.setAttribute('aria-disabled',String(!f.enabled));
@@ -127,7 +127,26 @@ function favorites(s) {
     if (assigned.has(f.login)) sub.append(node('span','SELECTED','selected-label'));
     if (f.skipped) sub.append(node('span','SKIPPED'));
     if (f.open_error) { const e=node('span','OPEN FAILED'); e.title=f.open_error; sub.append(e); }
+    sub.append(node('span',f.watch_minutes == null ? 'Always' : `${f.watch_minutes} min assigned time`));
     info.append(sub); li.append(info);
+    const timer=node('form','','timer-editor'); timer.addEventListener('submit',event=>{
+      event.preventDefault();
+      if(saveTimer.disabled)return;
+      const raw=minutes.value.trim(), value=raw===''?null:Number(raw);
+      if(value!==null && (!Number.isSafeInteger(value)||value<1||value>1440)) { showError('Set 1–1440 whole minutes, or leave blank for Always.'); return; }
+      saveTimer.disabled=true;
+      act({type:'set_timer',login:f.login,minutes:value}).then(ok=>{
+        saveTimer.disabled=false;
+        if(ok){document.activeElement?.blur();listKey='';favorites(state);}
+      });
+    });
+    const minutes=document.createElement('input'); minutes.type='number';minutes.min='1';minutes.max='1440';minutes.step='1';
+    minutes.value=f.watch_minutes??''; minutes.placeholder='Always'; minutes.setAttribute('aria-label',`Assignment timer minutes for ${f.login}`);
+    const saveTimer=button('Save',`Save timer for ${f.login}`,()=>timer.requestSubmit());
+    timer.append(minutes,node('span','min'),saveTimer,
+      button('10 min',`Set ${f.login} timer to 10 minutes`,()=>{minutes.value='10';timer.requestSubmit();}),
+      button('Always',`Remove timer for ${f.login}`,()=>{minutes.value='';timer.requestSubmit();}));
+    li.append(timer);
     const controls=node('div','','row-controls');
     if (s.settings.demo) controls.append(button(f.demo_live?'Go offline':'Go live',`Simulate ${f.login} ${f.demo_live?'offline':'live'}`,{type:'demo_live',login:f.login,live:!f.demo_live},'toggle-live'));
     const enabled=document.createElement('input'); enabled.type='checkbox'; enabled.checked=f.enabled; enabled.title=`Enable ${f.login}`; enabled.setAttribute('aria-label',enabled.title); enabled.addEventListener('change',()=>act({type:'enable',login:f.login,enabled:enabled.checked})); controls.append(enabled);
@@ -151,14 +170,20 @@ function favorites(s) {
   }));
 }
 function players(s) {
-  const key=JSON.stringify([s.players,s.settings.demo]); if(key===playersKey)return; playersKey=key;
+  const telemetry=s.settings.demo||s.viewer?.telemetry!==false;
+  const key=JSON.stringify([s.players,s.settings.demo,s.viewer]); if(key===playersKey)return; playersKey=key;
   $('players').replaceChildren(...s.players.map(p=>{
     const card=node('article','','player-card'); card.append(node('strong',p.login));
-    card.append(node('span',playbackLabel(p,s.settings.demo),'player-state'));
-    const volume=p.volume==null?'unknown':`${Math.round(p.volume*100)}%`;
-    const muted=p.muted==null?'unknown':p.muted?'yes':'no';
-    const visibility=p.visible==null?'unknown':p.visible?'visible':'hidden';
-    card.append(node('div',`Session ${p.session} · Document ${visibility}\nObserved volume ${volume} · Muted ${muted}`,'player-meta'));
+    card.append(node('span',playbackLabel(p,s.settings.demo,telemetry),'player-state'));
+    if(telemetry) {
+      const volume=p.volume==null?'unknown':`${Math.round(p.volume*100)}%`;
+      const muted=p.muted==null?'unknown':p.muted?'yes':'no';
+      const visibility=p.visible==null?'unknown':p.visible?'visible':'hidden';
+      card.append(node('div',`Session ${p.session} · Document ${visibility}\nObserved volume ${volume} · Muted ${muted}`,'player-meta'));
+    } else {
+      card.append(node('div',`Session ${p.session}\nPoints, streaks, and playback state are reported only inside Twitch.`,'player-meta'));
+    }
+    card.append(node('div',timerLabel(p.timer),'player-timer'));
     const actions=node('div','','button-row'); actions.append(button('Focus player',`Focus ${p.login}`,{type:'focus',login:p.login},''),button('Skip',`Skip ${p.login}`,{type:'skip',login:p.login},''),button('Retry',`Retry ${p.login}`,{type:'retry',login:p.login},'')); card.append(actions); return card;
   }));
 }
@@ -170,10 +195,17 @@ function render(s) {
   $('pause').disabled=s.mode!=='running'; $('stop').disabled=s.mode==='stopped'&&s.players.length===0;
   $('refresh').disabled=s.polling||s.mode==='stopped';
   $('session-count').replaceChildren(document.createTextNode(`${s.players.length} `),node('small',`/ ${s.settings.limit}`));
-  $('playing-count').textContent=String(observedPlaying(s.players));
-  $('playing-heading').textContent=s.settings.demo?'SIMULATED PLAYBACK':'OBSERVED PLAYBACK';
-  const blocked=s.players.filter(p=>p.state==='blocked'&&!p.closing).length;
-  $('playing-detail').textContent=blocked?`${blocked} player${blocked===1?'':'s'} need a click`:'Based on recent player telemetry, not viewer credit';
+  const telemetry=s.settings.demo||s.viewer?.telemetry!==false;
+  if(telemetry) {
+    $('playing-count').textContent=String(observedPlaying(s.players));
+    $('playing-heading').textContent=s.settings.demo?'SIMULATED PLAYBACK':'OBSERVED PLAYBACK';
+    const blocked=s.players.filter(p=>p.state==='blocked'&&!p.closing).length;
+    $('playing-detail').textContent=blocked?`${blocked} player${blocked===1?'':'s'} need a click`:'Based on recent player telemetry, not viewer credit';
+  } else {
+    $('playing-count').textContent='—';
+    $('playing-heading').textContent='TWITCH CHANNEL PAGE';
+    $('playing-detail').textContent='Twitch owns playback and determines rewards eligibility';
+  }
   $('monitor-heading').textContent=s.mode==='stopped'?'Not running':s.settings.demo?'Demo source':s.polling?'Checking…':s.mode==='paused'?'Selection paused':'Every 30s';
   $('monitor-detail').textContent=secondsAgo(s.last_check_seconds);
   $('favorite-count').textContent=String(s.favorites.length);
@@ -184,13 +216,16 @@ function render(s) {
   if(document.activeElement!==$('limit'))$('limit').value=s.settings.limit;
   if(document.activeElement!==$('volume')){$('volume').value=s.settings.volume;$('volume-value').textContent=`${s.settings.volume}%`;}
   if(document.activeElement!==$('muted'))$('muted').checked=s.settings.muted;
-  $('auth-status').textContent=s.connected_as?`Monitoring as ${s.connected_as}`:s.auth_pending?'Waiting for authorization…':'Not connected';
+  const mediaControls=s.settings.demo||s.viewer?.media_controls!==false;
+  $('media-controls').hidden=!mediaControls; $('twitch-page-note').hidden=mediaControls;
+  $('auth-status').textContent=s.connected_as?`Monitoring as ${s.connected_as}`:s.auth_pending?(s.user_code?'Waiting for authorization…':'Connecting…'):'Not connected';
   $('connect').disabled=s.settings.demo||(s.auth_pending&&!s.user_code);
-  $('connect').textContent=s.auth_pending?(s.user_code?'Continue in Twitch':'Opening Twitch…'):s.connected_as?'Reconnect Twitch':'Connect Twitch';
-  $('disconnect').disabled=!s.connected_as&&!s.auth_pending;
+  $('connect').textContent=s.auth_pending?(s.user_code?'Continue in Twitch':'Connecting Twitch…'):s.connected_as?'Reconnect Twitch':'Connect Twitch';
+  $('disconnect').disabled=s.settings.demo&&!s.connected_as&&!s.auth_pending;
   $('disconnect').textContent=s.auth_pending?'Cancel':'Disconnect';
   $('device-auth').hidden=!s.user_code; $('device-code').textContent=s.user_code??'';
   $('empty-players').hidden=s.players.length>0;
+  $('viewer-backend').textContent=s.viewer?.backend??'unknown';
   $('player-origin').textContent=s.player_origin; $('events').textContent=s.events.join('\n');
   const error=s.error??localError;
   $('error').hidden=!error; if(error)$('error-text').textContent=error;
