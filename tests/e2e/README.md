@@ -131,7 +131,7 @@ while exhaustive scheduler ordering remains covered by Rust tests. The open-faul
 case injects failure only at the native window-opening boundary, checks the
 rendered Retry control, clears the fault and uses that control to recover.
 
-The manager requests an exact 1100×650 logical viewport so its frame fits the
+The manager requests an exact 1100 x 650 logical viewport so its frame fits the
 hosted macOS work area. Geometry readiness records requested/observed dimensions,
 display available area and scale even on failure; it does not silently accept a
 clamped or unknown size.
