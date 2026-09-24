@@ -33,6 +33,17 @@ OS theme changes. That does not override Twitch's own explicit appearance choice
 No cookie copying, local-storage rewriting, CSS injection or appearance automation
 is used by the application.
 
+## Assignment boundary
+
+Twitch can navigate within its own website, including links to another channel or
+raids. MPD currently manages the original channel assignment: its title, audience
+count and timer refer to that assignment, not an observed identity of whatever
+Twitch subsequently displays. Use the manager to choose channels; Retry returns
+a viewer to its assigned channel. The HTTPS origin allowlist prevents arbitrary
+external navigation but does not lock Twitch’s own single-page routing. A native
+URL-observer policy and raid acceptance are separate follow-up work; no Twitch DOM
+inspection is used to infer or force playback identity.
+
 ## Authorization and rotation
 
 On Windows, monitoring authorization is stored in Windows Credential Manager and
