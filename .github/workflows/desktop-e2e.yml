@@ -69,6 +69,8 @@ jobs:
         run: python scripts/e2e-release-boundary.py
       # Cache only fetched Cargo packages and this feature-specific target. Never
       # cache Cargo home wholesale, browser profiles, preferences or evidence.
+      # Keep one immutable cache per dependency/toolchain/platform combination;
+      # both Cargo builds still run against the current checkout on every hit.
       - name: Restore isolated Cargo E2E build cache
         id: cargo-cache
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -80,7 +82,7 @@ jobs:
             ~/.cargo/git/db/
             ~/.cargo/git/checkouts/
             target/e2e-ci/
-          key: desktop-e2e-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-custom-protocol-normal-and-e2e-tests-${{ github.sha }}
+          key: desktop-e2e-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-custom-protocol-normal-and-e2e-tests
           restore-keys: |
             desktop-e2e-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-custom-protocol-normal-and-e2e-tests-
       - name: Build and stage normal production-feature binary for exclusion probe
