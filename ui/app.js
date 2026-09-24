@@ -1,4 +1,4 @@
-import { playbackLabel, observedPlaying, secondsAgo, viewerCountLabel } from './view-model.js';
+import { playbackLabel, observedPlaying, secondsAgo, viewerCountLabel, timerLabel } from './view-model.js';
 const $ = id => document.getElementById(id);
 let state, listKey = '', playersKey = '', dragging = null, moving = false, rankRecovery = null, refreshTask = null, audioTimer, localError = null;
 const native = () => window.__TAURI__?.core;
@@ -112,7 +112,7 @@ document.addEventListener('keydown',event=>{if(event.key==='Escape')cancelDrag()
 document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelDrag();});
 function favorites(s) {
   const key=JSON.stringify([s.favorites,s.players.map(p=>[p.login,p.closing]),s.settings.demo]);
-  if (key===listKey || dragging || moving) return;
+  if (key===listKey || dragging || moving || $('favorites').contains(document.activeElement) && document.activeElement.closest('.timer-editor')) return;
   listKey=key; const assigned=new Set(s.players.filter(p=>!p.closing).map(p=>p.login));
   $('favorites').replaceChildren(...s.favorites.map((f,i)=>{
     const li=node('li','','favorite'); li.draggable=true; li.dataset.login=f.login; li.setAttribute('aria-disabled',String(!f.enabled));
@@ -127,7 +127,26 @@ function favorites(s) {
     if (assigned.has(f.login)) sub.append(node('span','SELECTED','selected-label'));
     if (f.skipped) sub.append(node('span','SKIPPED'));
     if (f.open_error) { const e=node('span','OPEN FAILED'); e.title=f.open_error; sub.append(e); }
+    sub.append(node('span',f.watch_minutes == null ? 'Always' : `${f.watch_minutes} min assigned time`));
     info.append(sub); li.append(info);
+    const timer=node('form','','timer-editor'); timer.addEventListener('submit',event=>{
+      event.preventDefault();
+      if(saveTimer.disabled)return;
+      const raw=minutes.value.trim(), value=raw===''?null:Number(raw);
+      if(value!==null && (!Number.isSafeInteger(value)||value<1||value>1440)) { showError('Set 1–1440 whole minutes, or leave blank for Always.'); return; }
+      saveTimer.disabled=true;
+      act({type:'set_timer',login:f.login,minutes:value}).then(ok=>{
+        saveTimer.disabled=false;
+        if(ok){document.activeElement?.blur();listKey='';favorites(state);}
+      });
+    });
+    const minutes=document.createElement('input'); minutes.type='number';minutes.min='1';minutes.max='1440';minutes.step='1';
+    minutes.value=f.watch_minutes??''; minutes.placeholder='Always'; minutes.setAttribute('aria-label',`Assignment timer minutes for ${f.login}`);
+    const saveTimer=button('Save',`Save timer for ${f.login}`,()=>timer.requestSubmit());
+    timer.append(minutes,node('span','min'),saveTimer,
+      button('10 min',`Set ${f.login} timer to 10 minutes`,()=>{minutes.value='10';timer.requestSubmit();}),
+      button('Always',`Remove timer for ${f.login}`,()=>{minutes.value='';timer.requestSubmit();}));
+    li.append(timer);
     const controls=node('div','','row-controls');
     if (s.settings.demo) controls.append(button(f.demo_live?'Go offline':'Go live',`Simulate ${f.login} ${f.demo_live?'offline':'live'}`,{type:'demo_live',login:f.login,live:!f.demo_live},'toggle-live'));
     const enabled=document.createElement('input'); enabled.type='checkbox'; enabled.checked=f.enabled; enabled.title=`Enable ${f.login}`; enabled.setAttribute('aria-label',enabled.title); enabled.addEventListener('change',()=>act({type:'enable',login:f.login,enabled:enabled.checked})); controls.append(enabled);
@@ -164,6 +183,7 @@ function players(s) {
     } else {
       card.append(node('div',`Session ${p.session}\nPoints, streaks, and playback state are reported only inside Twitch.`,'player-meta'));
     }
+    card.append(node('div',timerLabel(p.timer),'player-timer'));
     const actions=node('div','','button-row'); actions.append(button('Focus player',`Focus ${p.login}`,{type:'focus',login:p.login},''),button('Skip',`Skip ${p.login}`,{type:'skip',login:p.login},''),button('Retry',`Retry ${p.login}`,{type:'retry',login:p.login},'')); card.append(actions); return card;
   }));
 }

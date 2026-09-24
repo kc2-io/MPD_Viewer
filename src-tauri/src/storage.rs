@@ -41,6 +41,7 @@ mod tests {
             assert_eq!(settings.limit,2); assert_eq!(settings.volume,40);
             assert_eq!(settings.preferred_quality,"auto");
             assert!(settings.muted); assert!(!settings.demo);
+            assert_eq!(settings.favorites[0].watch_minutes,None);
             assert_eq!(settings.favorites[0].login,"modpackdad"); assert!(!settings.favorites[0].enabled);
             store.save(&settings).unwrap();
             let saved:String=store.0.query_row("SELECT json FROM preferences WHERE id=1",[],|r|r.get(0)).unwrap();
@@ -70,5 +71,28 @@ mod quality_tests {
             assert!(store.save(&settings).is_err());
             assert_eq!(store.load().unwrap().preferred_quality, "180p");
         }
+    }
+}
+
+#[cfg(test)]
+mod timer_tests {
+    use super::*;
+    use crate::model::{Action,Favorite};
+    #[test] fn timer_round_trip_and_invalid_save_preserve_settings() {
+        let mut store=Store::open(Path::new(":memory:")).unwrap();
+        let mut settings=Settings::default(); settings.favorites.push(Favorite {login:"alpha".into(),enabled:true,watch_minutes:Some(10)});
+        store.save(&settings).unwrap(); assert_eq!(store.load().unwrap().favorites[0].watch_minutes,Some(10));
+        for invalid in [0,1441,u32::MAX] {
+            settings.favorites[0].watch_minutes=Some(invalid); assert!(store.save(&settings).is_err());
+            assert_eq!(store.load().unwrap().favorites[0].watch_minutes,Some(10));
+        }
+        settings.favorites[0].watch_minutes=None;store.save(&settings).unwrap();
+        assert_eq!(store.load().unwrap().favorites[0].watch_minutes,None);
+    }
+    #[test] fn malformed_minutes_are_rejected_at_manager_boundary() {
+        for value in ["-1","1.5","4294967296","\"NaN\"","true"] {
+            assert!(serde_json::from_str::<Action>(&format!(r#"{{"type":"set_timer","login":"alpha","minutes":{value}}}"#)).is_err());
+        }
+        assert!(serde_json::from_str::<Action>(r#"{"type":"set_timer","login":"alpha","minutes":10,"session":1}"#).is_err());
     }
 }

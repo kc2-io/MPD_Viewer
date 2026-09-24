@@ -60,6 +60,7 @@ pub struct Controller {
     polling: Option<u64>, poll_id: u64, next_poll: Instant, not_before: Instant,
     last_check: Option<Instant>, backoff: u64, error: Option<String>,
     events: VecDeque<String>, started: Instant,
+    rotation: mpd_core::timer::Rotation, timer_tick: Instant, close_retry: HashMap<u64,Instant>,
 }
 impl Controller {
     pub fn new(app: AppHandle, tx: mpsc::Sender<Message>, publish: watch::Sender<View>,
@@ -70,7 +71,7 @@ impl Controller {
             auth_epoch: 0, credentials: None, connected_as: None, auth_task: None,
             auth_pending: false, user_code: None, auth_url: None, auth_window_epoch: None, auth_return_epoch: None, polling: None,
             poll_id: 0, next_poll: Instant::now(), not_before: Instant::now(),
-            last_check: None, backoff: 30, error: None, events: VecDeque::new(), started: Instant::now() }
+            last_check: None, backoff: 30, error: None, rotation: Default::default(), timer_tick: Instant::now(), close_retry: HashMap::new(), events: VecDeque::new(), started: Instant::now() }
     }
     fn log(&mut self, text: impl Into<String>) {
         self.events.push_front(format!("+{}s  {}", self.started.elapsed().as_secs(), text.into()));
@@ -120,35 +121,44 @@ impl Controller {
         crate::viewer_auth::open(&self.app, self.auth_epoch, activation)
     }
     fn action(&mut self, action: Action) -> Result<(), String> {
+        self.advance_timers();
         match action {
             Action::Add { input } => {
                 if input.len() > 512 { return Err("Channel input is too long.".into()); }
                 let login = mpd_core::normalize_login(&input).map_err(str::to_owned)?;
                 if self.settings.favorites.iter().any(|f| f.login == login) { return Err("That channel is already a favorite.".into()); }
-                let mut s = self.settings.clone(); s.favorites.push(Favorite { login: login.clone(), enabled: true });
+                let mut s = self.settings.clone(); s.favorites.push(Favorite { login: login.clone(), enabled: true, watch_minutes: None });
                 self.save(s)?; self.presence.insert(login.clone(), Presence::default());
                 self.changed(); self.log(format!("Added {login}."));
             }
             Action::Remove { login } => {
                 let mut s = self.settings.clone(); s.favorites.retain(|f| f.login != login); self.save(s)?;
                 self.presence.remove(&login); self.skipped.remove(&login); self.demo_live.remove(&login);
-                self.failed.remove(&login); self.changed();
+                self.failed.remove(&login); self.rotation.remove(&login); self.changed();
             }
             Action::Move { login, position } => {
                 let mut s = self.settings.clone();
                 let index = s.favorites.iter().position(|f| f.login == login).ok_or("Unknown favorite.")?;
                 let favorite = s.favorites.remove(index);
                 s.favorites.insert(position.min(s.favorites.len()), favorite); self.save(s)?;
+                self.rotation.clear_round();
             }
             Action::Enable { login, enabled } => {
                 let mut s = self.settings.clone();
                 s.favorites.iter_mut().find(|f| f.login == login).ok_or("Unknown favorite.")?.enabled = enabled;
                 self.save(s)?;
+                self.rotation.remove(&login);
                 // Disabled channels are not polled; re-enabling waits for a new count.
                 if let Some(p) = self.presence.get_mut(&login) { p.viewer_count = None; }
                 self.changed();
             }
-            Action::SetLimit { limit } => { let mut s = self.settings.clone(); s.limit = limit; self.save(s)?; }
+            Action::SetLimit { limit } => { let mut s = self.settings.clone(); s.limit = limit; self.save(s)?; self.rotation.clear_round(); }
+            Action::SetTimer { login, minutes } => {
+                let mut s=self.settings.clone();
+                s.favorites.iter_mut().find(|f| f.login==login).ok_or("Unknown favorite.")?.watch_minutes=minutes;
+                self.save(s)?; self.advance_timers(); self.rotation.configure(&login,minutes);
+                self.log(format!("Timer for {login}: {}.",minutes.map_or("Always".into(),|m| format!("{m} minutes assigned time"))));
+            }
             Action::SetAudio { volume, muted } => {
                 let mut s = self.settings.clone(); s.volume = volume; s.muted = muted; self.save(s)?;
                 for p in self.players.values() { player::audio(&self.app, &p.label, &self.settings)?; }
@@ -177,7 +187,7 @@ impl Controller {
                 if !self.settings.demo { return Err("Switch to Demo mode first.".into()); }
                 let mut s = self.settings.clone();
                 for login in ["alpha_demo", "bravo_demo", "charlie_demo", "delta_demo"] {
-                    if !s.favorites.iter().any(|f| f.login == login) { s.favorites.push(Favorite { login: login.into(), enabled: true }); }
+                    if !s.favorites.iter().any(|f| f.login == login) { s.favorites.push(Favorite { login: login.into(), enabled: true, watch_minutes: None }); }
                 }
                 self.save(s)?;
                 for login in ["bravo_demo", "charlie_demo", "delta_demo"] {
@@ -187,6 +197,11 @@ impl Controller {
             }
             Action::Start => {
                 if !self.settings.demo && self.credentials.is_none() { return Err("Connect Twitch first, or use Demo mode.".into()); }
+                if self.mode==Mode::Stopped {
+                    if !self.players.is_empty() { return Err("Wait for all previous players to close before starting.".into()); }
+                    self.rotation=Default::default();
+                }
+                self.timer_tick=Instant::now();
                 self.mode = Mode::Running; self.changed();
                 if self.settings.demo { self.update_demo(); }
                 else if self.last_check.map_or(true, |t| t.elapsed() > Duration::from_secs(90)) { self.mark_stale(); }
@@ -194,7 +209,7 @@ impl Controller {
             }
             Action::Pause => { if self.mode == Mode::Running { self.mode = Mode::Paused; self.log("Automatic selection paused; existing players retained."); } }
             Action::Stop => {
-                self.mode = Mode::Stopped; self.generation += 1; self.mark_stale();
+                self.mode = Mode::Stopped; self.rotation=Default::default(); self.generation += 1; self.mark_stale();
                 self.next_poll = Instant::now() + Duration::from_secs(3600);
                 self.log("Stopped; closing all managed players.");
             }
@@ -240,12 +255,13 @@ impl Controller {
         Ok(())
     }
     fn close(&mut self, id: u64) {
+        if self.close_retry.get(&id).is_some_and(|t| *t>Instant::now()) { return; }
         if let Some(p) = self.players.get_mut(&id) {
             if p.closing { return; }
             p.closing = true;
             if let Some(w) = self.app.get_webview_window(&p.label) {
                 if let Err(error) = w.destroy() {
-                    p.closing = false; self.error = Some(format!("Could not close {}: {error}", p.login));
+                    p.closing = false; self.close_retry.insert(id,Instant::now()+Duration::from_secs(30)); self.error = Some(format!("Could not close {}: {error}", p.login));
                 }
             }
             // Keep the capacity reservation until Destroyed or a registry sweep.
@@ -254,18 +270,45 @@ impl Controller {
     fn destroyed(&mut self, label: &str) {
         let id = self.players.values().find(|p| p.label == label).map(|p| p.id);
         if let Some(id) = id {
+            self.close_retry.remove(&id);
             if let Some(p) = self.players.remove(&id) {
                 if !p.closing && self.mode != Mode::Stopped { self.skip(&p.login); }
                 self.log(format!("Closed {} (session {}).", p.login, p.id));
             }
         }
     }
+    fn advance_timers(&mut self) {
+        let now=Instant::now(); let elapsed=now.saturating_duration_since(self.timer_tick); self.timer_tick=now;
+        let assigned=self.players.values().filter(|p| !p.closing).map(|p| p.login.clone()).collect();
+        let before: HashSet<_>=self.rotation.turns.iter().filter(|(_,t)| t.overdue()).map(|(l,_)| l.clone()).collect();
+        self.rotation.advance(elapsed,self.mode==Mode::Running,&assigned);
+        let reached: Vec<_>=self.rotation.turns.iter().filter(|(l,t)| t.overdue() && !before.contains(*l)).map(|(l,_)| l.clone()).collect();
+        for login in reached { self.log(format!("Timer reached for {login}; waiting for an eligible live alternative.")); }
+    }
     fn reconcile(&mut self) {
+        self.advance_timers();
         let ranked: Vec<_> = self.settings.favorites.iter().map(|f| mpd_core::Favorite { login: f.login.clone(), enabled: f.enabled }).collect();
+        // Presence freshness is deliberately not part of turn identity: one missed
+        // poll and temporary API failures retain assignment time.
+        let eligible: Vec<_> = ranked.iter().filter(|f| f.enabled).filter_map(|f| {
+            let id=self.presence.get(&f.login)?.broadcast_id.as_ref()?;
+            (self.skipped.get(&f.login)!=Some(id)).then(|| (f.login.clone(),id.clone()))
+        }).collect();
+        self.rotation.observe(eligible.clone());
+        self.rotation.turns.retain(|login,turn| eligible.iter().any(|(l,b)| l==login && b==&turn.broadcast));
+        for p in self.players.values().filter(|p| !p.closing && self.mode!=Mode::Stopped) {
+            if let Some((_,broadcast))=eligible.iter().find(|(l,_)| l==&p.login) {
+                let minutes=self.settings.favorites.iter().find(|f| f.login==p.login).and_then(|f| f.watch_minutes);
+                self.rotation.opened(&p.login,broadcast,minutes);
+            }
+        }
         let existing: HashSet<_> = self.players.values().filter(|p| !p.closing).map(|p| p.login.clone()).collect();
+        let before=self.rotation.clone();
         let desired = match self.mode {
             Mode::Stopped => vec![],
-            Mode::Running => mpd_core::select(&ranked, &self.presence, &existing, &self.skipped, self.settings.limit),
+            Mode::Running => self.rotation.desired(&ranked,&self.presence,&existing,&self.skipped,
+                &self.failed.keys().cloned().collect(),self.settings.limit,
+                !self.players.values().any(|p| p.closing) && self.close_retry.values().all(|t| *t<=Instant::now())),
             Mode::Paused => ranked.iter().filter(|f| f.enabled && existing.contains(&f.login))
                 .filter(|f| {
                     let broadcast = self.presence.get(&f.login).and_then(|p| p.broadcast_id.as_ref());
@@ -274,17 +317,45 @@ impl Controller {
         };
         let closing: Vec<_> = self.players.values().filter(|p| !desired.contains(&p.login)).map(|p| p.id).collect();
         for id in closing { self.close(id); }
+        if before.pending.is_none() {
+            if let Some((source,target))=self.rotation.pending.clone() {
+                if self.players.values().any(|p| p.login==source && !p.closing) { self.rotation=before; }
+                else { self.log(format!("Timer reached: rotating {source} to {target}.")); }
+            }
+        }
         if self.mode != Mode::Running || self.players.values().any(|p| p.closing) { return; }
-        for login in desired {
-            if self.players.len() >= self.settings.limit { break; }
-            if self.players.values().any(|p| p.login == login) || self.failed.contains_key(&login) { continue; }
-            self.next_id += 1; let id = self.next_id;
-            let label = self.host.label(id, self.settings.demo);
-            self.players.insert(id, PlayerSession { id, login: login.clone(), label,
-                closing: false, report: None, reported: None, rate_start: Instant::now(), rate_count: 0, quality_dirty: true });
-            match self.host.open(&self.app, &login, id, &self.settings) {
-                Ok(_) => self.log(format!("Opened {login} (session {id}).")),
-                Err(error) => { self.players.remove(&id); self.failed.insert(login, error.clone()); self.error = Some(error); }
+        // Re-evaluate after each failed open, excluding it before truncation. Each
+        // login is attempted at most once until explicit Retry; no tick retry storm.
+        for _ in 0..=ranked.len() {
+            let existing: HashSet<_>=self.players.values().map(|p| p.login.clone()).collect();
+            let desired=self.rotation.desired(&ranked,&self.presence,&existing,&self.skipped,
+                &self.failed.keys().cloned().collect(),self.settings.limit,false);
+            if self.players.len()>=self.settings.limit { break; }
+            let Some(login)=desired.into_iter().find(|l| !existing.contains(l)) else { break; };
+            self.next_id+=1; let id=self.next_id; let label=self.host.label(id,self.settings.demo);
+            match self.host.open(&self.app,&login,id,&self.settings) {
+                Ok(_) => {
+                    self.advance_timers();
+                    self.players.insert(id,PlayerSession {id,login:login.clone(),label,closing:false,
+                        report:None,reported:None,rate_start:Instant::now(),rate_count:0,quality_dirty:true});
+                    if let Some(broadcast)=self.presence.get(&login).and_then(|p| p.broadcast_id.as_deref()) {
+                        let minutes=self.settings.favorites.iter().find(|f| f.login==login).and_then(|f| f.watch_minutes);
+                        self.rotation.opened(&login,broadcast,minutes);
+                    }
+                    self.log(format!("Opened {login} (session {id}); assignment timer started or resumed."));
+                }
+                Err(error) => {
+                    self.failed.insert(login.clone(),error.clone()); self.error=Some(error);
+                    self.log(format!("Could not open {login}; waiting for Retry."));
+                    if self.rotation.pending.as_ref().is_some_and(|(_,target)| target==&login) {
+                        let source=self.rotation.pending.as_ref().unwrap().0.clone();
+                        let candidates: HashSet<_>=mpd_core::select(&ranked,&self.presence,&HashSet::new(),&self.skipped,usize::MAX).into_iter()
+                            .filter(|l| !existing.contains(l) && !self.failed.contains_key(l) && !self.rotation.deferred(l)).collect();
+                        let order: Vec<_>=ranked.iter().map(|f| f.login.clone()).collect();
+                        if let Some(next)=mpd_core::timer::next_waiting(&order,&source,&candidates) { self.rotation.pending=Some((source,next)); }
+                        else { self.rotation.failed_target(); }
+                    }
+                }
             }
         }
     }
@@ -339,6 +410,15 @@ impl Controller {
     }
     fn snapshot(&self) -> View {
         let mut players: Vec<_> = self.players.values().map(|p| PlayerView {
+            timer: if p.closing && self.rotation.pending.as_ref().is_some_and(|(source,_)| source==&p.login) { TimerView::ClosingForRotation }
+                else { match self.rotation.turns.get(&p.login).and_then(|turn| turn.remaining()) {
+                    None => TimerView::Unlimited,
+                    Some(remaining) if remaining.is_zero() => TimerView::WaitingForAlternative,
+                    Some(remaining) => { let remaining_seconds=remaining.as_secs()+u64::from(remaining.subsec_nanos()>0);
+                        if self.mode==Mode::Paused { TimerView::AutomationPaused {remaining_seconds} }
+                        else { TimerView::Counting {remaining_seconds} }
+                    }
+                } },
             login: p.login.clone(), session: p.id, closing: p.closing,
             state: p.report.as_ref().map_or(Playback::Loading, |r| r.state),
             report_age_seconds: p.reported.map(|t| t.elapsed().as_secs()),
@@ -356,7 +436,7 @@ impl Controller {
                     Some(p) if p.broadcast_id.is_some() => "live",
                     Some(_) => "offline",
                 };
-                FavoriteView { login: f.login.clone(), enabled: f.enabled, presence: presence.into(),
+                FavoriteView { watch_minutes: f.watch_minutes, login: f.login.clone(), enabled: f.enabled, presence: presence.into(),
                     viewer_count: ViewerCount::from_presence(p, f.enabled, self.settings.demo),
                     skipped: self.skipped.get(&f.login).is_some_and(|id| p.and_then(|p| p.broadcast_id.as_ref()) == Some(id)),
                     demo_live: self.demo_live.contains_key(&f.login), open_error: self.failed.get(&f.login).cloned() }

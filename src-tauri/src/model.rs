@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_CLIENT_ID: &str = "ha94kk20cfu1tp74pgg8isgi88cpo7";
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct Favorite { pub login: String, pub enabled: bool }
+pub struct Favorite { pub login: String, pub enabled: bool, #[serde(default)] pub watch_minutes: Option<u32> }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -34,6 +34,7 @@ impl Settings {
         if self.favorites.len() > 2000 { return Err("POC supports at most 2000 saved favorites.".into()); }
         let mut seen = std::collections::HashSet::new();
         for f in &self.favorites {
+            if f.watch_minutes.is_some_and(|m| !(1..=1440).contains(&m)) { return Err("Timer must be 1–1440 whole minutes or Always.".into()); }
             let login = mpd_core::normalize_login(&f.login).map_err(str::to_owned)?;
             if login != f.login || !seen.insert(login) { return Err("Invalid or duplicate favorite.".into()); }
         }
@@ -53,6 +54,7 @@ pub enum Action {
     Move { login: String, position: usize },
     Enable { login: String, enabled: bool },
     SetLimit { limit: usize },
+    SetTimer { login: String, minutes: Option<u32> },
     SetAudio { volume: u8, muted: bool },
     SetQuality { quality: String },
     SetDemo { demo: bool },
@@ -109,6 +111,7 @@ impl ViewerCount {
 
 #[derive(Clone, Serialize)]
 pub struct FavoriteView {
+    pub watch_minutes: Option<u32>,
     pub login: String,
     pub enabled: bool,
     pub presence: String,
@@ -119,6 +122,7 @@ pub struct FavoriteView {
 }
 #[derive(Clone, Serialize)]
 pub struct PlayerView {
+    pub timer: TimerView,
     pub login: String,
     pub session: u64,
     pub closing: bool,
@@ -127,6 +131,16 @@ pub struct PlayerView {
     pub visible: Option<bool>,
     pub volume: Option<f64>,
     pub muted: Option<bool>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum TimerView {
+    Unlimited,
+    Counting { remaining_seconds: u64 },
+    AutomationPaused { remaining_seconds: u64 },
+    WaitingForAlternative,
+    ClosingForRotation,
 }
 
 #[derive(Clone, Serialize)]
