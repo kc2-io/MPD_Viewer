@@ -37,6 +37,10 @@ impl Host {
                     _ => None,
                 };
                 if let Some((body, mime)) = asset {
+                    #[cfg(feature = "e2e-tests")]
+                    let asset_name = path.to_owned(); // Only the fixed asset allowlist above.
+                    #[cfg(feature = "e2e-tests")]
+                    eprintln!("E2E asset begin {asset_name}");
                     let mut response = tiny_http::Response::from_string(body);
                     for (name, value) in [("Content-Type", mime), ("Cache-Control", "no-store"),
                         ("X-Content-Type-Options", "nosniff"), ("Referrer-Policy", "strict-origin-when-cross-origin")] {
@@ -45,7 +49,13 @@ impl Host {
                     #[cfg(feature = "e2e-tests")]
                     response.add_header(tiny_http::Header::from_bytes("Content-Security-Policy",
                         "default-src 'self'; script-src 'self'; style-src 'self'; connect-src ipc: http://ipc.localhost https://ipc.localhost; frame-src 'none'; object-src 'none'").unwrap());
+                    #[cfg(not(feature = "e2e-tests"))]
                     let _ = request.respond(response);
+                    #[cfg(feature = "e2e-tests")]
+                    {
+                        let respond_ok = request.respond(response).is_ok();
+                        eprintln!("E2E asset end {asset_name}: respond_ok={respond_ok}");
+                    }
                 } else { let _ = request.respond(tiny_http::Response::empty(404)); }
             }
         })?;
