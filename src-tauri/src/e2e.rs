@@ -186,7 +186,7 @@ mod tests {
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NativeCommand { id: String, action: String, label: String, theme: Option<String> }
+struct NativeCommand { id: String, action: String, label: String, theme: Option<String>, width: Option<u32>, height: Option<u32> }
 fn observe_native(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut previous = Vec::<String>::new();
@@ -224,6 +224,11 @@ fn observe_native(app: tauri::AppHandle) {
                                         // This calls the native close API and exercises CloseRequested.
                                         // It is not represented as a titlebar mouse-input test.
                                         "close" => window.close().map_err(|e| e.to_string()),
+                                        "resize" => match (command.width, command.height) {
+                                            (Some(width @ 640..=1600), Some(height @ 480..=1000)) =>
+                                                window.set_size(tauri::LogicalSize::new(width, height)).map_err(|e| e.to_string()),
+                                            _ => Err("Invalid native size".into()),
+                                        },
                                         "theme" => match command.theme.as_deref() {
                                             Some("light") => window.set_theme(Some(tauri::Theme::Light)).map_err(|e| e.to_string()),
                                             Some("dark") => window.set_theme(Some(tauri::Theme::Dark)).map_err(|e| e.to_string()),

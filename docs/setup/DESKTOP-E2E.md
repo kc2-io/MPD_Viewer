@@ -28,8 +28,11 @@ Published `tauri-plugin-wdio-webdriver` 1.4.0 was inspected before integration.
 Its embedded server supports native windows on all three OS families, but its
 desktop input is DOM-synthesized. Dropdown and HTML5 drag helpers are therefore
 explicitly synthetic GUI tests of the actual application handlers, not OS pointer
-acceptance. Native close/theme tests call native window APIs through a narrow,
+acceptance. Native close/theme/resize tests call native window APIs through a narrow,
 test-only file mailbox; they do not claim titlebar or OS Settings interaction.
+The native resize API plus observed viewport dimensions avoids a driver 1.4.0
+`setWindowRect` race: duplicate move/resize events can invoke Tauri's consumed
+one-shot listener and panic. A process crash remains a test failure.
 
 The harness uses the direct WebdriverIO client instead of `@wdio/tauri-service`:
 the service installs mocking/evaluation wrappers that this suite does not need.

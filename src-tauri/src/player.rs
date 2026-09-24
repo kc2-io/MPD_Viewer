@@ -40,7 +40,11 @@ impl Host {
                     #[cfg(feature = "e2e-tests")]
                     let asset_name = path.to_owned(); // Only the fixed asset allowlist above.
                     #[cfg(feature = "e2e-tests")]
-                    eprintln!("E2E asset begin {asset_name}");
+                    {
+                        let session = request.url().split_once('?').and_then(|(_, query)| query.strip_prefix("e2e_session="))
+                            .filter(|value| value.len() <= 20 && value.bytes().all(|b| b.is_ascii_digit())).unwrap_or("none");
+                        eprintln!("E2E asset begin {asset_name} session={session}");
+                    }
                     #[cfg(feature = "e2e-tests")]
                     let body = if mime.starts_with("text/html") { crate::e2e::scope_wrapper_assets(body, request.url()) } else { body.into() };
                     let mut response = tiny_http::Response::from_string(body);
