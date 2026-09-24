@@ -22,6 +22,15 @@ export async function demoSmoke(app, test, extended) {
     await click(browser, byLabel('Enable alpha_demo'));
     await until(async () => (await browser.$('li[data-login="alpha_demo"]')).getAttribute('aria-disabled').then(value => value === 'true'), 'Enable change missing');
   });
+  await test('invalid channel is rejected without changing saved favorites', async () => {
+    const before = await order(browser);
+    await input(browser, '#channel', 'not a valid channel!');
+    await click(browser, '#add-form button');
+    await until(async () => (await browser.$('#error')).isDisplayed(), 'Invalid channel did not report an error');
+    assert.deepEqual(await order(browser), before);
+    await click(browser, '#dismiss-error');
+    await input(browser, '#channel', '');
+  });
   await test('synthetic HTML5 drag persists order through real UI handler', async () => {
     await dragBefore(browser, 'charlie_demo', 'bravo_demo');
     await until(async () => (await order(browser))[0] === 'charlie_demo', 'Drag rank not saved');
@@ -36,6 +45,18 @@ export async function demoSmoke(app, test, extended) {
     await input(browser, '#limit', 2); await click(browser, 'h1');
     await until(async () => (await visibleText(browser, '#session-count')).includes('/ 2'), 'Limit not saved');
     await selectValue(browser, '#quality', '360p');
+  });
+  await test('invalid timer is rejected and Always removes the saved timer', async () => {
+    const selector = byLabel('Assignment timer minutes for bravo_demo');
+    await input(browser, selector, '0');
+    await click(browser, byLabel('Save timer for bravo_demo'));
+    assert.equal(await browser.execute(selector => document.querySelector(selector).validity.valid, selector), false);
+    assert.ok((await visibleText(browser, 'li[data-login="bravo_demo"]')).includes('10 min assigned time'));
+    await click(browser, byLabel('Remove timer for bravo_demo'));
+    await until(async () => !(await visibleText(browser, 'li[data-login="bravo_demo"]')).includes('10 min assigned time'), 'Always did not remove the timer');
+    assert.equal(await (await browser.$(selector)).getValue(), '');
+    await click(browser, byLabel('Set bravo_demo timer to 10 minutes'));
+    await until(async () => (await visibleText(browser, 'li[data-login="bravo_demo"]')).includes('10 min assigned time'), 'Timer preset was not restored');
   });
   await test('two viewer handles render; pause/resume and Stop clean up', async () => {
     await click(browser, '#start');
@@ -242,4 +263,28 @@ async function fixtureViewerReady(browser) {
     const channel = document.querySelector('#channel')?.textContent?.trim();
     return document.readyState === 'complete' && document.querySelector('h1')?.textContent?.trim() === 'MPD E2E local viewer' && /^[a-z]+_fixture$/.test(channel || '') && channel;
   }), 'Expected initialized local full-page fixture document');
+}
+
+export async function embeddedSmoke(app, test) {
+  const browser = await app.start('web', ['--embedded-viewer']);
+  await test('explicit embedded launch exposes media controls and wrapper windows', async () => {
+    assert.equal(await (await browser.$('#media-controls')).isDisplayed(), true);
+    assert.equal(await (await browser.$('#twitch-page-note')).isDisplayed(), false);
+    await selectValue(browser, '#quality', '360p');
+    await click(browser, '#start');
+    const handles = await windows(browser, 3);
+    const channels = [];
+    for (const handle of handles.filter(handle => handle !== app.manager)) {
+      assert.match(handle, /^player-/);
+      await browser.switchToWindow(handle);
+      channels.push(await until(() => browser.execute(() => {
+        const name = document.querySelector('#demo-channel')?.textContent?.trim();
+        return document.readyState === 'complete' && document.querySelector('#demo')?.hidden === false && /^(alpha|bravo)_fixture$/.test(name || '') && name;
+      }), 'Expected initialized embedded fixture wrapper'));
+    }
+    assert.deepEqual(channels.sort(), ['alpha_fixture', 'bravo_fixture']);
+    await browser.switchToWindow(app.manager);
+    assert.equal(await app.screenshot('explicit-embedded'), 3);
+    await click(browser, '#stop'); await windows(browser, 1);
+  });
 }

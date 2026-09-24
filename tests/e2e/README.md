@@ -68,7 +68,7 @@ imported client and actual Windows session were exercised with the override;
 `npm audit` reported zero findings when the lockfile was generated.
 
 The suite also launches separate driverless policy-probe processes. Those native
-fixture probes exercise actual caller permission/navigation policy without the
+fixture probes exercise actual caller IPC permissions without the
 WebDriver plugin being registered. The probe writes only bounded booleans/errors
 to `policy-demo.json` / `policy-web.json`; a nonzero native exit fails the suite.
 They use bundled/local test origins, not a live Twitch domain. Fixture seeding in

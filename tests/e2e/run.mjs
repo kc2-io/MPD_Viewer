@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Desktop, sanitize } from './support.mjs';
-import { demoSmoke, webSmoke, authSmoke } from './specs.mjs';
+import { demoSmoke, webSmoke, authSmoke, embeddedSmoke } from './specs.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const results = [];
@@ -53,6 +53,9 @@ try {
     await app.stop();
     await activateRoot('web');
     await webSmoke(app, test, extended);
+    await app.stop();
+    await activateRoot('embedded');
+    await embeddedSmoke(app, test);
     await app.stop();
     await activateRoot('auth');
     await authSmoke(app, test);
