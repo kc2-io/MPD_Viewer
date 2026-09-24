@@ -20,12 +20,18 @@ pub fn script(label: &str, session: u64) -> String {
 
 const SCRIPT: &str = r#"
 (() => {
+  if (window.top !== window) return;
   const cfg = __PROBE_CONFIG__;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const readiness = () => ({
+    document_complete: document.readyState === 'complete',
+    final_title: document.title === (cfg.wrapper ? 'MPD Player' : 'MPD E2E local viewer'),
+    native_bridge: typeof window.__TAURI_INTERNALS__?.invoke === 'function'
+  });
   async function run() {
     // Run after ordinary wrapper initialization has consumed its configuration hash.
     const deadline = Date.now() + 10000;
-    while (document.readyState !== 'complete' || !window.__TAURI_INTERNALS__?.invoke) {
+    while (!Object.values(readiness()).every(Boolean)) {
       if (Date.now() >= deadline) throw new Error('native_ipc_not_ready');
       await sleep(50);
     }
@@ -34,8 +40,9 @@ const SCRIPT: &str = r#"
       new Promise((_, reject) => setTimeout(() => reject(new Error('probe_timeout')), 3000))
     ]);
     const checks = {};
+    const diagnostics = {};
     async function denied(name, command, args, kind) {
-      try { await invoke(command, args); checks[name] = false; }
+      try { await invoke(command, args); checks[name] = false; diagnostics[name] = 'allowed'; }
       catch (error) {
         // A missing bridge, unknown command, timeout or arbitrary exception is NOT denial.
         const message = typeof error === 'string' ? error : String(error?.message || '');
@@ -43,23 +50,24 @@ const SCRIPT: &str = r#"
           ? message === 'Session does not belong to this window.'
           : /\bnot allowed\b|\bdenied\b/i.test(message)
             && !/unknown command|not found|timeout|not ready/i.test(message);
+        diagnostics[name] = checks[name] ? 'expected_denial' : message === 'probe_timeout' ? 'timeout' : 'other_error';
       }
     }
     await denied('get_state_denied', 'get_state', {}, 'acl');
     await denied('dispatch_denied', 'dispatch', { action: { type: 'clear_error' } }, 'acl');
     const report = { session: cfg.session, state: 'ready', visible: true, volume: null, muted: null };
     if (cfg.wrapper) {
-      try { await invoke('player_report', { report }); checks.own_report_allowed = true; }
-      catch (_) { checks.own_report_allowed = false; }
+      try { await invoke('player_report', { report }); checks.own_report_allowed = true; diagnostics.own_report_allowed = 'allowed'; }
+      catch (error) { checks.own_report_allowed = false; diagnostics.own_report_allowed = error?.message === 'probe_timeout' ? 'timeout' : 'other_error'; }
       await denied('wrong_session_denied', 'player_report', {
         report: { ...report, session: cfg.session + 1000000 }
       }, 'session');
     } else {
       await denied('player_report_denied', 'player_report', { report }, 'acl');
     }
-    return { label: cfg.label, checks };
+    return { label: cfg.label, checks, diagnostics, readiness: readiness() };
   }
-  run().catch(() => ({ label: cfg.label, checks: { native_ipc_ready: false } })).then(result => {
+  run().catch(() => ({ label: cfg.label, checks: { native_ipc_ready: false }, diagnostics: {}, readiness: readiness() })).then(result => {
     // Preserve the wrapper's startup parameters. Hash observation grants no new native IPC.
     const hash = new URLSearchParams(location.hash.slice(1));
     hash.set(cfg.hashKey, JSON.stringify(result));
@@ -73,6 +81,10 @@ const SCRIPT: &str = r#"
 struct ProbeResult {
     label: String,
     checks: std::collections::BTreeMap<String, bool>,
+    #[serde(default)]
+    diagnostics: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    readiness: std::collections::BTreeMap<String, bool>,
 }
 
 fn parse_result(url: &url::Url, label: &str) -> Result<Option<ProbeResult>, String> {
@@ -82,13 +94,20 @@ fn parse_result(url: &url::Url, label: &str) -> Result<Option<ProbeResult>, Stri
     if values.len() != 1 || values[0].1.len() > 2048 { return Err("Invalid probe result envelope".into()); }
     let result: ProbeResult = serde_json::from_str(&values[0].1).map_err(|_| "Invalid probe result JSON")?;
     if result.label != label { return Err("Probe window identity mismatch".into()); }
+    if result.diagnostics.len() > 4 || result.diagnostics.iter().any(|(key, value)|
+        !matches!(key.as_str(), "get_state_denied" | "dispatch_denied" | "own_report_allowed" | "wrong_session_denied" | "player_report_denied")
+        || !matches!(value.as_str(), "allowed" | "expected_denial" | "timeout" | "other_error"))
+        || result.readiness.keys().any(|key| !matches!(key.as_str(), "document_complete" | "final_title" | "native_bridge")) {
+        return Err("Invalid bounded probe diagnostics".into());
+    }
     let expected: &[&str] = if label.starts_with("player-") {
         &["dispatch_denied", "get_state_denied", "own_report_allowed", "wrong_session_denied"]
     } else {
         &["dispatch_denied", "get_state_denied", "player_report_denied"]
     };
     if result.checks.len() != expected.len() || expected.iter().any(|name| result.checks.get(*name) != Some(&true)) {
-        return Err(format!("Native IPC policy check failed for {label}"));
+        let failed: Vec<_> = expected.iter().filter(|name| result.checks.get(**name) != Some(&true)).collect();
+        return Err(format!("Native IPC policy check failed for {label}; failed={failed:?}; readiness={:?}; diagnostics={:?}", result.readiness, result.diagnostics));
     }
     Ok(Some(result))
 }
