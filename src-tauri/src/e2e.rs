@@ -160,7 +160,20 @@ struct NativeCommand { id: String, action: String, label: String, theme: Option<
 fn observe_native(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut previous = Vec::<String>::new();
+        #[cfg(target_os = "macos")]
+        let wake_pending = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         loop {
+            // A headless macOS runner can park the native loop while WebKit is
+            // still loading. Wake it through Tauri's ordinary event proxy, also
+            // in driverless probes. This changes no page/IPC/visibility policy.
+            // Keep at most one no-op queued if the main thread is stalled.
+            #[cfg(target_os = "macos")]
+            if !wake_pending.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                let pending = wake_pending.clone();
+                if app.run_on_main_thread(move || pending.store(false, std::sync::atomic::Ordering::Release)).is_err() {
+                    break;
+                }
+            }
             let mut windows: Vec<String> = app.webview_windows().keys().cloned().collect();
             windows.sort();
             if windows != previous {

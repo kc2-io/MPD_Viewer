@@ -44,6 +44,11 @@ wrapper and two full-page fixture windows, including positive own-session wrappe
 reports and negative manager/wrong-session calls. These are local-origin checks,
 not proof of behavior on a live Twitch origin.
 
+The test-only macOS observer posts a no-op through Tauri's native event proxy
+every 100 ms, with at most one pending task, to wake headless WebKit loading.
+Driverless probes use this same event-loop wake-up without registering the driver
+or changing page permissions, focus, visibility or background-throttling policy.
+
 ## Isolation and production boundary
 
 The non-default `e2e-tests` feature is required for the driver, fixture services,
