@@ -81,5 +81,45 @@ class ReleaseGraphBoundaryTests(unittest.TestCase):
                 self.boundary.assess_graph(graph)
 
 
+class NormalProbeBoundaryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        probe_spec = importlib.util.spec_from_file_location("probe", Path(__file__).with_name("e2e-no-driver-probe.py"))
+        cls.probe = importlib.util.module_from_spec(probe_spec)
+        probe_spec.loader.exec_module(cls.probe)
+
+    def test_local_or_self_hosted_execution_is_rejected_before_profile_access(self):
+        for environment in ({}, {"GITHUB_ACTIONS": "true", "MPD_E2E_RUNNER_ENVIRONMENT": "self-hosted"},
+                            {"GITHUB_ACTIONS": "false", "MPD_E2E_RUNNER_ENVIRONMENT": "github-hosted"}):
+            with self.subTest(environment=environment), self.assertRaises(ValueError):
+                self.probe.require_hosted(environment)
+
+    def test_cleanup_root_requires_matching_owner_marker(self):
+        with tempfile.TemporaryDirectory(prefix="mpd-probe-boundary-") as directory:
+            parent = Path(directory)
+            root = parent / "mpd-normal-e2e-test"
+            root.mkdir()
+            (root / self.probe.MARKER).write_text("b" * 32)
+            environment = {"GITHUB_ACTIONS": "true", "MPD_E2E_RUNNER_ENVIRONMENT": "github-hosted",
+                           "RUNNER_TEMP": str(parent), "MPD_E2E_PRODUCTION_ROOT": str(root),
+                           "MPD_E2E_PRODUCTION_RUN_ID": "a" * 32}
+            with self.assertRaises(ValueError):
+                self.probe.owned_root(environment)
+
+    def test_cleanup_root_cannot_escape_runner_temp(self):
+        with tempfile.TemporaryDirectory(prefix="mpd-probe-boundary-") as directory:
+            parent = Path(directory)
+            runner = parent / "runner"
+            runner.mkdir()
+            outside = parent / "mpd-normal-e2e-outside"
+            outside.mkdir()
+            (outside / self.probe.MARKER).write_text("a" * 32)
+            environment = {"GITHUB_ACTIONS": "true", "MPD_E2E_RUNNER_ENVIRONMENT": "github-hosted",
+                           "RUNNER_TEMP": str(runner), "MPD_E2E_PRODUCTION_ROOT": str(outside),
+                           "MPD_E2E_PRODUCTION_RUN_ID": "a" * 32}
+            with self.assertRaises(ValueError):
+                self.probe.owned_root(environment)
+
+
 if __name__ == "__main__":
     unittest.main()

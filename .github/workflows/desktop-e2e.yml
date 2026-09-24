@@ -78,20 +78,32 @@ jobs:
             ~/.cargo/git/db/
             ~/.cargo/git/checkouts/
             target/e2e-ci/
-          key: desktop-e2e-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-custom-protocol-e2e-tests-${{ github.sha }}
+          key: desktop-e2e-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-custom-protocol-normal-and-e2e-tests-${{ github.sha }}
           restore-keys: |
-            desktop-e2e-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-custom-protocol-e2e-tests-
+            desktop-e2e-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-custom-protocol-normal-and-e2e-tests-
+      - name: Build and stage normal production-feature binary for exclusion probe
+        env:
+          MPD_E2E_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        shell: bash
+        run: |
+          cargo build --locked -p mpd-tabber --features custom-protocol
+          python scripts/e2e-no-driver-probe.py stage
       - name: Build isolated UNSIGNED GUI test binary
         run: cargo build --locked -p mpd-tabber --features custom-protocol,e2e-tests
       - name: Run native GUI suite (Windows and macOS)
         if: runner.os != 'Linux'
+        env:
+          MPD_E2E_RUNNER_ENVIRONMENT: ${{ runner.environment }}
         timeout-minutes: ${{ env.MPD_E2E_EXTENDED == '1' && 20 || 10 }}
         shell: bash
         run: |
           python scripts/e2e-runtime-manifest.py
+          python scripts/e2e-no-driver-probe.py run
           npm test --prefix tests/e2e
       - name: Run native GUI suite (Linux virtual desktop)
         if: runner.os == 'Linux'
+        env:
+          MPD_E2E_RUNNER_ENVIRONMENT: ${{ runner.environment }}
         timeout-minutes: ${{ env.MPD_E2E_EXTENDED == '1' && 20 || 10 }}
         shell: bash
         run: dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' bash scripts/e2e-linux-session.sh
