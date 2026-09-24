@@ -102,6 +102,14 @@ export async function webSmoke(app, test) {
     await browser.switchToWindow(app.manager);
     assert.equal(await app.screenshot('web-two-windows'), 3);
   });
+  await test('fixture viewer count updates through Check now without replacing viewers', async () => {
+    await until(async () => (await visibleText(browser, 'li[data-login="alpha_fixture"]')).includes('100 viewers'), 'Initial live viewer count missing');
+    const handles = await browser.getWindowHandles();
+    await app.fixtureState({ count: 777 });
+    await click(browser, '#refresh');
+    await until(async () => (await visibleText(browser, 'li[data-login="alpha_fixture"]')).includes('777 viewers'), 'Updated live viewer count missing');
+    assert.deepEqual((await browser.getWindowHandles()).sort(), [...handles].sort());
+  });
   await test('instrumented full-page caller is denied real manager IPC', async () => {
     const handle = (await browser.getWindowHandles()).find(value => value !== app.manager);
     await browser.switchToWindow(handle);
@@ -154,6 +162,16 @@ export async function webSmoke(app, test) {
     assert.equal(await browser.execute(() => localStorage.getItem('mpd-e2e-test-nonce')), app.runId, 'Disposable browser profile did not survive full process restart');
     await browser.switchToWindow(app.manager);
     await click(browser, '#stop'); await windows(browser, 1);
+  });
+  await test('enable changes replace and preempt the active priority under capacity one', async () => {
+    await click(browser, '#start'); await windows(browser, 2);
+    await until(async () => await visibleText(browser, '#players > article > strong') === 'alpha_fixture', 'Highest priority fixture not selected');
+    await click(browser, byLabel('Enable alpha_fixture'));
+    await until(async () => await visibleText(browser, '#players > article > strong') === 'bravo_fixture', 'Disabling active favorite did not select next priority');
+    await windows(browser, 2);
+    await click(browser, byLabel('Enable alpha_fixture'));
+    await until(async () => await visibleText(browser, '#players > article > strong') === 'alpha_fixture', 'Reenabled higher priority did not preempt');
+    await windows(browser, 2); await click(browser, '#stop'); await windows(browser, 1);
   });
   await test('native manager close exits the owned process', async () => {
     await app.nativeCommand({ action: 'close', label: app.manager });

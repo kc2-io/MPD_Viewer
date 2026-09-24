@@ -6,7 +6,7 @@ state, or the Rust controller with JavaScript mocks.
 
 ```powershell
 npm ci --prefix tests/e2e
-$env:MPD_E2E_BINARY = (Resolve-Path target/debug/MPD_Viewer.exe).Path
+$env:MPD_E2E_BINARY = (Resolve-Path target/debug/mpd-tabber.exe).Path
 $env:MPD_E2E_OUTPUT_DIR = "$env:RUNNER_TEMP/desktop-e2e-evidence"
 npm test --prefix tests/e2e
 ```
@@ -66,3 +66,10 @@ should account for that isolated store remaining after the harness root is remov
 uses a prebuilt app and existing embedded driver, never browser downloads. The
 imported client and actual Windows session were exercised with the override;
 `npm audit` reported zero findings when the lockfile was generated.
+
+The suite also launches separate driverless policy-probe processes. Those native
+fixture probes exercise actual caller permission/navigation policy without the
+WebDriver plugin being registered. The probe writes only bounded booleans/errors
+to `policy-demo.json` / `policy-web.json`; a nonzero native exit fails the suite.
+They use bundled/local test origins, not a live Twitch domain. Fixture seeding in
+that security probe is not GUI-action evidence.

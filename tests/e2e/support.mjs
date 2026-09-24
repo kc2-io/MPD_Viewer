@@ -37,6 +37,7 @@ export class Desktop {
     const port = await freePort();
     const logFile = path.join(this.output, `app-${this.launches.length + 1}.log`);
     let logBytes = 0;
+    await writeFile(logFile, '');
     const child = spawn(this.binary, args, { shell: false, windowsHide: false, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: environment({
       MPD_E2E_ROOT: this.root, MPD_E2E_RUN_ID: this.runId, MPD_E2E_SCENARIO: scenario,
       TAURI_WEBDRIVER_PORT: String(port), WDIO_EMBEDDED_SERVER: 'true', RUST_LOG: 'warn'
@@ -84,12 +85,33 @@ export class Desktop {
         await this.browser.switchToWindow(handle);
         const base64 = await this.browser.takeScreenshot();
         const buffer = Buffer.from(base64, 'base64');
-        if (buffer.length > 0 && buffer.length <= 8 * 1024 * 1024) captured++;
-        if (buffer.length <= 8 * 1024 * 1024) await writeFile(path.join(this.output, `${name}-${index}.png`), buffer);
+        if (buffer.length > 8 * 1024 * 1024 || buffer.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new Error('Screenshot must be a bounded PNG');
+        await writeFile(path.join(this.output, `${name}-${index}.png`), buffer);
+        captured++;
       } catch (error) { await appendFile(path.join(this.output, 'capture.log'), `${sanitize(error.message).slice(0, 1000)}\n`); }
     }
     try { await this.browser.switchToWindow(this.manager); } catch {}
     return captured;
+  }
+  async policyProbe(scenario) {
+    if (this.cancelled) throw new Error(this.cancelled);
+    if (this.child) throw new Error('Stop the owned GUI before a driverless policy probe');
+    const port = await freePort();
+    const child = spawn(this.binary, [], { shell: false, windowsHide: false, detached: process.platform !== 'win32', stdio: 'ignore', env: environment({ MPD_E2E_ROOT: this.root, MPD_E2E_RUN_ID: this.runId, MPD_E2E_SCENARIO: scenario, MPD_E2E_POLICY_PROBE: '1', TAURI_WEBDRIVER_PORT: String(port) }) });
+    this.child = child;
+    this.launches.push({ pid: child.pid, scenario, policyProbe: true, port });
+    let error; child.on('error', value => { error = value; });
+    await until(() => { if (error) throw error; return child.exitCode !== null; }, 'Driverless native policy probe did not exit', 60000);
+    const report = await readFile(path.join(this.root, 'policy-probe.json'), 'utf8');
+    if (Buffer.byteLength(report) > 64 * 1024) throw new Error('Native policy report exceeds artifact limit');
+    const parsed = JSON.parse(report);
+    await writeFile(path.join(this.output, `policy-${scenario}.json`), sanitize(JSON.stringify(parsed, null, 2)));
+    if (child.exitCode !== 0) throw new Error(`Driverless native policy probe exited ${child.exitCode}; see policy-${scenario}.json`);
+  }
+  async fixtureState(state) {
+    const temporary = path.join(this.root, 'fixture-state.tmp');
+    await writeFile(temporary, JSON.stringify(state));
+    await rename(temporary, path.join(this.root, 'fixture-state.json'));
   }
   async cleanupRoot(root) {
     const port = await freePort();
@@ -115,7 +137,7 @@ export async function visibleText(browser, selector) { return (await browser.$(s
 export async function click(browser, selector) { await (await browser.$(selector)).click(); }
 export async function input(browser, selector, value) { const element = await browser.$(selector); await element.setValue(String(value)); }
 export const byLabel = label => `[aria-label="${label}"]`;
-export async function order(browser) { return (await browser.$$('#favorites > li')).map(row => row.getAttribute('data-login')); }
+export async function order(browser) { return browser.execute(() => [...document.querySelectorAll('#favorites > li')].map(row => row.dataset.login)); }
 export async function windows(browser, count) { return until(async () => { const handles = await browser.getWindowHandles(); return handles.length === count && handles; }, `Expected ${count} actual native window handles`); }
 
 

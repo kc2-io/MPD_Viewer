@@ -52,6 +52,14 @@ try {
     await writeFile(path.join(app.root, '.mpd-e2e-root'), runId, { flag: 'wx' });
     await authSmoke(app, test);
     if (process.env.MPD_E2E_FORCE_FAILURE === '1') await test('intentional harness failure probe', () => { throw new Error('Requested failure to verify reports and cleanup'); });
+    await app.stop();
+    for (const scenario of ['demo', 'web']) {
+      app.root = path.join(root, `policy-${scenario}`); roots.push(app.root);
+      await mkdir(app.root);
+      await writeFile(path.join(app.root, '.mpd-e2e-root'), runId, { flag: 'wx' });
+      await test(`driverless ${scenario} native policy probe`, () => app.policyProbe(scenario));
+      await app.stop();
+    }
   })()]);
 } catch (error) {
   if (!results.some(result => result.failure)) results.push({ name: active, seconds: 0, failure: sanitize(error.stack).slice(0, 12000) });
@@ -70,7 +78,7 @@ try {
     runnerImage: process.env.ImageOS || null, runnerImageVersion: process.env.ImageVersion || null,
     elapsedSeconds: (Date.now() - started) / 1000, extended, launches: app.launches, tests: results.map(({ name, failure }) => ({ name, result: failure ? 'failed' : 'passed' })),
     evidenceBoundary: 'Real native Tauri windows and Rust backend with demo data. Embedded driver synthesizes DOM input; not OS input or Twitch acceptance.',
-    notCovered: ['Native OS select/dropdown input (coverage uses labeled synthetic DOM events)', 'Native OS pointer/HTML5 drag', 'OS titlebar click (CloseRequested covered via native close API)', 'OS settings app theme toggle (window theme API covered)', 'Live Twitch authentication/playback/rewards', 'Real credential vault/account recovery (fake-token lifecycle covered)', 'Non-instrumented production-origin native IPC probe']
+    notCovered: ['Native OS select/dropdown input (coverage uses labeled synthetic DOM events)', 'Native OS pointer/HTML5 drag', 'OS titlebar click (CloseRequested covered via native close API)', 'OS settings app theme toggle (window theme API covered)', 'Live Twitch authentication/playback/rewards', 'Real credential vault/account recovery (fake-token lifecycle covered)', 'Live Twitch remote-origin native IPC probe (driverless bundled/local origins covered)']
   };
   await writeFile(path.join(output, 'manifest.json'), JSON.stringify(manifest, null, 2));
   await writeFile(path.join(output, 'results.xml'), `<?xml version="1.0" encoding="UTF-8"?><testsuites><testsuite name="MPD desktop GUI" tests="${results.length}" failures="${results.filter(result => result.failure).length}">${results.map(result => `<testcase name="${xml(result.name)}" time="${result.seconds}">${result.failure ? `<failure>${xml(result.failure)}</failure>` : ''}</testcase>`).join('')}</testsuite></testsuites>`);
