@@ -49,21 +49,6 @@ pub fn fail_open(login: &str) -> bool {
         .is_some_and(|logins| logins.iter().any(|value| value.as_str() == Some(login)))
 }
 pub fn is_fixture(target: &url::Url) -> bool { target.origin() == url("/").origin() }
-pub fn scope_wrapper_assets(html: &str, target: &str) -> String {
-    let values: Vec<_> = url::form_urlencoded::parse(target.split_once('?').map_or("", |(_, query)| query).as_bytes())
-        .filter(|(key, _)| key == "e2e_session").map(|(_, value)| value.into_owned()).collect();
-    let Some(value) = values.first().filter(|value| values.len() == 1 && !value.is_empty()
-        && value.bytes().all(|byte| byte.is_ascii_digit())) else { return html.into(); };
-    let Ok(id) = value.parse::<u64>() else { return html.into(); };
-    if id == 0 || id.to_string() != *value { return html.into(); }
-    let mut scoped = html.to_owned();
-    for (attribute, asset) in [("href", "style.css"), ("href", "chat.css"),
-        ("src", "chat.js"), ("src", "quality.js"), ("src", "player.js")] {
-        scoped = scoped.replace(&format!("{attribute}=\"{asset}\""),
-            &format!("{attribute}=\"{asset}?e2e_session={id}\""));
-    }
-    scoped
-}
 pub fn seed_settings(store: &mut crate::storage::Store) -> Result<(), String> {
     if scenario() == "demo" || config().root.join(".settings-seeded").exists() { return Ok(()); }
     let settings = crate::model::Settings { demo: false, limit: 2,
@@ -165,21 +150,6 @@ fn bundled_manager_url(url: &url::Url) -> bool {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn wrapper_asset_scope_accepts_only_one_canonical_session_number() {
-        let html = include_str!("../../player-wrapper/index.html");
-        let scoped = super::scope_wrapper_assets(html, "/index.html?e2e_session=42");
-        for asset in ["style.css", "chat.css", "chat.js", "quality.js", "player.js"] {
-            assert!(scoped.contains(&format!("{asset}?e2e_session=42\"")));
-        }
-        assert!(scoped.contains("https://player.twitch.tv"));
-        assert_eq!(super::scope_wrapper_assets("<script src=\"other.js\"></script>", "/?e2e_session=42"), "<script src=\"other.js\"></script>");
-        let html = "<script src=\"player.js\" defer></script>";
-        assert_eq!(super::scope_wrapper_assets(html, "/index.html?e2e_session=42"), "<script src=\"player.js?e2e_session=42\" defer></script>");
-        for target in ["/index.html", "/index.html?e2e_session=0", "/index.html?e2e_session=01", "/index.html?e2e_session=1&e2e_session=2", "/index.html?e2e_session=%22evil", "/index.html?e2e_session=18446744073709551616"] {
-            assert_eq!(super::scope_wrapper_assets(html, target), html);
-        }
-    }
-    #[test]
     fn manager_rejects_loopback_services_and_credential_urls() {
         for valid in ["tauri://localhost/", "http://tauri.localhost/", "https://tauri.localhost/index.html"] {
             assert!(super::bundled_manager_url(&valid.parse().unwrap()));
@@ -196,20 +166,7 @@ struct NativeCommand { id: String, action: String, label: String, theme: Option<
 fn observe_native(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut previous = Vec::<String>::new();
-        #[cfg(target_os = "macos")]
-        let wake_pending = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         loop {
-            // A headless macOS runner can park the native loop while WebKit is
-            // still loading. Wake it through Tauri's ordinary event proxy, also
-            // in driverless probes. This changes no page/IPC/visibility policy.
-            // Keep at most one no-op queued if the main thread is stalled.
-            #[cfg(target_os = "macos")]
-            if !wake_pending.swap(true, std::sync::atomic::Ordering::AcqRel) {
-                let pending = wake_pending.clone();
-                if app.run_on_main_thread(move || pending.store(false, std::sync::atomic::Ordering::Release)).is_err() {
-                    break;
-                }
-            }
             let mut windows: Vec<String> = app.webview_windows().keys().cloned().collect();
             windows.sort();
             if windows != previous {

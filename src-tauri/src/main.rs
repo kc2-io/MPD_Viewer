@@ -1,4 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#[cfg(test)]
+mod http_pool_regression;
 mod controller;
 mod credential_store;
 mod viewer_mode;

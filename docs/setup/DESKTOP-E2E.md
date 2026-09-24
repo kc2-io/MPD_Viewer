@@ -47,16 +47,12 @@ wrapper and two full-page fixture windows, including positive own-session wrappe
 reports and negative manager/wrong-session calls. These are local-origin checks,
 not proof of behavior on a live Twitch origin.
 
-The test-only macOS observer posts a no-op through Tauri's native event proxy
-every 100 ms, with at most one pending task, to wake headless WebKit loading.
-Driverless probes use this same event-loop wake-up without registering the driver
-or changing page permissions, focus, visibility or background-throttling policy.
-
-The bundled fixture experiment gives each viewer's five local asset requests a numeric
-`e2e_session` query. The script bytes, origin and CSP are unchanged; only the
-test-feature HTML/URL varies. This separates simultaneous fixture resource loads
-while investigating WebKit's stalled deferred scripts. A pass with this variation
-does not establish that ordinary production same-URL loading is fixed.
+Concurrent wrapper loading exposed a tiny_http worker-pool starvation defect.
+The project vendors version 0.12.0 with a minimal queue-accounting correction used
+by both normal and test builds. Its provenance is in `vendor/tiny_http/MPD-PATCH.md`;
+a bounded regression exercises the exact vendored worker module. Unsuccessful
+per-session asset-URL and macOS no-op wake experiments were removed, so the GUI
+suite again uses the ordinary bundled asset URLs and event-loop behavior.
 
 ## Isolation and production boundary
 
@@ -87,7 +83,7 @@ of all network listeners (the ordinary local player server is legitimate).
 
 ## Validation and rollout
 
-- Local Windows: normal 84 Rust tests passed; test-build manager-origin regression
+- Local Windows: normal 85 Rust tests passed; test-build manager-origin regression
   passed; GUI smoke, fake auth and driverless native IPC probes passed.
 - Local extended Windows harness: 26 cases passed, including a real one-minute
   timer with paused accounting, injected native-open failure/Retry, and API-outage
@@ -107,3 +103,12 @@ of all network listeners (the ordinary local player server is legitimate).
 Do not add required branch checks until the plan's repeatability and independent
 review gates are met. No grid feature, stable release or website deployment is
 part of this work.
+
+## Deferred runtime coverage
+
+The initial rollout does not complete every scenario in the original matrix.
+Follow-up native security work must cover stale-report handling after assignment
+teardown and production-origin navigation, popup and download policies. Current
+policy unit tests remain required; bundled/local driverless IPC checks do not
+substitute for those runtime cases. Native OS input fidelity and live Twitch
+acceptance remain separate from this fixture harness.
