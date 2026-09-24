@@ -5,9 +5,64 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use crate::{model::*, player::{self, Host}, storage::Store};
 use mpd_core::Presence;
-use mpd_twitch::{ApiError, Session, Stream, Twitch};
+use mpd_twitch::{ApiError, Session, SessionStore, Stream, Twitch};
+use crate::credential_store::{CredentialStore, ScopedStore};
 
 type Credentials = Arc<Mutex<Session>>;
+
+// A small async seam keeps failed restoration's *same* in-memory refresh token
+// alive. No Tauri handle, UI state, logging, or credential serialization crosses it.
+pub(crate) struct RecoveryError { message: String, reconnect: bool, delay: Duration }
+impl From<ApiError> for RecoveryError {
+    fn from(error: ApiError) -> Self { Self { message: error.message, reconnect: error.reconnect, delay: error.retry_after } }
+}
+impl RecoveryError {
+    fn storage(message: String) -> Self { Self { message, reconnect: false, delay: Duration::from_secs(30) } }
+}
+trait RecoveryDriver {
+    type Credentials;
+    fn load(&self) -> Result<Option<Self::Credentials>, RecoveryError>;
+    fn recover(&self, credentials: &mut Self::Credentials, validate: bool) -> impl std::future::Future<Output=Result<String,RecoveryError>> + Send;
+}
+pub(crate) struct RecoveryOutcome<T> { credentials: Option<T>, result: Result<Option<String>, RecoveryError> }
+async fn recover_authorization<D: RecoveryDriver>(driver: &D, credentials: Option<D::Credentials>, validate: bool) -> RecoveryOutcome<D::Credentials> {
+    let mut credentials = match credentials {
+        Some(value) => Some(value),
+        None => match driver.load() {
+            Ok(value) => value,
+            Err(error) => return RecoveryOutcome { credentials: None, result: Err(error) },
+        },
+    };
+    let result = match credentials.as_mut() {
+        Some(value) => driver.recover(value, validate).await.map(Some),
+        None => Ok(None),
+    };
+    RecoveryOutcome { credentials, result }
+}
+struct NativeRecovery { twitch: Twitch, scope: ScopedStore }
+impl RecoveryDriver for NativeRecovery {
+    type Credentials = Credentials;
+    fn load(&self) -> Result<Option<Credentials>, RecoveryError> {
+        self.scope.load().map_err(RecoveryError::storage)?.map(|stored| {
+            Session::from_stored(DEFAULT_CLIENT_ID, stored).map(|session| Arc::new(Mutex::new(session))).map_err(RecoveryError::from)
+        }).transpose()
+    }
+    async fn recover(&self, credentials: &mut Credentials, validate: bool) -> Result<String, RecoveryError> {
+        let mut session = credentials.lock().await;
+        if validate { self.twitch.restore_session(&mut session, &self.scope).await?; }
+        else { self.scope.save(&session.stored()).map_err(RecoveryError::storage)?; }
+        Ok(session.login.clone())
+    }
+}
+fn accept_recovery(current_epoch: u64, result_epoch: u64, pending: bool) -> bool {
+    current_epoch == result_epoch && pending
+}
+struct PendingRecovery { credentials: Option<Credentials>, validate: bool, next_attempt: Instant, backoff: u64, inflight: bool }
+impl PendingRecovery {
+    fn new(credentials: Option<Credentials>, validate: bool) -> Self {
+        Self { credentials, validate, next_attempt: Instant::now(), backoff: 30, inflight: false }
+    }
+}
 
 fn close_tracked_auth_window(tracked: &mut Option<u64>, close: impl FnOnce(u64) -> Result<(), String>) -> Result<(), String> {
     if let Some(epoch) = *tracked {
@@ -27,6 +82,7 @@ pub enum Message {
     AuthCode { epoch: u64, code: String, url: String },
     AuthReturnLoaded { epoch: u64 },
     Authorized { epoch: u64, result: Result<Session, ApiError> },
+    Recovered { epoch: u64, outcome: RecoveryOutcome<Credentials> },
     Polled { id: u64, generation: u64, epoch: u64, monitored: bool,
         result: Result<HashMap<String, Stream>, ApiError> },
 }
@@ -55,6 +111,7 @@ pub struct Controller {
     demo_live: HashMap<String, String>, players: HashMap<u64, PlayerSession>,
     failed: HashMap<String, String>, next_id: u64, generation: u64, auth_epoch: u64,
     credentials: Option<Credentials>, connected_as: Option<String>,
+    credential_store: CredentialStore, auth_recovery: Option<PendingRecovery>,
     auth_task: Option<tokio::task::JoinHandle<()>>, auth_pending: bool,
     user_code: Option<String>, auth_url: Option<String>, auth_window_epoch: Option<u64>, auth_return_epoch: Option<u64>,
     polling: Option<u64>, poll_id: u64, next_poll: Instant, not_before: Instant,
@@ -69,6 +126,7 @@ impl Controller {
             presence: HashMap::new(), skipped: HashMap::new(), demo_live: HashMap::new(),
             players: HashMap::new(), failed: HashMap::new(), next_id: 0, generation: 0,
             auth_epoch: 0, credentials: None, connected_as: None, auth_task: None,
+            credential_store: CredentialStore::new(), auth_recovery: None,
             auth_pending: false, user_code: None, auth_url: None, auth_window_epoch: None, auth_return_epoch: None, polling: None,
             poll_id: 0, next_poll: Instant::now(), not_before: Instant::now(),
             last_check: None, backoff: 30, error: None, rotation: Default::default(), timer_tick: Instant::now(), close_retry: HashMap::new(), events: VecDeque::new(), started: Instant::now() }
@@ -98,13 +156,17 @@ impl Controller {
             self.skipped.insert(login.into(), id); self.log(format!("Skipped {login} for this broadcast."));
         }
     }
-    fn disconnected(&mut self) -> Result<(), String> {
+    fn disconnected(&mut self, forget: bool) -> Result<(), String> {
         let close = close_tracked_auth_window(&mut self.auth_window_epoch, |epoch| crate::viewer_auth::close(&self.app, epoch));
         self.auth_epoch += 1;
+        let vault = if forget { self.credential_store.forget(self.auth_epoch) }
+            else { self.credential_store.begin_epoch(self.auth_epoch).map(|_| ()) };
+        self.auth_recovery = None;
+        self.polling = None;
         if let Some(task) = self.auth_task.take() { task.abort(); }
         self.auth_pending = false; self.credentials = None; self.connected_as = None;
         self.user_code = None; self.auth_url = None; self.auth_return_epoch = None; self.mark_stale();
-        close
+        vault.and(close)
     }
     fn close_completed_connection(&mut self) {
         if auth_completion_ready(self.auth_epoch, self.auth_window_epoch, self.auth_return_epoch,
@@ -171,9 +233,10 @@ impl Controller {
                 if self.mode != Mode::Stopped || !self.players.is_empty() {
                     return Err("Stop and wait for all players to close before changing data sources.".into());
                 }
-                if demo { self.disconnected()?; }
+                if demo { self.disconnected(false)?; }
                 let mut s = self.settings.clone(); s.demo = demo; self.save(s)?;
                 self.presence.clear(); self.skipped.clear(); self.failed.clear(); self.last_check = None;
+                if !demo && cfg!(windows) { self.begin_recovery(None, true); }
                 self.changed(); self.log(if demo { "Demo data source selected." } else { "Twitch data source selected." });
             }
             Action::DemoLive { login, live } => {
@@ -196,7 +259,7 @@ impl Controller {
                 self.update_demo(); self.log("Demo loaded: Bravo, Charlie, and Delta are simulated live; Alpha is offline.");
             }
             Action::Start => {
-                if !self.settings.demo && self.credentials.is_none() { return Err("Connect Twitch first, or use Demo mode.".into()); }
+                if !self.settings.demo && (self.credentials.is_none() || self.auth_pending) { return Err("Connect Twitch first, or use Demo mode.".into()); }
                 if self.mode==Mode::Stopped {
                     if !self.players.is_empty() { return Err("Wait for all previous players to close before starting.".into()); }
                     self.rotation=Default::default();
@@ -210,7 +273,7 @@ impl Controller {
             Action::Pause => { if self.mode == Mode::Running { self.mode = Mode::Paused; self.log("Automatic selection paused; existing players retained."); } }
             Action::Stop => {
                 self.mode = Mode::Stopped; self.rotation=Default::default(); self.generation += 1; self.mark_stale();
-                self.next_poll = Instant::now() + Duration::from_secs(3600);
+                self.next_poll = Instant::now() + Duration::from_secs(60);
                 self.log("Stopped; closing all managed players.");
             }
             Action::Refresh => {
@@ -219,14 +282,14 @@ impl Controller {
             Action::Connect {} => {
                 if self.settings.demo { return Err("Switch to Twitch mode to connect.".into()); }
                 crate::viewer_auth::ensure_supported()?;
-                if self.auth_pending {
+                if self.auth_pending && self.auth_recovery.is_none() {
                     if let Err(error) = self.open_connection() {
-                        let _ = self.disconnected();
+                        let _ = self.disconnected(false);
                         return Err(error);
                     }
                     return Ok(());
                 }
-                self.disconnected()?; self.auth_pending = true; self.error = None;
+                self.disconnected(false)?; self.auth_pending = true; self.error = None;
                 let epoch = self.auth_epoch; let tx = self.tx.clone(); let twitch = self.twitch.clone();
                 self.auth_task = Some(tokio::spawn(async move {
                     let result = async {
@@ -237,7 +300,7 @@ impl Controller {
                     let _ = tx.send(Message::Authorized { epoch, result }).await;
                 }));
             }
-            Action::Disconnect => { self.disconnected()?; self.log("Monitoring disconnected. API tokens were cleared; Twitch website sign-in is unchanged."); }
+            Action::Disconnect => { self.disconnected(true)?; self.log("Monitoring disconnected. API tokens were cleared; Twitch website sign-in is unchanged."); }
             Action::Focus { login } => {
                 if let Some(p) = self.players.values().find(|p| p.login == login && !p.closing) {
                     if let Some(w) = self.app.get_webview_window(&p.label) { let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus(); }
@@ -359,6 +422,50 @@ impl Controller {
             }
         }
     }
+    fn begin_recovery(&mut self, credentials: Option<Credentials>, validate: bool) {
+        self.auth_pending = true;
+        self.auth_recovery = Some(PendingRecovery::new(credentials, validate));
+    }
+    fn maybe_recover(&mut self) {
+        let Some(pending) = self.auth_recovery.as_mut() else { return; };
+        if pending.inflight || Instant::now() < pending.next_attempt { return; }
+        let scope = match self.credential_store.begin_epoch(self.auth_epoch) {
+            Ok(scope) => scope,
+            Err(error) => { self.error = Some(error); pending.next_attempt = Instant::now()+Duration::from_secs(30); return; }
+        };
+        pending.inflight = true;
+        let credentials = pending.credentials.take(); let validate = pending.validate;
+        let driver = NativeRecovery { twitch: self.twitch.clone(), scope };
+        let epoch = self.auth_epoch; let tx = self.tx.clone();
+        self.auth_task = Some(tokio::spawn(async move {
+            let outcome = recover_authorization(&driver, credentials, validate).await;
+            let _ = tx.send(Message::Recovered { epoch, outcome }).await;
+        }));
+    }
+    fn recovered(&mut self, epoch: u64, outcome: RecoveryOutcome<Credentials>) {
+        if !accept_recovery(self.auth_epoch, epoch, self.auth_recovery.is_some()) { return; }
+        match outcome.result {
+            Ok(login) => {
+                self.auth_recovery = None; self.auth_pending = false; self.auth_task = None;
+                self.connected_as = login;
+                self.credentials = outcome.credentials;
+                self.error = None; self.not_before = Instant::now(); self.backoff = 30; self.request_poll();
+                if self.connected_as.is_some() { self.log("Twitch authorization connected and remembered securely on this Windows account."); }
+                self.close_completed_connection();
+            }
+            Err(error) if error.reconnect => {
+                self.error = Some(error.message);
+                if let Err(vault_error) = self.disconnected(true) { self.error = Some(vault_error); }
+            }
+            Err(error) => {
+                let pending = self.auth_recovery.as_mut().unwrap();
+                pending.credentials = outcome.credentials; pending.inflight = false;
+                pending.next_attempt = Instant::now()+error.delay.max(Duration::from_secs(pending.backoff));
+                pending.backoff = (pending.backoff*2).min(300);
+                self.error = Some(format!("{} Retrying automatically; Connect Twitch starts a new authorization.", error.message));
+            }
+        }
+    }
     fn maybe_poll(&mut self) {
         if self.polling.is_some() || Instant::now() < self.next_poll || Instant::now() < self.not_before { return; }
         let Some(credentials) = self.credentials.clone() else { return; };
@@ -366,11 +473,16 @@ impl Controller {
         let logins: Vec<_> = if monitored { self.settings.favorites.iter().filter(|f| f.enabled).map(|f| f.login.clone()).collect() } else { vec![] };
         self.poll_id += 1; let id = self.poll_id; self.polling = Some(id);
         let generation = self.generation; let epoch = self.auth_epoch;
+        let scope = match self.credential_store.begin_epoch(epoch) {
+            Ok(scope) => scope,
+            Err(error) => { self.polling = None; self.error = Some(error); return; }
+        };
         let tx = self.tx.clone(); let twitch = self.twitch.clone();
         tokio::spawn(async move {
             let result = {
                 let mut session = credentials.lock().await;
-                twitch.poll(&mut session, &logins).await
+                if cfg!(windows) { twitch.poll_with_store(&mut session, &logins, &scope).await }
+                else { twitch.poll(&mut session, &logins).await }
             };
             let _ = tx.send(Message::Polled { id, generation, epoch, monitored, result }).await;
         });
@@ -449,6 +561,7 @@ impl Controller {
     }
     pub async fn run(mut self, mut rx: mpsc::Receiver<Message>) {
         self.log("Ready. Playback starts only when you press Start.");
+        if cfg!(windows) && !self.settings.demo { self.begin_recovery(None, true); }
         self.publish.send_replace(self.snapshot());
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -469,7 +582,7 @@ impl Controller {
                             match crate::viewer_auth::Activation::parse(&url, &code)
                                 .and_then(|activation| crate::viewer_auth::open(&self.app, epoch, activation)) {
                                 Ok(()) => { self.user_code = Some(code); self.auth_url = Some(url); }
-                                Err(error) => { let _ = self.disconnected(); self.error = Some(error); }
+                                Err(error) => { let _ = self.disconnected(false); self.error = Some(error); }
                             }
                         }
                     }
@@ -483,13 +596,21 @@ impl Controller {
                         if epoch == self.auth_epoch && self.auth_pending {
                             self.auth_pending = false; self.user_code = None; self.auth_url = None;
                             match result {
-                                Ok(session) => { self.connected_as = Some(session.login.clone()); self.credentials = Some(Arc::new(Mutex::new(session)));
-                                    self.error = None; self.request_poll(); self.log("Monitoring connected. Verify your account in chat or the player.");
-                                    self.close_completed_connection(); }
-                                Err(error) => { let _ = self.disconnected(); self.error = Some(error.message); },
+                                Ok(session) => {
+                                    let credentials = Arc::new(Mutex::new(session));
+                                    if cfg!(windows) { self.begin_recovery(Some(credentials), false); }
+                                    else {
+                                        self.connected_as = Some(credentials.lock().await.login.clone()); self.credentials = Some(credentials);
+                                        self.error = Some("This platform keeps Twitch authorization only for this run; secure persistence is currently available on Windows.".into());
+                                        self.request_poll(); self.log("Monitoring connected for this run. Verify your account in the Twitch window.");
+                                        self.close_completed_connection();
+                                    }
+                                }
+                                Err(error) => { let _ = self.disconnected(false); self.error = Some(error.message); },
                             }
                         }
                     }
+                    Some(Message::Recovered { epoch, outcome }) => self.recovered(epoch, outcome),
                     Some(Message::Polled { id, generation, epoch, monitored, result }) => {
                         if self.polling == Some(id) { self.polling = None; }
                         if epoch == self.auth_epoch {
@@ -497,7 +618,7 @@ impl Controller {
                                 Ok(online) => {
                                     self.backoff = 30;
                                     if generation == self.generation {
-                                        self.next_poll = Instant::now() + Duration::from_secs(if monitored { 30 } else { 3600 });
+                                        self.next_poll = Instant::now() + Duration::from_secs(if monitored { 30 } else { 60 });
                                         if monitored && self.mode != Mode::Stopped && !self.settings.demo {
                                             for f in self.settings.favorites.iter().filter(|f| f.enabled) {
                                                 let stream = online.get(&f.login);
@@ -513,7 +634,9 @@ impl Controller {
                                     let delay = error.retry_after.max(Duration::from_secs(self.backoff));
                                     self.not_before = Instant::now() + delay; self.next_poll = self.not_before;
                                     self.backoff = (self.backoff * 2).min(300);
-                                    if error.reconnect { let _ = self.disconnected(); }
+                                    if error.reconnect {
+                                        if let Err(vault_error) = self.disconnected(true) { self.error = Some(vault_error); }
+                                    }
                                 }
                             }
                         }
@@ -529,7 +652,7 @@ impl Controller {
                     self.sync_quality();
                 }
             }
-            self.reconcile(); self.maybe_poll(); self.publish.send_replace(self.snapshot());
+            self.reconcile(); self.maybe_recover(); self.maybe_poll(); self.publish.send_replace(self.snapshot());
         }
     }
 }
@@ -585,5 +708,80 @@ mod quality_sync_tests {
         // Reloading the same window creates another READY with its old bootstrap.
         p.accept_report(report(Playback::Ready));
         assert!(p.quality_dirty);
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use std::sync::{Mutex as StdMutex, atomic::{AtomicUsize, Ordering}};
+    struct FakeRecovery {
+        stored: bool, loads: AtomicUsize, calls: AtomicUsize,
+        fail: StdMutex<Option<bool>>, phases: StdMutex<Vec<bool>>,
+    }
+    impl FakeRecovery {
+        fn new(stored: bool, failure: Option<bool>) -> Self {
+            Self { stored, loads: AtomicUsize::new(0), calls: AtomicUsize::new(0), fail: StdMutex::new(failure), phases: StdMutex::new(vec![]) }
+        }
+    }
+    impl RecoveryDriver for FakeRecovery {
+        type Credentials = Arc<AtomicUsize>;
+        fn load(&self) -> Result<Option<Self::Credentials>, RecoveryError> {
+            self.loads.fetch_add(1,Ordering::SeqCst);
+            Ok(self.stored.then(|| Arc::new(AtomicUsize::new(0))))
+        }
+        async fn recover(&self, credentials: &mut Self::Credentials, validate: bool) -> Result<String,RecoveryError> {
+            self.calls.fetch_add(1,Ordering::SeqCst);
+            self.phases.lock().unwrap().push(validate);
+            // Stand in for rotation: the caller must retain this exact allocation.
+            credentials.fetch_add(1,Ordering::SeqCst);
+            tokio::task::yield_now().await;
+            if let Some(reconnect)=self.fail.lock().unwrap().take() {
+                Err(RecoveryError { message:"simulated authorization failure".into(),reconnect,delay:Duration::from_secs(30) })
+            } else { Ok("tester".into()) }
+        }
+    }
+    #[tokio::test]
+    async fn startup_without_saved_entry_does_not_validate_or_request_login() {
+        let driver=FakeRecovery::new(false,None);
+        let outcome=recover_authorization(&driver,None,true).await;
+        assert!(matches!(outcome.result,Ok(None)));
+        assert!(outcome.credentials.is_none());
+        assert_eq!(driver.loads.load(Ordering::SeqCst),1);
+        assert_eq!(driver.calls.load(Ordering::SeqCst),0);
+    }
+    #[tokio::test]
+    async fn transient_restore_retains_rotated_session_and_retries_without_reloading() {
+        let driver=FakeRecovery::new(true,Some(false));
+        let first=recover_authorization(&driver,None,true).await;
+        assert!(matches!(first.result,Err(RecoveryError { reconnect:false,.. })));
+        let retained=first.credentials.as_ref().unwrap().clone();
+        assert_eq!(retained.load(Ordering::SeqCst),1);
+        let second=recover_authorization(&driver,first.credentials,true).await;
+        assert!(matches!(second.result,Ok(Some(_))));
+        assert!(Arc::ptr_eq(&retained,second.credentials.as_ref().unwrap()));
+        assert_eq!(driver.loads.load(Ordering::SeqCst),1);
+        assert_eq!(retained.load(Ordering::SeqCst),2);
+    }
+    #[tokio::test]
+    async fn initial_save_failure_retries_new_credentials_instead_of_loading_old_account() {
+        let driver=FakeRecovery::new(true,Some(false));
+        let current=Arc::new(AtomicUsize::new(10));
+        let first=recover_authorization(&driver,Some(current.clone()),false).await;
+        assert!(first.result.is_err());
+        let second=recover_authorization(&driver,first.credentials,false).await;
+        assert!(second.result.is_ok());
+        assert!(Arc::ptr_eq(&current,second.credentials.as_ref().unwrap()));
+        assert_eq!(driver.loads.load(Ordering::SeqCst),0);
+        assert_eq!(*driver.phases.lock().unwrap(),vec![false,false]);
+    }
+    #[tokio::test]
+    async fn revocation_result_is_terminal_and_late_epoch_cannot_be_accepted() {
+        let driver=FakeRecovery::new(true,Some(true));
+        let outcome=recover_authorization(&driver,None,true).await;
+        assert!(matches!(outcome.result,Err(RecoveryError { reconnect:true,.. })));
+        assert!(!accept_recovery(2,1,true));
+        assert!(!accept_recovery(2,2,false));
+        assert!(accept_recovery(2,2,true));
     }
 }
