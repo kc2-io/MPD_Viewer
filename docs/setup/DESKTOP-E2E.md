@@ -89,8 +89,9 @@ of all network listeners (the ordinary local player server is legitimate).
 
 - Local Windows: normal 84 Rust tests passed; test-build manager-origin regression
   passed; GUI smoke, fake auth and driverless native IPC probes passed.
-- Local extended Windows harness: 25 cases passed, including a real one-minute
-  timer and API-outage recovery. An intentional assertion failure separately
+- Local extended Windows harness: 26 cases passed, including a real one-minute
+  timer with paused accounting, injected native-open failure/Retry, and API-outage
+  recovery. An intentional assertion failure separately
   produced nonzero status, screenshots, JUnit and cleanup.
 - Hosted experiments found stale row references and a fresh-document driver race.
   Ranking observations now use one read-only DOM snapshot. Fresh windows wait for

@@ -155,6 +155,8 @@ impl Host {
         }
     }
     pub fn open(&self, app: &AppHandle, login: &str, id: u64, settings: &Settings) -> Result<String, String> {
+        #[cfg(feature = "e2e-tests")]
+        if crate::e2e::fail_open(login) { return Err("Simulated native viewer-open failure".into()); }
         let url = self.player_url(login, id, settings);
         #[cfg(not(feature = "e2e-tests"))]
         let chat_parent = url.host_str().unwrap_or_default().to_owned();

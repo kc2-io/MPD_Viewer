@@ -42,6 +42,12 @@ pub fn port() -> u16 { config().port }
 pub fn twitch() -> Result<mpd_twitch::Twitch, mpd_twitch::ApiError> { mpd_twitch::Twitch::local_fixture(config().fixture_port) }
 pub fn scenario() -> &'static str { &config().scenario }
 pub fn url(path: &str) -> url::Url { url::Url::parse(&format!("http://localhost:{}{path}", config().fixture_port)).expect("local fixture URL") }
+pub fn fail_open(login: &str) -> bool {
+    std::fs::read(config().root.join("fixture-state.json")).ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|state| state.get("fail_open").and_then(|value| value.as_array()).cloned())
+        .is_some_and(|logins| logins.iter().any(|value| value.as_str() == Some(login)))
+}
 pub fn is_fixture(target: &url::Url) -> bool { target.origin() == url("/").origin() }
 pub fn scope_wrapper_assets(html: &str, target: &str) -> String {
     let values: Vec<_> = url::form_urlencoded::parse(target.split_once('?').map_or("", |(_, query)| query).as_bytes())
