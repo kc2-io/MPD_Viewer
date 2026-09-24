@@ -36,6 +36,7 @@ pub fn prepare(context: &mut tauri::Context<tauri::Wry>) -> Result<(), Box<dyn s
 }
 fn config() -> &'static Configuration { CONFIG.get().expect("E2E isolation must precede any native startup") }
 pub fn preferences() -> PathBuf { config().root.join("preferences.sqlite3") }
+pub fn root() -> &'static std::path::Path { &config().root }
 pub fn vault_target() -> String { format!("MPD_Viewer-E2E/{}/TwitchOAuth", config().run_id) }
 pub fn port() -> u16 { config().port }
 pub fn twitch() -> Result<mpd_twitch::Twitch, mpd_twitch::ApiError> { mpd_twitch::Twitch::local_fixture(config().fixture_port) }

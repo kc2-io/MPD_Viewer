@@ -154,6 +154,10 @@ impl Host {
             .focused(false);
         #[cfg(feature = "e2e-tests")]
         let builder = crate::e2e::isolate(builder);
+        #[cfg(feature = "e2e-tests")]
+        let builder = if crate::e2e_probe::enabled() {
+            builder.initialization_script(crate::e2e_probe::script(&label, id))
+        } else { builder };
         #[cfg(not(feature = "e2e-tests"))]
         let builder = if self.mode == ViewerMode::Embedded && !settings.demo && self.production.is_some() {
             let mut adapter = format!("({})({}, {});", include_str!("../hosted-player-adapter.js"), serde_json::json!({

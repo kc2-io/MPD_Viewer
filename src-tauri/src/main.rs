@@ -8,6 +8,8 @@ mod storage;
 mod viewer_auth;
 #[cfg(feature = "e2e-tests")]
 mod e2e;
+#[cfg(feature = "e2e-tests")]
+mod e2e_probe;
 
 use controller::{Controller, Handle, Message};
 use model::{Action, Report, View};
@@ -54,7 +56,8 @@ fn main() {
     }
     let builder = tauri::Builder::default();
     #[cfg(feature = "e2e-tests")]
-    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init_with_port(e2e::port()));
+    let builder = if e2e_probe::enabled() { builder }
+        else { builder.plugin(tauri_plugin_wdio_webdriver::init_with_port(e2e::port())) };
     builder
         .invoke_handler(tauri::generate_handler![get_state, dispatch, player_report])
         .setup(|app| {
@@ -79,6 +82,8 @@ fn main() {
             tauri::async_runtime::spawn(controller.run(rx));
             #[cfg(feature = "e2e-tests")]
             e2e::create_manager(app.handle())?;
+            #[cfg(feature = "e2e-tests")]
+            e2e_probe::install(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
