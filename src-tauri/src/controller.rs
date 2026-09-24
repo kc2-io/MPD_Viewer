@@ -563,7 +563,12 @@ impl Controller {
     }
     pub async fn run(mut self, mut rx: mpsc::Receiver<Message>) {
         self.log("Ready. Playback starts only when you press Start.");
-        if cfg!(windows) && !self.settings.demo { self.begin_recovery(None, true); }
+        #[cfg(feature = "e2e-tests")]
+        if crate::e2e::scenario() == "web" {
+            self.credentials = Some(Arc::new(Mutex::new(crate::e2e::session())));
+            self.connected_as = Some("fixture_user".into());
+        }
+        if cfg!(windows) && !self.settings.demo && self.credentials.is_none() { self.begin_recovery(None, true); }
         self.publish.send_replace(self.snapshot());
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
