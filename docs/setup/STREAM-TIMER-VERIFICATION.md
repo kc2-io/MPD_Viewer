@@ -71,3 +71,10 @@ new turn, so a first-miss channel returning on the next poll cannot preempt its
 replacement. If all alternatives become stale, cancellation leaves no permanent
 bypass deferral. Four deterministic regressions cover these transitions and the
 actual-open/pending-target identity. Native lifecycle evidence remains pending.
+
+## Combined Windows native observation
+
+The `cc60b37` unsigned build passed a one-minute real-channel rotation at capacity
+one and a paused timer remaining at 1:00 across repeated observations. Both test
+timers were restored to Always and capacity to three. Native retry/failure/sleep
+scenarios above remain unobserved; their deterministic tests are separate evidence.

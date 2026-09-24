@@ -19,8 +19,8 @@ pages choose the avatar menu, then **Dark Theme**. Twitch owns and remembers tha
 website preference in the existing browser profile. This is the user-approved web
 mode behavior; MPD does not promise automatic OS matching inside Twitch pages.
 The native Windows spike was observed changing its full page and chat from light
-to dark using this official switch on 2026-09-24. New-build restart verification
-is tracked separately in the integration acceptance record.
+to dark using this official switch on 2026-09-24. The combined Windows build also retained that appearance after restart; see the
+integration acceptance record for the exact native checks.
 
 Use the Twitch player's volume slider and Settings > Quality in each web viewer.
 Twitch documents programmatic volume/quality methods for its embedded SDK, not
