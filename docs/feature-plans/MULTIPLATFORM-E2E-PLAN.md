@@ -1,7 +1,7 @@
 # Multiplatform desktop E2E test plan
 
-Date: 2026-09-24. Status: implementation and hosted GUI validation in progress in
-PR #22. See [implementation/evidence record](../setup/DESKTOP-E2E.md).
+Date: 2026-09-24. Implementation: PR #22, which records the exact tested revision
+and current hosted acceptance status. See [implementation/evidence record](../setup/DESKTOP-E2E.md).
 Planning baseline: main `7556f866eae58c0b993bb1fe64cab4c9fab32778`
 (v0.1.0-alpha.4). Grid development remains paused.
 
