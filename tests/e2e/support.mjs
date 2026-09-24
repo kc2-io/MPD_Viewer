@@ -55,7 +55,7 @@ async function terminateOwned(child) {
   }
 }
 export class Desktop {
-  constructor(options) { Object.assign(this, options); this.launches = []; }
+  constructor(options) { Object.assign(this, options); this.launches = []; this.readiness = []; }
   async start(scenario = 'demo', args = []) {
     if (this.cancelled) throw new Error(this.cancelled);
     if (this.child) throw new Error('Previous owned app must be stopped before launch');
@@ -89,6 +89,43 @@ export class Desktop {
     await this.browser.setWindowRect(0, 0, 1400, 1000);
     this.launches.at(-1).renderer = await this.browser.execute(() => ({ userAgent: navigator.userAgent, width: innerWidth, height: innerHeight, scale: devicePixelRatio }));
     return this.browser;
+  }
+  async viewerReady({ title, channels, demo = false }) {
+    await documentTitle(this.browser, title);
+    const observation = { label: await this.browser.getWindowHandle(), expectedTitle: title, expectedChannels: channels, passed: false, last: null };
+    if (this.readiness.length < 16) this.readiness.push(observation);
+    try {
+      return await until(async () => {
+        const raw = await this.browser.execute(demo => {
+          const text = selector => document.querySelector(selector)?.textContent?.trim().slice(0, 160) ?? null;
+          return { readyState: document.readyState, title: document.title.slice(0, 160),
+            channel: text(demo ? '#demo-channel' : '#channel'), hidden: document.querySelector('#demo')?.hidden ?? null,
+            bridge: text('#bridge'), marker: text('h1'), visibility: document.visibilityState, focused: document.hasFocus(),
+            qualityType: typeof window.createQualityController, chatType: typeof window.mpdInstallChat,
+            nativeInvokeType: typeof window.__TAURI__?.core?.invoke, audioSetterType: typeof window.mpdSetAudio,
+            resources: performance.getEntriesByType('resource').flatMap(entry => {
+              let name; try { name = new URL(entry.name).pathname.split('/').pop(); } catch { return []; }
+              if (!['chat.js', 'quality.js', 'player.js', 'index.html', 'style.css', 'chat.css', 'fixture.js'].includes(name)) return [];
+              return [{ name, duration: Math.round(entry.duration), transferSize: entry.transferSize, responseStatus: entry.responseStatus ?? null }];
+            }).slice(-12) };
+        }, demo);
+        const record = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+        const short = value => typeof value === 'string' ? sanitize(value).slice(0, 160) : null;
+        observation.last = { resultType: raw === null ? 'null' : Array.isArray(raw) ? 'array' : typeof raw,
+          readyState: short(record.readyState), title: short(record.title), channel: short(record.channel),
+          hidden: typeof record.hidden === 'boolean' ? record.hidden : null, bridge: short(record.bridge), marker: short(record.marker),
+          visibility: short(record.visibility), focused: typeof record.focused === 'boolean' ? record.focused : null,
+          qualityType: short(record.qualityType), chatType: short(record.chatType), nativeInvokeType: short(record.nativeInvokeType), audioSetterType: short(record.audioSetterType),
+          resources: Array.isArray(record.resources) ? record.resources.slice(-12).map(entry => ({ name: short(entry.name), duration: Number.isFinite(entry.duration) ? entry.duration : null,
+            transferSize: Number.isFinite(entry.transferSize) ? entry.transferSize : null, responseStatus: Number.isFinite(entry.responseStatus) ? entry.responseStatus : null })) : [] };
+        const ready = record.readyState === 'complete' && channels.includes(record.channel) &&
+          (demo ? record.hidden === false : record.marker === 'MPD E2E local viewer');
+        observation.passed = ready;
+        return ready && record.channel;
+      }, 'Expected initialized native viewer document');
+    } catch (error) {
+      throw new Error(`${error.message}; last observed readiness: ${JSON.stringify(observation.last)}`);
+    }
   }
   async nativeCommand(command) {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;

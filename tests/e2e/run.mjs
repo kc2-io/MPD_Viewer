@@ -95,7 +95,7 @@ try {
     schema: 1, cleanup: { complete: cleanupComplete, rootRemoved, unresolvedOwnedProcess: Boolean(app.child || app.cleanupChild) }, harnessCommit: commit, harnessDirty, binarySha256, binaryUnchanged, buildCommit: /^[0-9a-f]{40}$/.test(process.env.MPD_E2E_BUILD_COMMIT || '') ? process.env.MPD_E2E_BUILD_COMMIT : null, platform: process.platform, architecture: process.arch, osRelease: os.release(), node: process.version,
     webdriverio: '9.32.0', driver: 'tauri-plugin-wdio-webdriver 1.4.0 (embedded W3C)',
     runnerImage: process.env.ImageOS || null, runnerImageVersion: process.env.ImageVersion || null,
-    elapsedSeconds: (Date.now() - started) / 1000, extended, launches: app.launches, tests: results.map(({ name, failure }) => ({ name, result: failure ? 'failed' : 'passed' })),
+    elapsedSeconds: (Date.now() - started) / 1000, extended, launches: app.launches, readiness: app.readiness, tests: results.map(({ name, failure }) => ({ name, result: failure ? 'failed' : 'passed' })),
     evidenceBoundary: 'Real native Tauri windows and Rust backend with demo data. Embedded driver synthesizes DOM input; not OS input or Twitch acceptance.',
     notCovered: ['Native OS select/dropdown input (coverage uses labeled synthetic DOM events)', 'Native OS pointer/HTML5 drag', 'OS titlebar click (CloseRequested covered via native close API)', 'OS settings app theme toggle (window theme API covered)', 'Live Twitch authentication/playback/rewards', 'Real credential vault/account recovery (fake-token lifecycle covered)', 'Live Twitch remote-origin native IPC probe (driverless bundled/local origins covered)']
   };

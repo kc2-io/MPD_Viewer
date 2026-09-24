@@ -99,3 +99,10 @@ Initial navigation can discard that global and time out even when the final page
 subsequently renders. This source-based race mitigation adds no action retries,
 arbitrary readiness sleeps or larger command timeouts. Platform evidence must
 still demonstrate it fixes the observed hosted failures.
+
+Viewer readiness diagnostics retain only the final bounded observation per window:
+WebDriver result type, document readyState/title, expected fixture channel, demo
+hidden flag, bridge text, heading, visibility/focus, initialization function types
+and an allowlisted set of resource basenames/status/timings (no resource URLs). These appear in the manifest and readiness
+failure message. Complete-document, expected-channel and visible-demo/fixture
+marker assertions are unchanged; a screenshot alone is not substituted for them.

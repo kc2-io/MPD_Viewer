@@ -65,11 +65,7 @@ export async function demoSmoke(app, test, extended) {
     const channels = [];
     for (const handle of handles.filter(handle => handle !== app.manager)) {
       await browser.switchToWindow(handle);
-      await documentTitle(browser, 'MPD Player');
-      const channel = await until(() => browser.execute(() => {
-        const name = document.querySelector('#demo-channel')?.textContent?.trim();
-        return document.readyState === 'complete' && document.querySelector('#demo')?.hidden === false && /^(bravo|charlie)_demo$/.test(name || '') && name;
-      }), 'Expected initialized simulated viewer document');
+      const channel = await app.viewerReady({ title: 'MPD Player', channels: ['bravo_demo', 'charlie_demo'], demo: true });
       channels.push(channel);
     }
     assert.deepEqual(channels.sort(), ['bravo_demo', 'charlie_demo']);
@@ -122,7 +118,7 @@ export async function webSmoke(app, test, extended) {
     const channels = [];
     for (const handle of handles.filter(handle => handle !== app.manager)) {
       await browser.switchToWindow(handle);
-      channels.push(await fixtureViewerReady(browser));
+      channels.push(await fixtureViewerReady(app));
       await browser.execute(nonce => localStorage.setItem('mpd-e2e-test-nonce', nonce), app.runId);
     }
     assert.deepEqual(channels.sort(), ['alpha_fixture', 'bravo_fixture']);
@@ -199,7 +195,7 @@ export async function webSmoke(app, test, extended) {
     await click(browser, '#start');
     const handles = await windows(browser, 2);
     await browser.switchToWindow(handles.find(handle => handle !== app.manager));
-    await fixtureViewerReady(browser);
+    await fixtureViewerReady(app);
     assert.equal(await browser.execute(() => localStorage.getItem('mpd-e2e-test-nonce')), app.runId, 'Disposable browser profile did not survive full process restart');
     await browser.switchToWindow(app.manager);
     await click(browser, '#stop'); await windows(browser, 1);
@@ -260,12 +256,8 @@ export async function authSmoke(app, test) {
   });
 }
 
-async function fixtureViewerReady(browser) {
-  await documentTitle(browser, 'MPD E2E local viewer');
-  return until(() => browser.execute(() => {
-    const channel = document.querySelector('#channel')?.textContent?.trim();
-    return document.readyState === 'complete' && document.querySelector('h1')?.textContent?.trim() === 'MPD E2E local viewer' && /^[a-z]+_fixture$/.test(channel || '') && channel;
-  }), 'Expected initialized local full-page fixture document');
+async function fixtureViewerReady(app) {
+  return app.viewerReady({ title: 'MPD E2E local viewer', channels: ['alpha_fixture', 'bravo_fixture', 'charlie_fixture'] });
 }
 
 export async function embeddedSmoke(app, test) {
@@ -280,11 +272,7 @@ export async function embeddedSmoke(app, test) {
     for (const handle of handles.filter(handle => handle !== app.manager)) {
       assert.match(handle, /^player-/);
       await browser.switchToWindow(handle);
-      await documentTitle(browser, 'MPD Player');
-      channels.push(await until(() => browser.execute(() => {
-        const name = document.querySelector('#demo-channel')?.textContent?.trim();
-        return document.readyState === 'complete' && document.querySelector('#demo')?.hidden === false && /^(alpha|bravo)_fixture$/.test(name || '') && name;
-      }), 'Expected initialized embedded fixture wrapper'));
+      channels.push(await app.viewerReady({ title: 'MPD Player', channels: ['alpha_fixture', 'bravo_fixture'], demo: true }));
     }
     assert.deepEqual(channels.sort(), ['alpha_fixture', 'bravo_fixture']);
     await browser.switchToWindow(app.manager);
