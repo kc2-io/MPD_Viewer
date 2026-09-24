@@ -112,7 +112,9 @@ export async function demoSmoke(app, test, extended) {
     assert.ok(Date.now() - start >= 59000 + pausedDuration, 'Rotation did not preserve the paused assignment duration');
     await windows(browser, 2); await click(browser, '#stop'); await windows(browser, 1);
     await click(browser, byLabel('Set bravo_demo timer to 10 minutes'));
+    await until(() => browser.execute(() => document.querySelector('li[data-login="bravo_demo"]')?.textContent?.includes('10 min assigned time')), 'Restored timer was not acknowledged by the Rust view');
     await input(browser, '#limit', 2); await click(browser, 'h1');
+    await until(() => browser.execute(() => document.querySelector('#session-count')?.textContent?.includes('/ 2')), 'Restored capacity was not acknowledged by the Rust view');
   });
   await app.stop();
   browser = await app.start();
