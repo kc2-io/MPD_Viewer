@@ -94,8 +94,7 @@ export class Desktop {
     await documentTitle(this.browser, title);
     const observation = { label: await this.browser.getWindowHandle(), expectedTitle: title, expectedChannels: channels, passed: false, last: null };
     if (this.readiness.length < 16) this.readiness.push(observation);
-    try {
-      return await until(async () => {
+    const sample = async () => {
         const raw = await this.browser.execute(demo => {
           const text = selector => document.querySelector(selector)?.textContent?.trim().slice(0, 160) ?? null;
           return { readyState: document.readyState, title: document.title.slice(0, 160),
@@ -111,7 +110,7 @@ export class Desktop {
         }, demo);
         const record = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
         const short = value => typeof value === 'string' ? sanitize(value).slice(0, 160) : null;
-        observation.last = { resultType: raw === null ? 'null' : Array.isArray(raw) ? 'array' : typeof raw,
+        const snapshot = { resultType: raw === null ? 'null' : Array.isArray(raw) ? 'array' : typeof raw,
           readyState: short(record.readyState), title: short(record.title), channel: short(record.channel),
           hidden: typeof record.hidden === 'boolean' ? record.hidden : null, bridge: short(record.bridge), marker: short(record.marker),
           visibility: short(record.visibility), focused: typeof record.focused === 'boolean' ? record.focused : null,
@@ -120,11 +119,51 @@ export class Desktop {
             transferSize: Number.isFinite(entry.transferSize) ? entry.transferSize : null, responseStatus: Number.isFinite(entry.responseStatus) ? entry.responseStatus : null })) : [] };
         const ready = record.readyState === 'complete' && channels.includes(record.channel) &&
           (demo ? record.hidden === false : record.marker === 'MPD E2E local viewer');
-        observation.passed = ready;
-        return ready && record.channel;
+        return { ready, channel: record.channel, snapshot };
+    };
+    try {
+      return await until(async () => {
+        const result = await sample(); observation.last = result.snapshot; observation.passed = result.ready;
+        return result.ready && result.channel;
       }, 'Expected initialized native viewer document');
     } catch (error) {
-      throw new Error(`${error.message}; last observed readiness: ${JSON.stringify(observation.last)}`);
+      // Failure-only diagnostic: never turn this original assertion into a pass.
+      if (demo) {
+        observation.afterFocus = { attempted: false, recovered: false, last: null };
+        try {
+          const channel = new URLSearchParams(new URL(await this.browser.getUrl()).hash.slice(1)).get('channel');
+          const allowed = ['bravo_demo', 'charlie_demo', 'alpha_fixture', 'bravo_fixture'];
+          if (!allowed.includes(channel) || !channels.includes(channel)) throw new Error('Focus diagnostic refused an unrecognized fixture channel');
+          const failedHandle = observation.label;
+          const handles = await this.browser.getWindowHandles();
+          if (!handles.includes(failedHandle) || !handles.includes(this.manager)) throw new Error('Focus diagnostic window no longer exists');
+          await this.browser.switchToWindow(this.manager);
+          const focus = await this.browser.$(`[aria-label="Focus ${channel}"]`);
+          if (!await focus.isExisting()) throw new Error('Focus diagnostic manager control is missing');
+          observation.afterFocus.attempted = true;
+          observation.afterFocus.channel = channel;
+          await focus.click(); // Existing manager UI, through the production controller.
+          await this.browser.switchToWindow(failedHandle);
+          let expired = false, timer;
+          try {
+            await Promise.race([
+              (async () => {
+                while (!expired) {
+                  const result = await sample();
+                  if (expired) return;
+                  observation.afterFocus.last = result.snapshot;
+                  if (result.ready) { observation.afterFocus.recovered = true; return; }
+                  await delay(150);
+                }
+              })(),
+              new Promise(resolve => { timer = setTimeout(() => { expired = true; resolve(); }, 5000); })
+            ]);
+          } finally { expired = true; clearTimeout(timer); }
+        } catch (diagnosticError) {
+          observation.afterFocus.error = sanitize(diagnosticError.message).slice(0, 512);
+        }
+      }
+      throw new Error(`${error.message}; last observed readiness: ${JSON.stringify(observation.last)}; failure-only Focus diagnostic: ${JSON.stringify(observation.afterFocus ?? null)}`);
     }
   }
   async nativeCommand(command) {

@@ -106,3 +106,11 @@ hidden flag, bridge text, heading, visibility/focus, initialization function typ
 and an allowlisted set of resource basenames/status/timings (no resource URLs). These appear in the manifest and readiness
 failure message. Complete-document, expected-channel and visible-demo/fixture
 marker assertions are unchanged; a screenshot alone is not substituted for them.
+
+On a failed demo/embedded readiness assertion only, a diagnostic may click the
+manager's existing Focus button once for the exact allowlisted fixture channel
+read from the failing window URL fragment. It preserves the original observation
+and samples readiness for at most five seconds after focusing that same native
+window. The `afterFocus` diagnostic records any recovery or diagnostic error, but
+**always rethrows the original failure**; it is not a passing-test retry or a
+normal-suite focus workaround. No raw URL or fragment is retained.
