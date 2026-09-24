@@ -131,7 +131,10 @@ while exhaustive scheduler ordering remains covered by Rust tests. The open-faul
 case injects failure only at the native window-opening boundary, checks the
 rendered Retry control, clears the fault and uses that control to recover.
 
-The manager requests an exact 1100 x 650 logical viewport so its frame fits the
-hosted macOS work area. Geometry readiness records requested/observed dimensions,
-display available area and scale even on failure; it does not silently accept a
-clamped or unknown size.
+The manager requests a native size of 1000 x 650. Readiness requires an exact
+1000-pixel CSS width and a usable CSS height from 600 to the smaller of 650 and
+the display's available height. Hosted macOS evidence showed frame/content
+sizing can subtract the titlebar from the requested height. This verifies native
+horizontal resizing plus a bounded usable viewport, not exact height parity.
+Requested, prior and observed dimensions, width change, available area and scale
+are recorded even on failure; non-finite or out-of-bounds geometry is rejected.

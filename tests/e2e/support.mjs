@@ -96,17 +96,24 @@ export class Desktop {
     this.manager = await this.browser.getWindowHandle();
     // Driver 1.4.0 setWindowRect uses one-shot event callbacks that can panic
     // when Linux replays resize events. Use the narrow native API mailbox.
-    const geometry = { requested: { width: 1100, height: 650 }, confirmed: false, last: null };
-    this.launches.at(-1).geometry = geometry;
-    await this.nativeCommand({ action: 'resize', label: this.manager, ...geometry.requested });
     const observeGeometry = () => this.browser.execute(() => ({ width: innerWidth, height: innerHeight, scale: devicePixelRatio,
       screenWidth: screen.width, screenHeight: screen.height, availableWidth: screen.availWidth, availableHeight: screen.availHeight }));
+    const geometry = { requested: { width: 1000, height: 650 }, before: await observeGeometry(), confirmed: false, widthChanged: false, last: null };
+    this.launches.at(-1).geometry = geometry;
+    if (!Number.isFinite(geometry.before?.width)) throw new Error('Manager initial viewport width is not finite');
+    await this.nativeCommand({ action: 'resize', label: this.manager, ...geometry.requested });
     try {
       await until(async () => {
         geometry.last = await observeGeometry();
-        geometry.confirmed = geometry.last?.width === geometry.requested.width && geometry.last?.height === geometry.requested.height;
+        const view = geometry.last;
+        geometry.widthChanged = Number.isFinite(view?.width) && view.width !== geometry.before.width;
+        // macOS frame/content sizing can reduce CSS height by its titlebar. Keep
+        // horizontal resizing exact and require a bounded usable content area.
+        geometry.confirmed = Number.isFinite(view?.width) && Number.isFinite(view?.height) && Number.isFinite(view?.availableHeight) &&
+          view.width === geometry.requested.width && view.height >= 600 && view.height <= Math.min(650, view.availableHeight) &&
+          (geometry.before.width === geometry.requested.width || geometry.widthChanged);
         return geometry.confirmed;
-      }, 'Native manager resize did not reach its requested logical viewport');
+      }, 'Native horizontal resize did not produce the requested width and usable viewport');
     } catch (error) { throw new Error(`${error.message}; observed geometry: ${JSON.stringify(geometry)}`); }
     this.launches.at(-1).renderer = { ...geometry.last, userAgent: await this.browser.execute(() => navigator.userAgent) };
     return this.browser;
