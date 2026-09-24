@@ -464,7 +464,7 @@ impl Controller {
                 pending.credentials = outcome.credentials; pending.inflight = false;
                 pending.next_attempt = Instant::now()+error.delay.max(Duration::from_secs(pending.backoff));
                 pending.backoff = (pending.backoff*2).min(300);
-                self.error = Some(format!("{} Retrying automatically; Connect Twitch starts a new authorization.", error.message));
+                self.error = Some(format!("{} Retrying automatically. Cancel, then Connect Twitch starts a new authorization.", error.message));
             }
         }
     }
