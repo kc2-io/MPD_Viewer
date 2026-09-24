@@ -33,7 +33,8 @@ preferences, client ID, hosted provenance and native capability separation.
 - Full Twitch page is default in one binary. Hidden launch flag --embedded-viewer
   selects the existing embed path; no settings/UI switch or persisted backend.
 - Follow OS theme using supported native browser mechanisms where possible.
-  Respect native Twitch appearance behavior; do not style Twitch cross-origin DOM.
+  User accepted Twitch’s own remembered Dark Theme switch for web mode on
+  2026-09-24. Keep manager/window system appearance; do not style Twitch DOM.
 - Web-page volume/quality controls are conditional on a documented supported route.
   If no such route exists, retain Twitch's own controls and record the limitation.
 - Timer measures running assigned time, not Twitch credited watch time. Pause of

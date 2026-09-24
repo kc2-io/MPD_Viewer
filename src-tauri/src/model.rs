@@ -159,13 +159,11 @@ impl ViewerCapabilities {
         Self { backend: backend.into(), telemetry: true,
             media_controls: true, twitch_channel_page: false }
     }
-    pub fn compiled() -> Self {
-        #[cfg(feature = "twitch-page-viewer")]
-        return Self::twitch_page();
-        #[cfg(feature = "twitch-embed-viewer")]
-        return Self::wrapper("twitch-embed");
-        #[allow(unreachable_code)]
-        Self::twitch_page()
+    pub fn selected() -> Self {
+        match crate::viewer_mode::selected() {
+            crate::viewer_mode::ViewerMode::TwitchPage => Self::twitch_page(),
+            crate::viewer_mode::ViewerMode::Embedded => Self::wrapper("twitch-embed"),
+        }
     }
 }
 
@@ -190,7 +188,7 @@ impl Default for View {
     fn default() -> Self {
         Self { mode: Mode::Stopped, settings: Settings::default(), favorites: vec![], players: vec![],
             connected_as: None, auth_pending: false, user_code: None, last_check_seconds: None,
-            polling: false, next_check_seconds: 0, viewer: ViewerCapabilities::compiled(),
+            polling: false, next_check_seconds: 0, viewer: ViewerCapabilities::selected(),
             player_origin: String::new(), error: None, events: vec![] }
     }
 }

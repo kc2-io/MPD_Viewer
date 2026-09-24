@@ -218,10 +218,10 @@ function render(s) {
   if(document.activeElement!==$('muted'))$('muted').checked=s.settings.muted;
   const mediaControls=s.settings.demo||s.viewer?.media_controls!==false;
   $('media-controls').hidden=!mediaControls; $('twitch-page-note').hidden=mediaControls;
-  $('auth-status').textContent=s.connected_as?`Monitoring as ${s.connected_as}`:s.auth_pending?'Waiting for authorization…':'Not connected';
+  $('auth-status').textContent=s.connected_as?`Monitoring as ${s.connected_as}`:s.auth_pending?(s.user_code?'Waiting for authorization…':'Connecting…'):'Not connected';
   $('connect').disabled=s.settings.demo||(s.auth_pending&&!s.user_code);
-  $('connect').textContent=s.auth_pending?(s.user_code?'Continue in Twitch':'Opening Twitch…'):s.connected_as?'Reconnect Twitch':'Connect Twitch';
-  $('disconnect').disabled=!s.connected_as&&!s.auth_pending;
+  $('connect').textContent=s.auth_pending?(s.user_code?'Continue in Twitch':'Connecting Twitch…'):s.connected_as?'Reconnect Twitch':'Connect Twitch';
+  $('disconnect').disabled=s.settings.demo&&!s.connected_as&&!s.auth_pending;
   $('disconnect').textContent=s.auth_pending?'Cancel':'Disconnect';
   $('device-auth').hidden=!s.user_code; $('device-code').textContent=s.user_code??'';
   $('empty-players').hidden=s.players.length>0;

@@ -42,15 +42,15 @@
           <label class="check"><input id="muted" type="checkbox">Mute all managed players</label>
           <p class="hint">Volume applies to every player. Muting is independent.</p>
         </div>
-        <p class="hint" id="twitch-page-note" hidden>The full Twitch channel page owns playback, quality, volume, rewards, and sign-in controls.</p>
+        <p class="hint" id="twitch-page-note" hidden>Use the Twitch player’s volume slider and Settings → Quality in each viewer. Central volume and quality controls are unavailable for full Twitch pages. For dark mode, open your Twitch avatar menu and turn on Dark Theme; Twitch remembers this separately from Windows.</p>
       </section>
       <section class="panel auth-panel" id="auth-panel">
         <div class="section-header"><h2>Twitch account</h2><span id="auth-status" class="dot-label">Not connected</span></div>
         <p class="hint">Connect to sign in with Twitch and authorize live-status monitoring in one window. Channel pages reuse this managed browser profile. Available on Windows.</p>
         <div class="button-row"><button id="connect" type="button" class="primary">Connect Twitch</button><button id="disconnect" type="button">Disconnect</button></div>
         <div id="device-auth" class="device-auth" hidden><span>Finish connecting in the Twitch window. If Twitch asks for a code:</span><strong id="device-code"></strong></div>
-        <p class="hint">After connecting, close the Twitch window. Use Retry on an existing player if it still appears signed out. Verify your account inside Twitch.</p>
-        <p class="hint">Twitch may remember your website sign-in. Monitoring authorization lasts until you quit this preview. Disconnect only clears monitoring authorization.</p>
+        <p class="hint">The connection window closes after authorization completes. Use Retry on an existing viewer if it still appears signed out. Verify your account inside Twitch.</p>
+        <p class="hint">Windows securely remembers monitoring authorization between launches. Other platforms currently connect for this session only. Disconnect removes saved monitoring authorization; your Twitch website sign-in is separate.</p>
       </section>
     </aside>
   </div>

@@ -4,7 +4,15 @@
 
 Rust / Tauri desktop proof of concept for Windows, Linux and macOS. Maintains a prioritized list of favorite Twitch channels and user-configurable viewer capacity and audio settings.
 
-## Current status
+## Viewer behavior
+
+Full Twitch channel pages are the default. See [web viewer controls, appearance and
+authorization](docs/setup/WEB-VIEWER.md). The same binary retains the embedded mode
+behind `--embedded-viewer`. Optional per-channel timers rotate assigned sessions to
+the next eligible live favorite; Always preserves normal priority. Windows
+monitoring authorization is saved securely for subsequent launches.
+
+## Historical preparation status
 
 This repository snapshot contains the POC, the owner-supplied hosted-player HTML, feature/subagent plans, and a new build/sign/release configuration. It has **not** been compiled or signed in the preparation environment. The remote GitHub repository has **not** been created by this handoff. The intended repository is **private `kc2-io/MPD_Viewer`**.
 
