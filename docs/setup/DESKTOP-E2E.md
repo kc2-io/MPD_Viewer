@@ -49,6 +49,12 @@ every 100 ms, with at most one pending task, to wake headless WebKit loading.
 Driverless probes use this same event-loop wake-up without registering the driver
 or changing page permissions, focus, visibility or background-throttling policy.
 
+The bundled fixture experiment gives each viewer's `player.js` request a numeric
+`e2e_session` query. The script bytes, origin and CSP are unchanged; only the
+test-feature HTML/URL varies. This separates simultaneous fixture resource loads
+while investigating WebKit's stalled deferred script. A pass with this variation
+does not establish that ordinary production same-URL loading is fixed.
+
 ## Isolation and production boundary
 
 The non-default `e2e-tests` feature is required for the driver, fixture services,

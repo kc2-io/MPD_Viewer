@@ -41,6 +41,8 @@ impl Host {
                     let asset_name = path.to_owned(); // Only the fixed asset allowlist above.
                     #[cfg(feature = "e2e-tests")]
                     eprintln!("E2E asset begin {asset_name}");
+                    #[cfg(feature = "e2e-tests")]
+                    let body = if mime.starts_with("text/html") { crate::e2e::scope_wrapper_script(body, request.url()) } else { body.into() };
                     let mut response = tiny_http::Response::from_string(body);
                     for (name, value) in [("Content-Type", mime), ("Cache-Control", "no-store"),
                         ("X-Content-Type-Options", "nosniff"), ("Referrer-Policy", "strict-origin-when-cross-origin")] {
@@ -97,6 +99,8 @@ impl Host {
     fn player_url(&self, login: &str, id: u64, settings: &Settings) -> Url {
         if settings.demo {
             let mut url = self.local.clone();
+            #[cfg(feature = "e2e-tests")]
+            url.query_pairs_mut().append_pair("e2e_session", &id.to_string());
             let fragment = url::form_urlencoded::Serializer::new(String::new())
                 .append_pair("channel", login).append_pair("session", &id.to_string())
                 .append_pair("volume", &settings.volume.to_string()).append_pair("muted", &settings.muted.to_string())
