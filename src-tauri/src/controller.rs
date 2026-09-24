@@ -230,6 +230,8 @@ impl Controller {
                 for p in self.players.values_mut() { p.quality_dirty = true; }
             }
             Action::SetDemo { demo } => {
+                // Idempotent updates must not restart recovery while a token is rotating.
+                if demo == self.settings.demo { return Ok(()); }
                 if self.mode != Mode::Stopped || !self.players.is_empty() {
                     return Err("Stop and wait for all players to close before changing data sources.".into());
                 }
