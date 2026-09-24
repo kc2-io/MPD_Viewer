@@ -47,6 +47,11 @@ fn main() {
     let mut context = tauri::generate_context!();
     #[cfg(feature = "e2e-tests")]
     e2e::prepare(&mut context).expect("E2E isolation configuration required");
+    #[cfg(feature = "e2e-tests")]
+    if std::env::args().any(|arg| arg == "--e2e-cleanup") {
+        credential_store::CredentialStore::new().forget(0).expect("E2E scoped vault cleanup failed");
+        return;
+    }
     let builder = tauri::Builder::default();
     #[cfg(feature = "e2e-tests")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init_with_port(e2e::port()));
