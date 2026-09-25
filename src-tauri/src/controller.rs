@@ -10,6 +10,23 @@ use crate::credential_store::{CredentialStore, ScopedStore};
 
 type Credentials = Arc<Mutex<Session>>;
 
+fn monitored_poll_interval(minutes: u32) -> Duration {
+    Duration::from_secs(u64::from(minutes) * 60)
+}
+fn stale_after(minutes: u32) -> Duration {
+    monitored_poll_interval(minutes).saturating_mul(3).max(Duration::from_secs(90))
+}
+fn scheduled_poll(now: Instant, last_check: Option<Instant>, not_before: Instant, minutes: u32) -> Instant {
+    let due = last_check.map_or(now, |checked| checked + monitored_poll_interval(minutes));
+    due.max(now).max(not_before)
+}
+fn rescheduled_poll(now: Instant, last_check: Option<Instant>, not_before: Instant, next_poll: Instant, minutes: u32) -> Instant {
+    // A failed request or manual Check now can already be queued exactly at the
+    // rate-limit boundary. Changing the normal cadence must not postpone it.
+    if not_before > now && next_poll <= not_before { not_before }
+    else { scheduled_poll(now,last_check,not_before,minutes) }
+}
+
 // A small async seam keeps failed restoration's *same* in-memory refresh token
 // alive. No Tauri handle, UI state, logging, or credential serialization crosses it.
 pub(crate) struct RecoveryError { message: String, reconnect: bool, delay: Duration }
@@ -215,6 +232,15 @@ impl Controller {
                 self.changed();
             }
             Action::SetLimit { limit } => { let mut s = self.settings.clone(); s.limit = limit; self.save(s)?; self.rotation.clear_round(); }
+            Action::SetRescan { minutes } => {
+                let mut s = self.settings.clone(); s.rescan_minutes = minutes; self.save(s)?;
+                // An in-flight result schedules from the latest saved setting when
+                // it completes. Otherwise apply the new interval immediately.
+                if !self.settings.demo && self.mode != Mode::Stopped && self.polling.is_none() {
+                    self.next_poll = rescheduled_poll(Instant::now(), self.last_check, self.not_before,
+                        self.next_poll, self.settings.rescan_minutes);
+                }
+            }
             Action::SetTimer { login, minutes } => {
                 let mut s=self.settings.clone();
                 s.favorites.iter_mut().find(|f| f.login==login).ok_or("Unknown favorite.")?.watch_minutes=minutes;
@@ -269,7 +295,7 @@ impl Controller {
                 self.timer_tick=Instant::now();
                 self.mode = Mode::Running; self.changed();
                 if self.settings.demo { self.update_demo(); }
-                else if self.last_check.map_or(true, |t| t.elapsed() > Duration::from_secs(90)) { self.mark_stale(); }
+                else if self.last_check.is_none_or(|t| t.elapsed() > stale_after(self.settings.rescan_minutes)) { self.mark_stale(); }
                 self.log("Monitoring started.");
             }
             Action::Pause => { if self.mode == Mode::Running { self.mode = Mode::Paused; self.log("Automatic selection paused; existing players retained."); } }
@@ -625,7 +651,9 @@ impl Controller {
                                 Ok(online) => {
                                     self.backoff = 30;
                                     if generation == self.generation {
-                                        self.next_poll = Instant::now() + Duration::from_secs(if monitored { 30 } else { 60 });
+                                        self.next_poll = Instant::now() + if monitored {
+                                            monitored_poll_interval(self.settings.rescan_minutes)
+                                        } else { Duration::from_secs(60) };
                                         if monitored && self.mode != Mode::Stopped && !self.settings.demo {
                                             for f in self.settings.favorites.iter().filter(|f| f.enabled) {
                                                 let stream = online.get(&f.login);
@@ -653,7 +681,7 @@ impl Controller {
                     // Lost window events cannot leak capacity reservations indefinitely.
                     let gone: Vec<_> = self.players.values().filter(|p| self.app.get_webview_window(&p.label).is_none()).map(|p| p.label.clone()).collect();
                     for label in gone { self.destroyed(&label); }
-                    if !self.settings.demo && self.last_check.is_some_and(|t| t.elapsed() > Duration::from_secs(90)) { self.mark_stale(); }
+                    if !self.settings.demo && self.last_check.is_some_and(|t| t.elapsed() > stale_after(self.settings.rescan_minutes)) { self.mark_stale(); }
                     // Native title work stays bounded to this timer, not player reports.
                     self.sync_viewer_titles();
                     self.sync_quality();
@@ -661,6 +689,41 @@ impl Controller {
             }
             self.reconcile(); self.maybe_recover(); self.maybe_poll(); self.publish.send_replace(self.snapshot());
         }
+    }
+}
+
+#[cfg(test)]
+mod poll_schedule_tests {
+    use super::{monitored_poll_interval, rescheduled_poll, scheduled_poll, stale_after};
+    use std::time::{Duration,Instant};
+
+    #[test]
+    fn configured_intervals_and_stale_tolerance_cover_bounds() {
+        assert_eq!(monitored_poll_interval(1),Duration::from_secs(60));
+        assert_eq!(monitored_poll_interval(60),Duration::from_secs(3600));
+        assert_eq!(stale_after(1),Duration::from_secs(180));
+        assert_eq!(stale_after(60),Duration::from_secs(10800));
+    }
+
+    #[test]
+    fn rescheduling_handles_exact_shorter_longer_missing_and_backoff_deadlines() {
+        let base=Instant::now();
+        let now=base+Duration::from_secs(120);
+        assert_eq!(scheduled_poll(now,Some(base),base,2),now);
+        assert_eq!(scheduled_poll(now,Some(base),base,1),now);
+        assert_eq!(scheduled_poll(now,Some(base),base,10),base+Duration::from_secs(600));
+        assert_eq!(scheduled_poll(now,None,base,10),now);
+        let backoff=base+Duration::from_secs(700);
+        assert_eq!(scheduled_poll(now,Some(base),backoff,10),backoff);
+    }
+
+    #[test]
+    fn interval_change_never_postpones_a_retry_already_queued_at_backoff() {
+        let base=Instant::now();let now=base+Duration::from_secs(120);
+        let backoff=base+Duration::from_secs(700);
+        assert_eq!(rescheduled_poll(now,Some(base),backoff,backoff,60),backoff);
+        let ordinary=base+Duration::from_secs(180);
+        assert_eq!(rescheduled_poll(now,Some(base),base,ordinary,10),base+Duration::from_secs(600));
     }
 }
 

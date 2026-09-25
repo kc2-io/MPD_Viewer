@@ -1,4 +1,4 @@
-import { playbackLabel, observedPlaying, secondsAgo, viewerCountLabel, timerLabel } from './view-model.js';
+import { playbackLabel, rescanLabel, secondsAgo, viewerCountLabel, timerLabel } from './view-model.js';
 const $ = id => document.getElementById(id);
 let state, listKey = '', playersKey = '', dragging = null, moving = false, rankRecovery = null, refreshTask = null, audioTimer, localError = null;
 const native = () => window.__TAURI__?.core;
@@ -32,19 +32,13 @@ function cancelDrag(message='Reordering cancelled.') {
   if(!dragging)return;
   endDrag(); rankStatus(message); if(state)favorites(state);
 }
-function finishRankMove(login, focusDirection) {
+function finishRankMove(login) {
   moving=false; rankRecovery=null; listKey=''; $('favorites').removeAttribute('aria-busy');
   if(state)favorites(state);
   const index=state.favorites.findIndex(f=>f.login===login);
   rankStatus(index<0?'Channel list refreshed.':`Moved ${login} to rank ${index+1}.`);
-  if(focusDirection) {
-    const row=Array.from($('favorites').children).find(row=>row.dataset.login===login);
-    const control=row?.querySelector(`[data-move="${focusDirection}"]`);
-    if(control&&!control.disabled)control.focus();
-    else row?.querySelector('[data-move]:not(:disabled)')?.focus();
-  }
 }
-async function moveFavorite(login, position, focusDirection) {
+async function moveFavorite(login, position) {
   if(moving)return;
   const current=state.favorites.findIndex(f=>f.login===login);
   if(current<0)return;
@@ -61,10 +55,10 @@ async function moveFavorite(login, position, focusDirection) {
     if(state)favorites(state);
     rankStatus(`Could not save the rank for ${login}. Check the error and try again.`); return;
   }
-  if(await refresh(true))finishRankMove(login,focusDirection);
+  if(await refresh(true))finishRankMove(login);
   else {
     // Rust saved the move. Do not submit another rank based on our stale view.
-    rankRecovery={login,focusDirection};
+    rankRecovery={login};
     rankStatus(`Saved rank for ${login}. Waiting to refresh the channel order before reordering again.`);
   }
 }
@@ -119,7 +113,7 @@ function favorites(s) {
     const rank=node('span','','rank');
     const grip=node('span','⠿','drag-grip'); grip.setAttribute('aria-hidden','true');
     rank.append(grip,node('span',String(i+1).padStart(2,'0'))); li.append(rank);
-    li.title=`Drag ${f.login} to change rank, or use its up/down arrows`;
+    li.title=`Drag ${f.login} to change rank`;
     const info=node('div','','channel-info'); info.append(node('strong',f.login));
     const sub=node('div','','channel-sub'); sub.append(node('span',f.presence==='live'?'● LIVE':f.presence.toUpperCase(),f.presence==='live'?'live':''));
     const audience = s.settings.demo ? '' : viewerCountLabel(f.viewer_count);
@@ -150,9 +144,6 @@ function favorites(s) {
     const controls=node('div','','row-controls');
     if (s.settings.demo) controls.append(button(f.demo_live?'Go offline':'Go live',`Simulate ${f.login} ${f.demo_live?'offline':'live'}`,{type:'demo_live',login:f.login,live:!f.demo_live},'toggle-live'));
     const enabled=document.createElement('input'); enabled.type='checkbox'; enabled.checked=f.enabled; enabled.title=`Enable ${f.login}`; enabled.setAttribute('aria-label',enabled.title); enabled.addEventListener('change',()=>act({type:'enable',login:f.login,enabled:enabled.checked})); controls.append(enabled);
-    const up=button('↑',`Move ${f.login} up`,()=>moveFavorite(f.login,state.favorites.findIndex(x=>x.login===f.login)-1,'up')); up.disabled=i===0;
-    const down=button('↓',`Move ${f.login} down`,()=>moveFavorite(f.login,state.favorites.findIndex(x=>x.login===f.login)+1,'down')); down.disabled=i===s.favorites.length-1;
-    up.dataset.move='up'; down.dataset.move='down'; controls.append(up,down);
     if (f.skipped) controls.append(button('Undo',`Undo skip for ${f.login}`,{type:'undo_skip',login:f.login}));
     if (f.open_error) controls.append(button('Retry',`Retry ${f.login}`,{type:'retry',login:f.login}));
     controls.append(button('×',`Remove ${f.login}`,{type:'remove',login:f.login})); li.append(controls);
@@ -189,24 +180,13 @@ function players(s) {
 }
 function render(s) {
   state=s;
-  $('run-status').textContent=s.mode==='running'?'Monitoring':s.mode==='paused'?'Automation paused':'Stopped';
+  $('run-status').textContent=s.mode==='running'?'Running':s.mode==='paused'?'Automation paused':'Stopped';
   $('run-status').className=`pill ${s.mode}`;
   $('start').textContent=s.mode==='paused'?'Resume':'Start'; $('start').disabled=s.mode==='running';
   $('pause').disabled=s.mode!=='running'; $('stop').disabled=s.mode==='stopped'&&s.players.length===0;
   $('refresh').disabled=s.polling||s.mode==='stopped';
   $('session-count').replaceChildren(document.createTextNode(`${s.players.length} `),node('small',`/ ${s.settings.limit}`));
-  const telemetry=s.settings.demo||s.viewer?.telemetry!==false;
-  if(telemetry) {
-    $('playing-count').textContent=String(observedPlaying(s.players));
-    $('playing-heading').textContent=s.settings.demo?'SIMULATED PLAYBACK':'OBSERVED PLAYBACK';
-    const blocked=s.players.filter(p=>p.state==='blocked'&&!p.closing).length;
-    $('playing-detail').textContent=blocked?`${blocked} player${blocked===1?'':'s'} need a click`:'Based on recent player telemetry, not viewer credit';
-  } else {
-    $('playing-count').textContent='—';
-    $('playing-heading').textContent='TWITCH CHANNEL PAGE';
-    $('playing-detail').textContent='Twitch owns playback and determines rewards eligibility';
-  }
-  $('monitor-heading').textContent=s.mode==='stopped'?'Not running':s.settings.demo?'Demo source':s.polling?'Checking…':s.mode==='paused'?'Selection paused':'Every 30s';
+  $('monitor-heading').textContent=s.mode==='stopped'?'Not running':s.settings.demo?'Demo source':s.polling?'Checking…':s.mode==='paused'?'Selection paused':rescanLabel(s.settings.rescan_minutes);
   $('monitor-detail').textContent=secondsAgo(s.last_check_seconds);
   $('favorite-count').textContent=String(s.favorites.length);
   $('empty-favorites').hidden=s.favorites.length>0; $('load-demo').hidden=!s.settings.demo;
@@ -214,6 +194,7 @@ function render(s) {
   if(document.activeElement!==$('source'))$('source').value=s.settings.demo?'demo':'twitch';
   if(document.activeElement!==$('quality'))$('quality').value=s.settings.preferred_quality??'auto';
   if(document.activeElement!==$('limit'))$('limit').value=s.settings.limit;
+  if(document.activeElement!==$('rescan'))$('rescan').value=s.settings.rescan_minutes;
   if(document.activeElement!==$('volume')){$('volume').value=s.settings.volume;$('volume-value').textContent=`${s.settings.volume}%`;}
   if(document.activeElement!==$('muted'))$('muted').checked=s.settings.muted;
   const mediaControls=s.settings.demo||s.viewer?.media_controls!==false;
@@ -227,7 +208,7 @@ function render(s) {
   $('empty-players').hidden=s.players.length>0;
   $('viewer-backend').textContent=s.viewer?.backend??'unknown';
   $('player-origin').textContent=s.player_origin; $('events').textContent=s.events.join('\n');
-  const error=s.error??localError;
+  const error=localError??s.error;
   $('error').hidden=!error; if(error)$('error-text').textContent=error;
   favorites(s);players(s);
 }
@@ -243,7 +224,7 @@ async function refresh(fresh=false) {
     try {
       const snapshot=await native().invoke('get_state'); render(snapshot);
       if(rankRecovery) {
-        localError=null; finishRankMove(rankRecovery.login,rankRecovery.focusDirection); render(snapshot);
+        localError=null; finishRankMove(rankRecovery.login); render(snapshot);
       }
       return true;
     }
@@ -261,6 +242,8 @@ $('load-demo').addEventListener('click',()=>act({type:'load_demo'}));
 $('source').addEventListener('change',()=>act({type:'set_demo',demo:$('source').value==='demo'}));
 $('quality').addEventListener('change',()=>act({type:'set_quality',quality:$('quality').value}));
 $('limit').addEventListener('change',()=>{const limit=Number($('limit').value);if(Number.isSafeInteger(limit)&&limit>=1&&limit<=1000)act({type:'set_limit',limit});else showError('Set a whole-number limit between 1 and 1000.');});
+$('rescan').addEventListener('change',()=>{const minutes=Number($('rescan').value);if(Number.isSafeInteger(minutes)&&minutes>=1&&minutes<=60)act({type:'set_rescan',minutes});else{showError('Set a live-status rescan interval between 1 and 60 whole minutes.');$('rescan').focus();}});
+$('rescan').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('rescan').blur();}});
 function changeAudio(){clearTimeout(audioTimer);$('volume-value').textContent=`${$('volume').value}%`;audioTimer=setTimeout(()=>act({type:'set_audio',volume:Number($('volume').value),muted:$('muted').checked}),120);}
 $('volume').addEventListener('input',changeAudio);$('muted').addEventListener('change',changeAudio);
 $('connect').addEventListener('click',()=>act({type:'connect'}));

@@ -1,7 +1,7 @@
 // Test fixture, NOT the Rust controller. Never shipped with the management UI.
 (() => {
   const names=['alpha_demo','bravo_demo','charlie_demo','delta_demo'];
-  const settings={schema:1,favorites:names.map(login=>({login,enabled:true})),limit:3,volume:25,muted:false,demo:true};
+  const settings={schema:1,favorites:names.map(login=>({login,enabled:true})),limit:3,rescan_minutes:1,volume:25,muted:false,demo:true};
   const s={mode:'running',settings,favorites:names.map((login,i)=>({login,enabled:true,presence:i?'live':'offline',skipped:false,demo_live:!!i,open_error:null})),
     players:names.slice(1).map((login,i)=>({login,session:i+1,closing:false,state:'playing',report_age_seconds:0,visible:true,volume:.25,muted:false})),
     connected_as:null,auth_pending:false,user_code:null,last_check_seconds:12,polling:false,next_check_seconds:18,
@@ -14,6 +14,7 @@
       const a=args.action;window.__actions.push(a);
       if(a.type==='set_audio'){s.settings.volume=a.volume;s.settings.muted=a.muted;}
       if(a.type==='set_limit')s.settings.limit=a.limit;
+      if(a.type==='set_rescan')s.settings.rescan_minutes=a.minutes;
       if(a.type==='pause')s.mode='paused';
       if(a.type==='start')s.mode='running';
       if(a.type==='stop'){s.mode='stopped';s.players=[];}
