@@ -25,6 +25,10 @@ export function secondsAgo(value) {
   return `Last successful check ${Math.floor(value / 60)}m ago`;
 }
 
+export function rescanLabel(minutes) {
+  return `Every ${minutes} min`;
+}
+
 export function timerLabel(timer) {
   if (!timer || timer.state === 'unlimited') return 'Always · no assignment timer';
   if (timer.state === 'closing_for_rotation') return 'Timer reached · rotating to next live channel';

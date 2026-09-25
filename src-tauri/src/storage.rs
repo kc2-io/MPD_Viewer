@@ -39,6 +39,7 @@ mod tests {
             store.0.execute("INSERT INTO preferences(id,json) VALUES(1,?1)", [&json]).unwrap();
             let settings=store.load().unwrap();
             assert_eq!(settings.limit,2); assert_eq!(settings.volume,40);
+            assert_eq!(settings.rescan_minutes,1);
             assert_eq!(settings.preferred_quality,"auto");
             assert!(settings.muted); assert!(!settings.demo);
             assert_eq!(settings.favorites[0].watch_minutes,None);
@@ -52,7 +53,26 @@ mod tests {
     #[test]
     fn fresh_install_retains_existing_defaults() {
         let settings=Store::open(Path::new(":memory:")).unwrap().load().unwrap();
-        assert_eq!(settings.limit,3); assert!(settings.demo); assert_eq!(settings.volume,25);
+        assert_eq!(settings.limit,3); assert_eq!(settings.rescan_minutes,1);
+        assert!(settings.demo); assert_eq!(settings.volume,25);
+    }
+}
+
+#[cfg(test)]
+mod rescan_tests {
+    use super::*;
+    #[test]
+    fn rescan_round_trips_and_invalid_values_do_not_overwrite() {
+        let mut store=Store::open(Path::new(":memory:")).unwrap();
+        let mut settings=store.load().unwrap();
+        for value in [1,60] {
+            settings.rescan_minutes=value;store.save(&settings).unwrap();
+            assert_eq!(store.load().unwrap().rescan_minutes,value);
+        }
+        for invalid in [0,61,u32::MAX] {
+            settings.rescan_minutes=invalid;assert!(store.save(&settings).is_err());
+            assert_eq!(store.load().unwrap().rescan_minutes,60);
+        }
     }
 }
 

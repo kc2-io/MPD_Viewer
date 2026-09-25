@@ -1,4 +1,4 @@
-import { playbackLabel, secondsAgo, viewerCountLabel, timerLabel } from './view-model.js';
+import { playbackLabel, rescanLabel, secondsAgo, viewerCountLabel, timerLabel } from './view-model.js';
 const $ = id => document.getElementById(id);
 let state, listKey = '', playersKey = '', dragging = null, moving = false, rankRecovery = null, refreshTask = null, audioTimer, localError = null;
 const native = () => window.__TAURI__?.core;
@@ -186,7 +186,7 @@ function render(s) {
   $('pause').disabled=s.mode!=='running'; $('stop').disabled=s.mode==='stopped'&&s.players.length===0;
   $('refresh').disabled=s.polling||s.mode==='stopped';
   $('session-count').replaceChildren(document.createTextNode(`${s.players.length} `),node('small',`/ ${s.settings.limit}`));
-  $('monitor-heading').textContent=s.mode==='stopped'?'Not running':s.settings.demo?'Demo source':s.polling?'Checking…':s.mode==='paused'?'Selection paused':'Every 30s';
+  $('monitor-heading').textContent=s.mode==='stopped'?'Not running':s.settings.demo?'Demo source':s.polling?'Checking…':s.mode==='paused'?'Selection paused':rescanLabel(s.settings.rescan_minutes);
   $('monitor-detail').textContent=secondsAgo(s.last_check_seconds);
   $('favorite-count').textContent=String(s.favorites.length);
   $('empty-favorites').hidden=s.favorites.length>0; $('load-demo').hidden=!s.settings.demo;
@@ -194,6 +194,7 @@ function render(s) {
   if(document.activeElement!==$('source'))$('source').value=s.settings.demo?'demo':'twitch';
   if(document.activeElement!==$('quality'))$('quality').value=s.settings.preferred_quality??'auto';
   if(document.activeElement!==$('limit'))$('limit').value=s.settings.limit;
+  if(document.activeElement!==$('rescan'))$('rescan').value=s.settings.rescan_minutes;
   if(document.activeElement!==$('volume')){$('volume').value=s.settings.volume;$('volume-value').textContent=`${s.settings.volume}%`;}
   if(document.activeElement!==$('muted'))$('muted').checked=s.settings.muted;
   const mediaControls=s.settings.demo||s.viewer?.media_controls!==false;
@@ -207,7 +208,7 @@ function render(s) {
   $('empty-players').hidden=s.players.length>0;
   $('viewer-backend').textContent=s.viewer?.backend??'unknown';
   $('player-origin').textContent=s.player_origin; $('events').textContent=s.events.join('\n');
-  const error=s.error??localError;
+  const error=localError??s.error;
   $('error').hidden=!error; if(error)$('error-text').textContent=error;
   favorites(s);players(s);
 }
@@ -241,6 +242,8 @@ $('load-demo').addEventListener('click',()=>act({type:'load_demo'}));
 $('source').addEventListener('change',()=>act({type:'set_demo',demo:$('source').value==='demo'}));
 $('quality').addEventListener('change',()=>act({type:'set_quality',quality:$('quality').value}));
 $('limit').addEventListener('change',()=>{const limit=Number($('limit').value);if(Number.isSafeInteger(limit)&&limit>=1&&limit<=1000)act({type:'set_limit',limit});else showError('Set a whole-number limit between 1 and 1000.');});
+$('rescan').addEventListener('change',()=>{const minutes=Number($('rescan').value);if(Number.isSafeInteger(minutes)&&minutes>=1&&minutes<=60)act({type:'set_rescan',minutes});else{showError('Set a live-status rescan interval between 1 and 60 whole minutes.');$('rescan').focus();}});
+$('rescan').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('rescan').blur();}});
 function changeAudio(){clearTimeout(audioTimer);$('volume-value').textContent=`${$('volume').value}%`;audioTimer=setTimeout(()=>act({type:'set_audio',volume:Number($('volume').value),muted:$('muted').checked}),120);}
 $('volume').addEventListener('input',changeAudio);$('muted').addEventListener('change',changeAudio);
 $('connect').addEventListener('click',()=>act({type:'connect'}));

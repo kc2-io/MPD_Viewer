@@ -44,6 +44,8 @@ export async function demoSmoke(app, test, extended) {
     await until(async () => (await visibleText(browser, 'li[data-login="bravo_demo"]')).includes('10 min assigned time'), 'Timer preset not saved');
     await input(browser, '#limit', 2); await click(browser, 'h1');
     await until(async () => (await visibleText(browser, '#session-count')).includes('/ 2'), 'Limit not saved');
+    await input(browser, '#rescan', 5); await click(browser, 'h1');
+    await until(() => browser.execute(async () => (await window.__TAURI__.core.invoke('get_state')).settings.rescan_minutes === 5), 'Rescan interval not saved');
     await selectValue(browser, '#quality', '360p');
   });
   await test('invalid timer is rejected and Always removes the saved timer', async () => {
@@ -122,6 +124,7 @@ export async function demoSmoke(app, test, extended) {
     assert.deepEqual(await order(browser), expectedOrder);
     assert.equal(await visibleText(browser, '#run-status'), 'Stopped');
     assert.equal(await (await browser.$('#limit')).getValue(), '2');
+    assert.equal(await (await browser.$('#rescan')).getValue(), '5');
     assert.equal(await (await browser.$('#quality')).getValue(), '360p');
     assert.equal(await (await browser.$(byLabel('Assignment timer minutes for bravo_demo'))).getValue(), '10');
     assert.equal(await (await browser.$('li[data-login="alpha_demo"]')).getAttribute('aria-disabled'), 'true');
