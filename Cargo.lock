@@ -2144,11 +2144,11 @@ dependencies = [
 
 [[package]]
 name = "mpd-core"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.6"
 
 [[package]]
 name = "mpd-tabber"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.6"
 dependencies = [
  "mpd-core",
  "mpd-twitch",
@@ -2166,7 +2166,7 @@ dependencies = [
 
 [[package]]
 name = "mpd-twitch"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.6"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
