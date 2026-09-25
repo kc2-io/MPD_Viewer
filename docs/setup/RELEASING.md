@@ -1,10 +1,13 @@
 # Tagged releases
 
-> Current alpha scope: [ALPHA-RELEASE-PLAN.md](ALPHA-RELEASE-PLAN.md). The owner approved signed Windows-only alpha distribution; historical full-platform requirements below still apply to other release stages.
+> Current alpha scope: [ALPHA-RELEASE-PLAN.md](ALPHA-RELEASE-PLAN.md). The owner approved a manual-test multiplatform alpha: signed Windows, explicitly unsigned/unnotarized macOS, and explicitly unsigned Linux packages. Full signing requirements still apply to beta, release-candidate and stable releases.
 
 ## Gate status
 
-No release tag, native release build, signature, notarization, remote artifact or GitHub release has been produced by this source handoff. Release execution is disabled until explicitly configured.
+The live repository has valid signed Windows releases through alpha.6. Alpha.5
+is a lightweight tag on alpha.4-versioned source with an empty manually created
+release, so it is not repaired or counted as release evidence. The next candidate
+is alpha.7 under the explicit manual-test scope above.
 
 ## Version and tag contract
 
@@ -13,6 +16,7 @@ Keep `Cargo.toml` workspace version, `src-tauri/tauri.conf.json` version, and th
 ```text
 v0.1.0-rc.1
 v0.1.0-beta.2
+v0.1.0-alpha.7
 v0.1.0
 ```
 
@@ -39,9 +43,9 @@ py -3 scripts/tag-release.py v0.1.0-rc.1 --push
 Without `--push`, the helper creates only the local tag. It never edits versions, moves tags, creates a repository or enables release flags.
 
 4. GitHub validates the approved repository identity and visibility, tag form/version/annotation, main ancestry and pins. Source checks and all four native builds run without signing secrets.
-5. Approve the narrowly scoped environments when supported/configured. Windows signs/verifies; macOS signs/notarizes/staples both architectures; Linux creates native packages.
+5. Approve the narrowly scoped environments when supported/configured. Windows signs/verifies. In full scope macOS signs/notarizes/staples both architectures; in the manual-test alpha scope it bundles explicitly unsigned/unnotarized apps without Apple credentials. Linux creates checksum-covered native packages.
 6. Publication requires the complete matrix. It checks the exact file set, creates a draft, uploads all assets, downloads and hashes them, rechecks remote identity/visibility/tag, then publishes the verified draft. A failed verification leaves the draft unpublished. It does not overwrite an existing release, even an existing draft.
-7. Download release assets from the public release; verify hashes, Windows publisher/timestamp, macOS notarization/Gatekeeper, Linux package installation and actual playback/lifecycle on representative machines. Record real outcomes separately from CI compilation.
+7. Download release assets from the public release; verify hashes, Windows publisher/timestamp, expected macOS Gatekeeper behavior for the declared trust state, Linux package installation and actual playback/lifecycle on representative machines. Record real outcomes separately from CI compilation.
 
 ## Expected release assets
 
@@ -50,10 +54,10 @@ For example `v0.1.0-rc.1`:
 | File suffix/name | Contents / verification |
 |---|---|
 | `-Windows-x64.zip` | Timestamped Authenticode-signed executable, license, instructions; requires WebView2; ZIP distribution, no installer |
-| `-macOS-arm64.dmg` | Apple Silicon app and signed/notarized/stapled disk image |
-| `-macOS-x64.dmg` | Intel app and signed/notarized/stapled disk image |
-| `-Linux-x64.deb` | Debian-family package; checksum, not native signed |
-| `-Linux-x64.AppImage` | Linux AppImage; checksum, not native signed |
+| `-macOS-arm64.dmg` / `-macOS-arm64-UNSIGNED.zip` | Full scope: signed/notarized/stapled Apple Silicon DMG. Manual-test alpha: unsigned, unnotarized app ZIP. |
+| `-macOS-x64.dmg` / `-macOS-x64-UNSIGNED.zip` | Full scope: signed/notarized/stapled Intel DMG. Manual-test alpha: unsigned, unnotarized app ZIP. |
+| `-Linux-x64.deb` / `-Linux-x64-UNSIGNED.deb` | Debian-family package; checksum, not native signed. Manual-test alpha uses the explicit `UNSIGNED` name. |
+| `-Linux-x64.AppImage` / `-Linux-x64-UNSIGNED.AppImage` | Linux AppImage; checksum, not native signed. Manual-test alpha uses the explicit `UNSIGNED` name. |
 | `-source.zip` | Exact tagged source archive |
 | `-player-sources.zip` | Both bundled wrapper and supplied hosted HTML, origin config and protocol addendum; not a deploy action |
 | `BUILD-METADATA.json` | Repository, tag, commit, run identity, Cargo.lock hash and binary/source hashes |

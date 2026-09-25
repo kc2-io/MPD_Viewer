@@ -117,7 +117,7 @@ class ReleaseTests(unittest.TestCase):
  def test_release_has_no_unsafe_pr_trigger(self):
   text=(ROOT/'.github/workflows/release.yml').read_text();self.assertNotIn('pull_request_target',text);self.assertNotIn('workflow_run:',text)
  def test_signing_failure_not_ignored(self):
-  text=(ROOT/'.github/workflows/release.yml').read_text();self.assertNotIn('continue-on-error',text);self.assertIn('needs: [gate, build, windows, macos, linux]',text);self.assertIn("needs.windows.result == 'success'",text);self.assertIn("needs.build.result == 'success'",text);self.assertIn("needs.macos.result == 'skipped'",text);self.assertIn("needs.linux.result == 'skipped'",text);self.assertIn('!cancelled()',text)
+  text=(ROOT/'.github/workflows/release.yml').read_text();self.assertNotIn('continue-on-error',text);self.assertIn('needs: [gate, build, windows, macos, macos_alpha, linux]',text);self.assertIn("needs.windows.result == 'success'",text);self.assertIn("needs.build.result == 'success'",text);self.assertIn("needs.macos.result == 'skipped'",text);self.assertIn("needs.macos_alpha.result == 'success'",text);self.assertIn("needs.linux.result == 'skipped'",text);self.assertIn('!cancelled()',text)
  def test_only_signer_can_request_oidc(self):
   text=(ROOT/'.github/workflows/release.yml').read_text();self.assertEqual(text.count('id-token: write'),1)
  def test_preserve_import_snapshot(self):
@@ -170,6 +170,31 @@ class ReleaseTests(unittest.TestCase):
    with self.subTest(value=value),self.assertRaises(ValueError):r.release_scope('0.1.0-alpha.1')
   (self.root/'.github/release-scope.json').unlink()
   with self.assertRaises(OSError):r.release_scope('0.1.0-alpha.1')
+ def multiplatform_alpha_scope(self):
+  v='0.1.0-alpha.7'
+  (self.root/'Cargo.toml').write_text(f'[workspace.package]\nversion="{v}"\n')
+  (self.root/'src-tauri/tauri.conf.json').write_text(json.dumps({'version':v}))
+  (self.root/'.github/release-scope.json').write_text('{"scope":"multiplatform-alpha"}')
+  return v
+ def test_multiplatform_scope_only_accepts_alpha(self):
+  self.multiplatform_alpha_scope()
+  self.assertEqual(r.release_scope('0.1.0-alpha.7'),'multiplatform-alpha')
+  for v in ['0.1.0','0.1.0-beta.1','0.1.0-rc.1','0.1.0-alpha.01','0.1.0-alpha.7+foo']:
+   with self.subTest(v=v),self.assertRaises(ValueError):r.release_scope(v)
+ def test_multiplatform_alpha_assets_state_unsigned_platforms(self):
+  v=self.multiplatform_alpha_scope();names=r.release_assets(v,r.release_scope(v))
+  self.assertEqual(names,[f'MPD_Viewer-v{v}-Windows-x64.zip',
+                          f'MPD_Viewer-v{v}-macOS-arm64-UNSIGNED.zip',
+                          f'MPD_Viewer-v{v}-macOS-x64-UNSIGNED.zip',
+                          f'MPD_Viewer-v{v}-Linux-x64-UNSIGNED.deb',
+                          f'MPD_Viewer-v{v}-Linux-x64-UNSIGNED.AppImage',
+                          f'MPD_Viewer-v{v}-source.zip',f'MPD_Viewer-v{v}-player-sources.zip'])
+ def test_unsigned_macos_package_is_alpha_scoped_and_uses_ditto(self):
+  v=self.multiplatform_alpha_scope();app=self.root/'target/release/bundle/macos/MPD Viewer.app';app.mkdir(parents=True)
+  with patch.dict(os.environ,{'RELEASE_VERSION':v}),patch.object(r.sys,'platform','darwin'),patch.object(r,'run') as run:
+   r.package_macos_unsigned('macOS-arm64')
+  self.assertEqual(run.call_args.args[:6],('ditto','-c','-k','--keepParent','--sequesterRsrc',str(app)))
+  self.assertTrue(str(run.call_args.args[-1]).endswith(f'MPD_Viewer-v{v}-macOS-arm64-UNSIGNED.zip'))
  def test_alpha_has_exact_windows_and_source_set(self):
   v=self.alpha_scope();names=r.release_assets(v,r.release_scope(v))
   self.assertEqual(names,[f'MPD_Viewer-v{v}-Windows-x64.zip',f'MPD_Viewer-v{v}-source.zip',f'MPD_Viewer-v{v}-player-sources.zip'])
@@ -212,5 +237,34 @@ class ReleaseTests(unittest.TestCase):
  def test_alpha_corrupt_download_never_publishes(self):self.alpha_publish(tamper=True)
  def test_alpha_changed_tag_never_publishes(self):self.alpha_publish(changed_tag=True)
  def test_alpha_existing_release_never_overwritten(self):self.alpha_publish(existing=True)
+ def test_multiplatform_alpha_packages_linux_as_explicitly_unsigned(self):
+  v=self.multiplatform_alpha_scope();bundle=self.root/'target/release/bundle';bundle.mkdir(parents=True)
+  (bundle/'mpd-viewer.deb').write_bytes(b'deb');(bundle/'mpd-viewer.AppImage').write_bytes(b'appimage')
+  with patch.dict(os.environ,{'RELEASE_VERSION':v}):r.package_linux()
+  self.assertEqual((r.final_dir()/f'MPD_Viewer-v{v}-Linux-x64-UNSIGNED.deb').read_bytes(),b'deb')
+  self.assertEqual((r.final_dir()/f'MPD_Viewer-v{v}-Linux-x64-UNSIGNED.AppImage').read_bytes(),b'appimage')
+ def test_multiplatform_alpha_publication_records_trust_state(self):
+  v=self.multiplatform_alpha_scope();out=r.final_dir()
+  for name in r.multiplatform_alpha_asset_names(v)[:5]:(out/name).write_bytes(b'platform fixture')
+  (self.root/'Cargo.lock').write_bytes(b'fixture lock')
+  env={'RELEASE_VERSION':v,'RELEASE_TAG':'v'+v,'GH_REPO':'kc2-io/MPD_Viewer'}
+  def command(*args,**kwargs):
+   if args[:2]==('git','rev-parse'):return 'a'*40
+   if args[:2]==('git','archive'):
+    target=next(a.removeprefix('--output=') for a in args if a.startswith('--output='));Path(target).write_bytes(b'fixture source')
+   if args[:3]==('gh','release','download'):
+    dest=Path(args[args.index('--dir')+1])
+    for p in out.iterdir():shutil.copy2(p,dest/p.name)
+   return ''
+  responses=[{'full_name':'kc2-io/MPD_Viewer','private':False},[],{'full_name':'kc2-io/MPD_Viewer','private':False}]
+  with patch.dict(os.environ,env,clear=True),patch.object(r,'run',side_effect=command) as run,patch.object(r,'gh_json',side_effect=responses),patch.object(r,'live_commit',return_value='a'*40):r.publish()
+  meta=json.loads((out/'BUILD-METADATA.json').read_text())
+  self.assertEqual(meta['scope'],'multiplatform-alpha')
+  self.assertIn('UNSIGNED',meta['signing']['macos']);self.assertIn('No OS-native signature',meta['signing']['linux'])
+  self.assertEqual(set(meta['assets']),set(r.multiplatform_alpha_asset_names(v)))
+  self.assertEqual(len(list(out.iterdir())),9)
+  self.assertIn('UNSIGNED',(self.root/'.release-work/notes.md').read_text())
+  create=next(c.args for c in run.call_args_list if c.args[:3]==('gh','release','create'))
+  self.assertIn('--prerelease',create)
 
 if __name__=='__main__':unittest.main(verbosity=2)
