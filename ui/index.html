@@ -10,12 +10,11 @@
   <div id="error" class="error" role="alert" hidden><span id="error-text"></span><button id="dismiss-error" aria-label="Dismiss error">Dismiss</button></div>
   <section class="metrics" aria-label="Session summary">
     <div class="metric"><span class="eyebrow">MANAGED SESSIONS</span><strong id="session-count">0 <small>/ 3</small></strong><span>Closing sessions still reserve capacity</span></div>
-    <div class="metric"><span class="eyebrow" id="playing-heading">OBSERVED PLAYBACK</span><strong id="playing-count">0</strong><span id="playing-detail">No playback reported</span></div>
     <div class="metric"><span class="eyebrow">LIVE MONITOR</span><strong id="monitor-heading">Not started</strong><span id="monitor-detail">No status check yet</span></div>
   </section>
   <div class="columns">
     <section class="panel favorites-panel">
-      <div class="section-header"><div><h2>Priority list <span id="favorite-count" class="count">0</span></h2><p>Highest priority first. Drag a channel or its grip to reorder, or use the arrows.</p></div><button id="refresh">Check now</button></div>
+      <div class="section-header"><div><h2>Priority list <span id="favorite-count" class="count">0</span></h2><p>Highest priority first. Drag a channel or its grip to reorder.</p></div><button id="refresh">Check now</button></div>
       <form id="add-form" class="add-form"><label class="sr-only" for="channel">Twitch channel</label><input id="channel" placeholder="Channel name or twitch.tv/channel" maxlength="512" autocomplete="off" required><button type="submit" class="primary">Add channel</button></form>
       <div class="list-header"><span>RANK</span><span>CHANNEL</span><span>CONTROLS</span></div>
       <ol id="favorites" class="favorites"></ol>
@@ -27,7 +26,7 @@
     <aside>
       <section class="panel settings-panel">
         <h2>Session settings</h2>
-        <label for="source">Live-status source</label><select id="source"><option value="demo">Demo · simulated channels</option><option value="twitch">Twitch · real channels</option></select>
+        <label for="source">Live-status source</label><select id="source"><option value="demo">Demo · simulated channels</option><option value="twitch">Twitch</option></select>
         <label for="limit">Maximum open sessions</label><input id="limit" type="number" min="1" max="1000" step="1" value="3"><p class="hint">Your limit, not a verified Twitch counting rule.</p>
         <div id="media-controls">
           <label for="quality">Preferred video quality</label>
