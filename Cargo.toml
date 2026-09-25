@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/twitch", "src-tauri"]
+members = ["crates/core", "crates/twitch", "src-tauri", "mobile-poc/src-tauri"]
 default-members = ["crates/core", "crates/twitch"]
 resolver = "2"
 exclude = ["vendor/tiny_http"]

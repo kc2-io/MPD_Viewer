@@ -2175,6 +2175,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mpd-viewer-mobile-poc"
+version = "0.1.0-alpha.7"
+dependencies = [
+ "mpd-core",
+ "serde",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "muda"
 version = "0.19.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

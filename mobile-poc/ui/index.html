@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#071116">
+  <title>MPD Viewer Mobile POC</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-bar">
+    <div>
+      <p class="eyebrow">MPD VIEWER</p>
+      <h1>Mobile control room</h1>
+    </div>
+    <span id="run-status" class="status">Stopped</span>
+  </header>
+
+  <main>
+    <aside class="poc-note" role="note">
+      <strong>Interaction POC</strong>
+      <span>Media and chat are simulated. Rust owns channel selection.</span>
+    </aside>
+
+    <nav class="mode-tabs" aria-label="Viewer layout">
+      <button id="show-grid" class="selected" data-display="grid" aria-pressed="true">4-up grid</button>
+      <button id="show-audio" data-display="audio_chat" aria-pressed="false">Audio + chat</button>
+    </nav>
+
+    <section id="grid-view" aria-labelledby="grid-heading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ACTIVE SESSIONS</p>
+          <h2 id="grid-heading">Four streams, one screen</h2>
+        </div>
+        <span id="session-count">0 / 4</span>
+      </div>
+      <div id="stream-grid" class="stream-grid"></div>
+    </section>
+
+    <section id="audio-view" aria-labelledby="audio-heading" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">CONCEPT ONLY</p>
+          <h2 id="audio-heading">Audio + chat</h2>
+        </div>
+        <span>No video</span>
+      </div>
+      <div id="audio-sessions" class="audio-sessions"></div>
+      <article class="chat-panel">
+        <header>
+          <div>
+            <p class="eyebrow">SIMULATED CHAT</p>
+            <h3 id="chat-channel">Choose a channel</h3>
+          </div>
+          <span class="live-dot">LIVE</span>
+        </header>
+        <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
+        <div class="chat-compose" aria-disabled="true">
+          <span>Message sending is disabled in the POC</span>
+          <button disabled aria-label="Send message">Send</button>
+        </div>
+      </article>
+    </section>
+
+    <section class="transport" aria-label="Playback automation controls">
+      <button id="start" class="primary">Start</button>
+      <button id="pause">Pause</button>
+      <button id="stop">Stop</button>
+    </section>
+
+    <details class="control-sheet">
+      <summary>
+        <span>Manage favorites & audio</span>
+        <span class="summary-detail">Rust controller</span>
+      </summary>
+      <div class="sheet-body">
+        <form id="add-form" class="add-form">
+          <label for="channel">Add Twitch channel</label>
+          <div><input id="channel" autocomplete="off" placeholder="channel or twitch.tv URL"><button>Add</button></div>
+        </form>
+
+        <div class="settings-row">
+          <label for="limit">Capacity</label>
+          <select id="limit">
+            <option>1</option><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option>
+          </select>
+        </div>
+        <div class="volume-row">
+          <label for="volume">Global volume <output id="volume-value">25%</output></label>
+          <input id="volume" type="range" min="0" max="100" value="25">
+          <label class="mute"><input id="muted" type="checkbox" checked> Mute all</label>
+        </div>
+
+        <div class="favorites-heading">
+          <h3>Priority</h3>
+          <button id="load-demo" class="quiet">Reset demo</button>
+        </div>
+        <ol id="favorites" class="favorites"></ol>
+
+        <details class="events">
+          <summary>Controller events</summary>
+          <pre id="events"></pre>
+        </details>
+      </div>
+    </details>
+
+    <p id="error" class="error" role="alert" hidden></p>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

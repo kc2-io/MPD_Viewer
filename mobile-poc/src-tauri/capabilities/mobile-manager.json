@@ -1,0 +1,7 @@
+{
+  "identifier": "mobile-manager",
+  "description": "Trusted bundled mobile POC interface only.",
+  "windows": ["main"],
+  "local": true,
+  "permissions": ["mobile-manage"]
+}

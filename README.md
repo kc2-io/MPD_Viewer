@@ -63,3 +63,13 @@ The binary/crate remains `mpd-tabber`; the visible product is **MPD Viewer**. Th
 Tags are annotated `vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-{alpha,beta,rc}.N`. Tag, workspace and Tauri versions must agree. No tag or release is created by merely opening this source archive. No workflow deploys the parent website.
 
 The source imports retain their existing license and provenance. Credentials, local reference-workflow audit output and signing material are excluded from Git.
+
+## Mobile interaction POC
+
+An Android-emulator-ready, media-free mobile POC lives in
+[`mobile-poc/`](mobile-poc/README.md). It reuses the Rust selection core, shows
+four assignments in a phone-sized 2×2 grid, and includes an audio + chat concept.
+Read the [mobile architecture investigation](docs/mobile/ARCHITECTURE-INVESTIGATION-2026-09-25.md)
+before treating the layout as a real Twitch player: official embed dimensions
+prevent four compliant videos on a typical phone, and the public embed API does
+not expose a supported audio-only mode.

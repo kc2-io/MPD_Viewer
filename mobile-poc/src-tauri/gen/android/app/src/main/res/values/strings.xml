@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">"MPD Viewer Mobile POC"</string>
+    <string name="main_activity_title">"MPD Viewer Mobile POC"</string>
+</resources>

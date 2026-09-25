@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "mobile-manage"
+description = "Read and update the bounded mobile demo controller."
+commands.allow = ["get_state", "dispatch"]
