@@ -109,6 +109,7 @@ try:
               window.__requestedSdk=n.src;queueMicrotask(()=>n.onload());
             }else append(n);
           }}; }""")
+        wrapper.add_script_tag(content=(ROOT/'player-wrapper/chat.js').read_text())
         wrapper.add_script_tag(content=(ROOT/'player-wrapper/quality.js').read_text())
         wrapper.evaluate((ROOT/'player-wrapper/player.js').read_text())
         wrapper.wait_for_function('window.__sdk!==undefined')
@@ -131,6 +132,7 @@ try:
         demo.on('request',lambda req:requests.append(req.url))
         document(demo,'player-wrapper','channel=alpha_demo&session=9&volume=25&muted=false&demo=true')
         demo.evaluate('window.__reports=[];window.__TAURI__={core:{invoke:async(c,a)=>window.__reports.push(a)}};')
+        demo.add_script_tag(content=(ROOT/'player-wrapper/chat.js').read_text())
         demo.add_script_tag(content=(ROOT/'player-wrapper/quality.js').read_text())
         demo.evaluate((ROOT/'player-wrapper/player.js').read_text())
         demo.wait_for_function('window.__reports.length>0')
