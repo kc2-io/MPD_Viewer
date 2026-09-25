@@ -113,13 +113,12 @@ const fixture = fs.readFileSync(path.join(root, 'tests/ui-fixture.js'), 'utf8');
     await page.evaluate(() => Promise.resolve());
   }
   try {
-    await check('mouse grip drag: first to last, rank feedback and arrow boundaries', async page => {
+    await check('mouse grip drag: first to last with rank feedback and no arrow controls', async page => {
       assert.equal(await page.locator('#rank-status').getAttribute('aria-live'), 'polite');
+      assert.equal(await page.getByRole('button', {name:/^Move .* (up|down)$/}).count(), 0);
       await drag(page, initial[0], initial[3], true);
       await expectOrder(page, [initial[1],initial[2],initial[3],initial[0]]);
       assert.deepEqual(await attempts(page), [{type:'move',login:initial[0],position:3}]);
-      assert(await page.getByRole('button', {name:`Move ${initial[1]} up`,exact:true}).isDisabled());
-      assert(await page.getByRole('button', {name:`Move ${initial[0]} down`,exact:true}).isDisabled());
       assert((await page.locator('#rank-status').textContent()).trim(), 'A completed move is announced');
     });
     await check('mouse row drag: last to first', async page => {
@@ -159,16 +158,9 @@ const fixture = fs.readFileSync(path.join(root, 'tests/ui-fixture.js'), 'utf8');
       assert.deepEqual(await attempts(page), []);
       assert.deepEqual(await order(page), initial);
     });
-    await check('row buttons reject drag initiation and arrows retain keyboard operation', async page => {
+    await check('row buttons reject drag initiation', async page => {
       assert(await eventDrop(page, initial[1], initial[3], true, false, true), 'Control dragstart is cancelled');
       assert.deepEqual(await attempts(page), []);
-      await page.getByRole('button', {name:`Move ${initial[1]} up`,exact:true}).focus();
-      await page.keyboard.press('Enter');
-      await expectOrder(page, [initial[1],initial[0],initial[2],initial[3]]);
-      await page.getByRole('button', {name:`Move ${initial[1]} down`,exact:true}).focus();
-      await page.keyboard.press('Space');
-      await expectOrder(page, initial);
-      assert.deepEqual(await attempts(page), [{type:'move',login:initial[1],position:0},{type:'move',login:initial[1],position:1}]);
     });
     await check('presence refresh keeps the drag DOM stable and drop remains usable', async page => {
       await page.evaluate(() => {window.__heldRow = document.querySelector('.favorite');});
@@ -200,8 +192,6 @@ const fixture = fs.readFileSync(path.join(root, 'tests/ui-fixture.js'), 'utf8');
       assert.deepEqual(await order(page), initial, 'No optimistic rank change before native success');
       assert(await page.evaluate(() => __heldRow === document.querySelector('.favorite')), 'Pending save must not replace rows');
       await eventDrop(page, initial[3], initial[0], false);
-      const arrow = page.getByRole('button', {name:`Move ${initial[1]} up`,exact:true});
-      if (!await arrow.isDisabled()) await arrow.click();
       assert.equal((await attempts(page)).length, 1);
       await page.evaluate(() => {__deferMove = false;__finishMove();});
       await expectOrder(page, [initial[1],initial[2],initial[3],initial[0]]);
@@ -239,12 +229,10 @@ const fixture = fs.readFileSync(path.join(root, 'tests/ui-fixture.js'), 'utf8');
       assert.match(await page.locator('#rank-status').textContent(), /refresh/i);
       assert.doesNotMatch(await page.locator('#rank-status').textContent(), /could not save/i);
       await eventDrop(page, initial[3], initial[0], false);
-      const arrow = page.getByRole('button', {name:`Move ${initial[1]} up`,exact:true});
-      if (!await arrow.isDisabled()) await arrow.click();
       assert.equal((await attempts(page)).length, 1, 'Stale ranks cannot dispatch another move');
       await page.evaluate(() => {__failRead = false;__failReadsAfterMove = false;});
       await expectOrder(page, [initial[1],initial[2],initial[3],initial[0]]);
-      await page.getByRole('button', {name:`Move ${initial[0]} up`,exact:true}).click();
+      await drag(page, initial[0], initial[3], false);
       await expectOrder(page, [initial[1],initial[2],initial[0],initial[3]]);
       assert.deepEqual(await attempts(page), [{type:'move',login:initial[0],position:3},{type:'move',login:initial[0],position:2}]);
     });
