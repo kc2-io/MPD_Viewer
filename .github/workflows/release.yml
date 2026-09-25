@@ -207,8 +207,48 @@ jobs:
           path: .release-assets/final/*
           if-no-files-found: error
           retention-days: 7
+  macos_alpha:
+    if: needs.gate.outputs.scope == 'multiplatform-alpha'
+    name: Bundle UNSIGNED ${{ matrix.platform }} alpha
+    needs: [gate, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: macOS-arm64
+          - os: macos-15-intel
+            platform: macOS-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install exact packaging tool
+        run: cargo install tauri-cli --version 2.11.4 --locked
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: internal-native-${{ matrix.platform }}
+          path: .release-work
+      - run: mkdir -p target/release && tar -xzf .release-work/native.tar.gz -C target/release
+      - name: Bundle app without Developer ID credentials
+        run: cargo tauri bundle --bundles app
+      - name: Package explicitly unsigned and unnotarized app
+        env:
+          RELEASE_VERSION: ${{ needs.gate.outputs.version }}
+        run: python scripts/release-tools.py package-macos-unsigned --platform "${{ matrix.platform }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-${{ matrix.platform }}
+          path: .release-assets/final/*
+          if-no-files-found: error
+          retention-days: 7
   linux:
-    if: needs.gate.outputs.scope == 'full'
+    if: needs.gate.outputs.scope == 'full' || needs.gate.outputs.scope == 'multiplatform-alpha'
     name: Package Linux x64
     needs: [gate, build]
     runs-on: ubuntu-22.04
@@ -243,12 +283,16 @@ jobs:
           retention-days: 7
   publish:
     name: Publish GitHub release
-    needs: [gate, build, windows, macos, linux]
+    needs: [gate, build, windows, macos, macos_alpha, linux]
     if: >-
       ${{ !cancelled() && needs.gate.result == 'success' && needs.build.result == 'success' &&
           needs.windows.result == 'success' &&
-          ((needs.gate.outputs.scope == 'full' && needs.macos.result == 'success' && needs.linux.result == 'success') ||
-           (needs.gate.outputs.scope == 'windows-alpha' && needs.macos.result == 'skipped' && needs.linux.result == 'skipped')) }}
+          ((needs.gate.outputs.scope == 'full' && needs.macos.result == 'success' &&
+            needs.macos_alpha.result == 'skipped' && needs.linux.result == 'success') ||
+           (needs.gate.outputs.scope == 'multiplatform-alpha' && needs.macos.result == 'skipped' &&
+            needs.macos_alpha.result == 'success' && needs.linux.result == 'success') ||
+           (needs.gate.outputs.scope == 'windows-alpha' && needs.macos.result == 'skipped' &&
+            needs.macos_alpha.result == 'skipped' && needs.linux.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     environment: release-publish
     permissions:

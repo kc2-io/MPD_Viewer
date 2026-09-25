@@ -94,11 +94,12 @@ def require_repository_policy(repository: str, private: bool) -> None:
 
 def release_scope(v: str) -> str:
     policy = json.loads((ROOT / ".github/release-scope.json").read_text(encoding="utf-8"))
-    if not isinstance(policy, dict) or set(policy) != {"scope"} or policy["scope"] not in ("full", "windows-alpha"):
+    alpha_scopes = ("windows-alpha", "multiplatform-alpha")
+    if not isinstance(policy, dict) or set(policy) != {"scope"} or policy["scope"] not in ("full", *alpha_scopes):
         raise ValueError("Invalid committed release scope.")
     scope = policy["scope"]
-    if scope == "windows-alpha" and (not SEMVER.fullmatch(v) or "-alpha." not in v):
-        raise ValueError("Windows-only scope is permitted only for an alpha prerelease.")
+    if scope in alpha_scopes and (not SEMVER.fullmatch(v) or "-alpha." not in v):
+        raise ValueError("Reduced-signing scopes are permitted only for an alpha prerelease.")
     return scope
 
 
@@ -108,6 +109,8 @@ def release_assets(v: str, scope: str) -> list[str]:
         return names
     if scope == "windows-alpha" and SEMVER.fullmatch(v) and "-alpha." in v:
         return [name for name in names if name.endswith(("-Windows-x64.zip", "-source.zip", "-player-sources.zip"))]
+    if scope == "multiplatform-alpha" and SEMVER.fullmatch(v) and "-alpha." in v:
+        return multiplatform_alpha_asset_names(v)
     raise ValueError("Unsupported release asset scope.")
 
 
@@ -160,6 +163,16 @@ def asset_names(v: str) -> list[str]:
             f"MPD_Viewer-v{v}-player-sources.zip"]
 
 
+def multiplatform_alpha_asset_names(v: str) -> list[str]:
+    return [f"MPD_Viewer-v{v}-Windows-x64.zip",
+            f"MPD_Viewer-v{v}-macOS-arm64-UNSIGNED.zip",
+            f"MPD_Viewer-v{v}-macOS-x64-UNSIGNED.zip",
+            f"MPD_Viewer-v{v}-Linux-x64-UNSIGNED.deb",
+            f"MPD_Viewer-v{v}-Linux-x64-UNSIGNED.AppImage",
+            f"MPD_Viewer-v{v}-source.zip",
+            f"MPD_Viewer-v{v}-player-sources.zip"]
+
+
 def env_version() -> str:
     v = os.environ["RELEASE_VERSION"]
     if v != version():
@@ -200,12 +213,32 @@ def package_windows() -> None:
 
 def package_linux() -> None:
     v = env_version()
+    scope = release_scope(v)
+    if scope == "full":
+        names = asset_names(v)
+    elif scope == "multiplatform-alpha":
+        names = multiplatform_alpha_asset_names(v)
+    else:
+        raise ValueError("Linux release packages are not permitted by the committed scope.")
     bundle = ROOT / "target/release/bundle"
-    for suffix, name in [(".deb", asset_names(v)[3]), (".AppImage", asset_names(v)[4])]:
+    for suffix, name in [(".deb", names[3]), (".AppImage", names[4])]:
         candidates = list(bundle.rglob("*" + suffix))
         if len(candidates) != 1 or not candidates[0].is_file():
             raise ValueError("Expected exactly one Linux package with suffix " + suffix)
         shutil.copy2(candidates[0], final_dir() / name)
+
+
+def package_macos_unsigned(platform: str) -> None:
+    v = env_version()
+    if sys.platform != "darwin":
+        raise ValueError("Unsigned macOS app packaging requires a macOS runner.")
+    if release_scope(v) != "multiplatform-alpha" or platform not in ("macOS-arm64", "macOS-x64"):
+        raise ValueError("Unsigned macOS app ZIPs are permitted only by the multiplatform alpha scope.")
+    apps = list((ROOT / "target/release/bundle/macos").glob("*.app"))
+    if len(apps) != 1 or not apps[0].is_dir():
+        raise ValueError("Expected exactly one macOS app bundle.")
+    name = multiplatform_alpha_asset_names(v)[1 if platform == "macOS-arm64" else 2]
+    run("ditto", "-c", "-k", "--keepParent", "--sequesterRsrc", str(apps[0]), str(final_dir() / name))
 
 
 def gh_json(*args: str) -> object:
@@ -261,6 +294,9 @@ def publish() -> None:
     if scope == "full":
         signing.update({"macos": "Developer ID + notarization + stapling checked",
                         "linux": "No OS-native signature; SHA-256 checksums only"})
+    elif scope == "multiplatform-alpha":
+        signing.update({"macos": "UNSIGNED and not notarized; manual alpha testing only",
+                        "linux": "No OS-native signature; SHA-256 checksums only"})
     manifest = {"schema": 2, "scope": scope, "repository": repo, "tag": tag, "commit": head,
                 "repository_visibility": release_policy()["visibility"],
                 "run_id": os.environ.get("GITHUB_RUN_ID"), "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
@@ -275,15 +311,31 @@ def publish() -> None:
     files.append(sums)
     notes = ROOT / ".release-work/notes.md"
     notes.parent.mkdir(parents=True, exist_ok=True)
-    platforms = ("Windows-only alpha: signed x64 ZIP, requires Microsoft Edge WebView2 Runtime. "
-                 "macOS and Linux binaries are not included."
-                 if scope == "windows-alpha" else
-                 "Windows: signed x64 ZIP. macOS: signed/notarized Apple Silicon and Intel DMGs. "
-                 "Linux: x64 DEB/AppImage with checksums, not OS-native signed.")
+    if scope == "windows-alpha":
+        platforms = ("Windows-only alpha: signed x64 ZIP, requires Microsoft Edge WebView2 Runtime. "
+                     "macOS and Linux binaries are not included.")
+    elif scope == "multiplatform-alpha":
+        platforms = ("Manual-test alpha for all three desktop families. Windows: signed x64 ZIP. "
+                     "macOS: UNSIGNED and not notarized Apple Silicon and Intel app ZIPs. "
+                     "Linux: UNSIGNED x64 DEB/AppImage with SHA-256 checksums. "
+                     "The macOS and Linux filenames and metadata intentionally identify their trust state.")
+        install_notes = ("For macOS, extract the app ZIP; because it has no Developer ID signature or "
+                         "notarization, expect Gatekeeper to warn or block it. Use it only on a test system "
+                         "and record the exact result. Linux testers can use the DEB or AppImage after "
+                         "verifying SHA256SUMS.txt.\n\n")
+    else:
+        platforms = ("Windows: signed x64 ZIP. macOS: signed/notarized Apple Silicon and Intel DMGs. "
+                     "Linux: x64 DEB/AppImage with checksums, not OS-native signed.")
+    if scope != "multiplatform-alpha":
+        install_notes = ""
     notes.write_text(f"MPD Viewer `{tag}` from `{head}`.\n\n" + platforms + "\n\n"
                      "Close the old app, extract the Windows ZIP, and run MPD_Viewer.exe. "
                      "Existing preferences are preserved. This is a ZIP distribution, not an installer.\n\n"
-                     "New since alpha.3: full Twitch channel pages are now the default viewer. "
+                     + install_notes +
+                     "Compared with alpha.6, this release adds clearly labeled macOS and Linux manual-test "
+                     "packages; the application feature set is unchanged. Current functionality includes "
+                     "isolated native GUI end-to-end coverage on Windows, macOS and Linux and full Twitch "
+                     "channel pages as the default viewer. "
                      "The same executable retains embedded mode behind --embedded-viewer. Optional "
                      "per-channel timers (Always, 10 minutes, or custom minutes) rotate assignments to "
                      "the next eligible live favorite. Pause automation freezes timers; paused video "
@@ -294,7 +346,7 @@ def publish() -> None:
                      "For web viewers, use Twitch's own volume and quality controls. Avatar menu > "
                      "Dark Theme selects Twitch's remembered appearance; the manager follows Windows. "
                      "Central audio/quality controls remain available for embedded mode, including "
-                     "the closest available resolution preference added since alpha.3. No unsupported "
+                     "the closest available resolution preference. No unsupported "
                      "Twitch player API or website styling is injected into full channel pages.\n\n"
                      "Windows native checks observed authorization surviving multiple restarts, "
                      "remembered full-page/chat dark appearance, a one-minute live-channel rotation, "
@@ -336,13 +388,13 @@ def publish() -> None:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("command", choices=["check-version", "require-lock", "pin-rust", "gate", "require-env",
-                                        "stage-ci", "package-windows", "package-linux", "publish"])
+                                        "stage-ci", "package-windows", "package-macos-unsigned", "package-linux", "publish"])
     p.add_argument("names", nargs="*")
     p.add_argument("--platform")
     a = p.parse_args()
     if a.command == "check-version": print(version())
     elif a.command == "require-env": require_env(a.names)
-    elif a.command == "stage-ci": stage_ci(a.platform)
+    elif a.command in ("stage-ci", "package-macos-unsigned"): globals()[a.command.replace("-", "_")](a.platform)
     else: globals()[a.command.replace("-", "_")]()
 
 if __name__ == "__main__":
