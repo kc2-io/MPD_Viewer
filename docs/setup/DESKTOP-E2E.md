@@ -33,6 +33,13 @@ sanitized logs, hashes, staging decisions and an independent media-validation
 report. The job summary links the exact GitHub artifact and its GitHub-provided
 digest; retention remains seven days.
 
+Hosted runner images do not currently include FFmpeg. The workflow therefore
+downloads the fixed `eugeneware/ffmpeg-static` `b6.1.1` FFmpeg and FFprobe assets
+for its exact OS/architecture, verifies committed SHA-256 values before bounded
+decompression under `RUNNER_TEMP`, and checks the required capture backend and
+H.264 encoder. Tool paths, versions and executable hashes are retained in the
+runtime and test manifests.
+
 The pull-request reporter is deliberately split from the untrusted PR workflow.
 It runs reviewed default-branch code on `workflow_run`, reads only GitHub job and
 artifact metadata, and never downloads PR artifacts. Its initial deployment is

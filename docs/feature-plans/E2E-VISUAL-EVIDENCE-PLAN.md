@@ -116,6 +116,17 @@ and the native macOS screen recorder followed by the same bounded validation.
 Do not add an unpinned recorder action or silently replace a failed platform
 recording with a passing placeholder.
 
+The first hosted PR run proved that none of the assigned images supplies FFmpeg.
+Provision release `b6.1.1` from `eugeneware/ffmpeg-static` using the repository's
+standard-library installer. It selects one fixed FFmpeg/FFprobe pair for each
+supported OS/architecture, verifies committed SHA-256 values on the compressed
+release assets before bounded decompression into `RUNNER_TEMP`, and checks the
+platform capture device plus `libx264` before any build or GUI work. No setup
+action, package-manager mutation, cache or secret is involved. The release bundle
+contains different underlying FFmpeg builds by platform, so the runtime manifest
+records the actual executable path, version and hash and hosted playback remains
+an acceptance gate.
+
 Replace the staging script's alphabetical, global 8 MiB/128-file treatment with
 reserved per-type quotas and priority: JUnit/manifests first, sanitized logs next,
 video next and checkpoints last. Core reports cannot be evicted by screenshots.

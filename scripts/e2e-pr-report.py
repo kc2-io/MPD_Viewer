@@ -20,6 +20,7 @@ INFRA_PATHS = (PATH, "tests/e2e/run.mjs", "tests/e2e/support.mjs", "tests/e2e/sp
                "scripts/e2e-runner-test.py", "scripts/e2e-stage-evidence.py",
                "scripts/e2e-runtime-manifest.py", "scripts/e2e-validate-evidence.py",
                "scripts/e2e-job-summary.py", "scripts/install-linux-deps.sh",
+               "scripts/install-e2e-ffmpeg.py",
                "scripts/verify-native-host.py", ".github/action-pins.json")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 GITHUB_ACTIONS_BOT_ID = 41898282

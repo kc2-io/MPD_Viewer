@@ -53,6 +53,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
+      - name: Install pinned E2E video tools
+        run: python scripts/install-e2e-ffmpeg.py
       - name: Initialize isolated evidence paths
         run: python scripts/e2e-runtime-manifest.py
       - name: Linux native and desktop dependencies

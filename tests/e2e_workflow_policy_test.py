@@ -36,6 +36,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("environment:", text)
         self.assertIn("MPD_E2E_RECORD_VIDEO: '1'", text)
         self.assertIn("MPD_E2E_CHECKPOINTS:", text)
+        self.assertIn("python scripts/install-e2e-ffmpeg.py", text)
         self.assertIn("Validate visual evidence (advisory rollout)", text)
         self.assertIn("compression-level: 0", text)
         self.assertIn("e2e-job-summary.py", text)
