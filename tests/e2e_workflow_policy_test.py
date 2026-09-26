@@ -61,7 +61,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(text.count("\n      - uses:"), 2)
         self.assertEqual(text.count("\n      - name:"), 1)
         self.assertIn("- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", text)
-        self.assertIn("- uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1", text)
+        self.assertIn("- uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97", text)
         self.assertEqual(run_bodies(text), ["python scripts/e2e-pr-report.py --write"])
         jobs = text.split("\njobs:\n", 1)[1]
         self.assertEqual(re.findall(r"^  ([A-Za-z0-9_-]+):\s*$", jobs, re.MULTILINE), ["report"])
