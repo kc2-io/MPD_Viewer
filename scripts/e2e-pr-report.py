@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Metadata-only Desktop E2E PR reporter; --write is the sole mutation mode."""
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -75,6 +76,22 @@ def numeric(value):
     return isinstance(value, int) and value > 0 and not isinstance(value, bool)
 
 
+def timestamp(value, label):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", value):
+        raise ValueError(f"Invalid {label} timestamp")
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise ValueError(f"Invalid {label} timestamp") from None
+
+
+def active_at(candidate, instant):
+    created = timestamp(candidate.get("created_at"), "pull request creation")
+    closed_value = candidate.get("closed_at")
+    closed = None if closed_value is None else timestamp(closed_value, "pull request closure")
+    return created <= instant and (closed is None or instant < closed)
+
+
 def checked_run(event, repo, workflow):
     event, workflow = obj(event), obj(workflow)
     run = obj(event.get("workflow_run"))
@@ -91,6 +108,7 @@ def checked_run(event, repo, workflow):
     if (not numeric(obj(run.get("head_repository")).get("id")) or not isinstance(branch, str)
             or not branch or len(branch) > 200):
         raise ValueError("Missing run head repository")
+    timestamp(run.get("created_at"), "run creation")
     return run
 
 
@@ -111,11 +129,22 @@ def resolve_pr(api, run, repo_id):
         branch = run.get("head_branch", "")
         if not re.fullmatch(r"[A-Za-z0-9-]+", owner):
             raise ValueError("Invalid fallback head selector")
-        selector = urlencode({"state": "open", "head": owner + ":" + branch})
-        candidates = api.pages(f"/repos/{api.repo}/pulls?{selector}")
+        selector = urlencode({"state": "all", "head": owner + ":" + branch})
+        historical = api.pages(f"/repos/{api.repo}/pulls?{selector}")
+        run_created = timestamp(run.get("created_at"), "run creation")
+        candidates = []
+        for candidate in historical:
+            candidate = obj(candidate)
+            head, base = obj(candidate.get("head")), obj(candidate.get("base"))
+            if (active_at(candidate, run_created)
+                    and obj(head.get("repo")).get("id") == head_repo.get("id")
+                    and obj(base.get("repo")).get("id") == repo_id):
+                candidates.append(candidate)
         if len(candidates) != 1:
-            raise ValueError("Fork fallback did not identify exactly one PR")
+            raise ValueError("Fork fallback did not identify exactly one PR active when the run began")
     pr = obj(candidates[0])
+    if not active_at(pr, timestamp(run.get("created_at"), "run creation")):
+        raise ValueError("Pull request association was not active when the run began")
     head, base = obj(pr.get("head")), obj(pr.get("base"))
     if pr.get("state") != "open" or head.get("sha") != run["head_sha"]:
         raise StaleRun("PR head moved or closed")
@@ -203,7 +232,8 @@ def body(api, run, pr, changed):
         completed = "unknown"
     banner = "Test infrastructure differs from the default branch; this PR controls its E2E tests and capture code.\n\n" if changed else ""
     return (f"{MARKER}\n### Desktop E2E evidence\n\n{banner}"
-            f"PR head / Actions run head: `{pr['head']['sha']}`. GitHub tested the generated "
+            f"PR head / Actions run head: `{pr['head']['sha']}`. PR base at report time: "
+            f"`{pr['base']['sha']}`. GitHub tested the generated "
             "pull-request merge ref; its exact checkout SHA is recorded inside each artifact manifest.\n\n"
             f"Run {run_id}, attempt {attempt}: **{status}**; updated {completed}. "
             f"[Open run and summary]({link}).\n\n"
@@ -249,10 +279,13 @@ def report(api, event, write=False):
         return f"Dry run: PR #{number}; would {'update' if matches else 'create'} Desktop E2E comment.\n\n{content}"
     current_pr = obj(api.get(f"/repos/{api.repo}/pulls/{number}"))
     current_head = obj(current_pr.get("head"))
+    current_base = obj(current_pr.get("base"))
     if (current_pr.get("state") != "open" or current_head.get("sha") != run["head_sha"]
             or obj(current_head.get("repo")).get("id") != obj(run.get("head_repository")).get("id")
+            or current_base.get("sha") != obj(pr.get("base")).get("sha")
+            or obj(current_base.get("repo")).get("id") != repo_info.get("id")
             or not newest(api, run, workflow["id"])):
-        return "Skipped PR whose head or newest run changed before comment write."
+        return "Skipped PR whose head, base or newest run changed before comment write."
     if matches:
         api.request("PATCH", f"/repos/{api.repo}/issues/comments/{matches[0]['id']}", {"body": content})
         return f"Updated Desktop E2E comment on PR #{number}."

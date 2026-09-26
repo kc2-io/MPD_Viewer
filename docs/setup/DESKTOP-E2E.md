@@ -42,11 +42,14 @@ runtime and test manifests.
 
 The pull-request reporter is deliberately split from the untrusted PR workflow.
 It runs reviewed default-branch code on `workflow_run`, reads only GitHub job and
-artifact metadata, and never downloads PR artifacts. Its initial deployment is
-dry-run only with `contents: read`, `actions: read` and `pull-requests: read`; it
-receives `pull-requests: write` only in a second reviewed change after hosted read-only
-behavior is observed. Until that second rollout, evidence remains available from
-the Actions run/job summary but no PR comment is created.
+artifact metadata, and never downloads PR artifacts. The first deployment used
+`contents: read`, `actions: read` and `pull-requests: read`; its hosted dry run was
+observed before the separately reviewed rollout granted only `pull-requests: write`.
+The reporter now creates or updates one bot-owned PR comment while the same evidence
+remains downloadable from the Actions run and job summary.
+Association-less runs are matched against the unique PR that was active when the
+run began, and both base and head are rechecked before a comment write. Editing a
+PR triggers a fresh capture; the comment identifies the base SHA as of reporting.
 
 Design, threat model, implementation packets and acceptance gates are recorded in
 [`E2E-VISUAL-EVIDENCE-PLAN.md`](../feature-plans/E2E-VISUAL-EVIDENCE-PLAN.md).
