@@ -162,7 +162,10 @@ function favorites(s) {
 }
 function players(s) {
   const telemetry=s.settings.demo||s.viewer?.telemetry!==false;
-  const key=JSON.stringify([s.players,s.settings.demo,s.viewer]); if(key===playersKey)return; playersKey=key;
+  const key=JSON.stringify([s.players,s.settings.demo,s.settings.muted,s.viewer]); if(key===playersKey)return; playersKey=key;
+  const active=document.activeElement;
+  const focusKey=$('players').contains(active)&&active.dataset.playerAction
+    ? [active.dataset.playerAction,active.dataset.session] : null;
   $('players').replaceChildren(...s.players.map(p=>{
     const card=node('article','','player-card'); card.append(node('strong',p.login));
     card.append(node('span',playbackLabel(p,s.settings.demo,telemetry),'player-state'));
@@ -175,8 +178,21 @@ function players(s) {
       card.append(node('div',`Session ${p.session}\nPoints, streaks, and playback state are reported only inside Twitch.`,'player-meta'));
     }
     card.append(node('div',timerLabel(p.timer),'player-timer'));
-    const actions=node('div','','button-row'); actions.append(button('Focus player',`Focus ${p.login}`,{type:'focus',login:p.login},''),button('Skip',`Skip ${p.login}`,{type:'skip',login:p.login},''),button('Retry',`Retry ${p.login}`,{type:'retry',login:p.login},'')); card.append(actions); return card;
+    const actions=node('div','','button-row');
+    if(s.viewer?.window_mute_controls===true&&p.window_muted!=null) {
+      const globallyMuted=!!s.settings.muted;
+      const muteText=globallyMuted?(p.window_muted?'Muted globally':'Unmuted · retry global mute'):p.window_muted?'Unmute page':'Mute page';
+      const muteLabel=globallyMuted?`${p.login} page window is ${p.window_muted?'muted':'unmuted'}; global mute control is on`
+        :`${p.window_muted?'Unmute':'Mute'} ${p.login} page window`;
+      const mute=button(muteText,muteLabel,
+        {type:'set_window_mute',session:p.session,muted:!p.window_muted},'');
+      mute.dataset.playerAction='window-mute'; mute.dataset.session=String(p.session);
+      mute.disabled=globallyMuted||p.closing; actions.append(mute);
+    }
+    actions.append(button('Focus player',`Focus ${p.login}`,{type:'focus',login:p.login},''),button('Skip',`Skip ${p.login}`,{type:'skip',login:p.login},''),button('Retry',`Retry ${p.login}`,{type:'retry',login:p.login},'')); card.append(actions); return card;
   }));
+  if(focusKey) Array.from($('players').querySelectorAll('[data-player-action][data-session]'))
+    .find(control=>control.dataset.playerAction===focusKey[0]&&control.dataset.session===focusKey[1])?.focus();
 }
 function render(s) {
   state=s;
@@ -197,8 +213,16 @@ function render(s) {
   if(document.activeElement!==$('rescan'))$('rescan').value=s.settings.rescan_minutes;
   if(document.activeElement!==$('volume')){$('volume').value=s.settings.volume;$('volume-value').textContent=`${s.settings.volume}%`;}
   if(document.activeElement!==$('muted'))$('muted').checked=s.settings.muted;
+  $('window-muted').checked=s.settings.muted;
   const mediaControls=s.settings.demo||s.viewer?.media_controls!==false;
-  $('media-controls').hidden=!mediaControls; $('twitch-page-note').hidden=mediaControls;
+  const fullPage=!s.settings.demo&&s.viewer?.twitch_channel_page===true;
+  const windowMute=fullPage&&s.viewer?.window_mute_controls===true;
+  $('media-controls').hidden=!mediaControls;
+  $('window-mute-controls').hidden=!windowMute;
+  $('twitch-page-note').hidden=!fullPage;
+  if(fullPage) $('twitch-page-note').textContent=windowMute
+    ? 'Volume and preferred quality remain inside each Twitch page. MPD Viewer can only mute the whole native viewer window. For dark mode, use Twitch’s remembered Dark Theme setting.'
+    : 'Use each Twitch page for volume and quality. Native whole-window mute is unavailable on this platform. For dark mode, use Twitch’s remembered Dark Theme setting.';
   $('auth-status').textContent=s.connected_as?`Monitoring as ${s.connected_as}`:s.auth_pending?(s.user_code?'Waiting for authorization…':'Connecting…'):'Not connected';
   $('connect').disabled=s.settings.demo||(s.auth_pending&&!s.user_code);
   $('connect').textContent=s.auth_pending?(s.user_code?'Continue in Twitch':'Connecting Twitch…'):s.connected_as?'Reconnect Twitch':'Connect Twitch';
@@ -246,6 +270,10 @@ $('rescan').addEventListener('change',()=>{const minutes=Number($('rescan').valu
 $('rescan').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('rescan').blur();}});
 function changeAudio(){clearTimeout(audioTimer);$('volume-value').textContent=`${$('volume').value}%`;audioTimer=setTimeout(()=>act({type:'set_audio',volume:Number($('volume').value),muted:$('muted').checked}),120);}
 $('volume').addEventListener('input',changeAudio);$('muted').addEventListener('change',changeAudio);
+$('window-muted').addEventListener('change',async()=>{
+  const control=$('window-muted');
+  if(!await act({type:'set_window_mute',muted:control.checked}))control.checked=!!state?.settings.muted;
+});
 $('connect').addEventListener('click',()=>act({type:'connect'}));
 $('disconnect').addEventListener('click',()=>act({type:'disconnect'}));
 $('dismiss-error').addEventListener('click',()=>{localError=null;$('error').hidden=true;act({type:'clear_error'});});

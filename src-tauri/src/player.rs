@@ -12,6 +12,29 @@ pub struct Host {
     mode: ViewerMode,
     production: Option<Url>,
 }
+
+fn initialize_native_page(
+    muted: bool,
+    mute: impl FnOnce(bool) -> Result<(), String>,
+    navigate: impl FnOnce() -> Result<(), String>,
+    show: impl FnOnce() -> Result<(), String>,
+    mut destroy: impl FnMut(),
+) -> Result<(), String> {
+    if let Err(error) = mute(muted) {
+        destroy();
+        return Err(format!("Could not initialize page-window audio: {error}"));
+    }
+    if let Err(error) = navigate() {
+        destroy();
+        return Err(format!("Could not load player after initializing audio: {error}"));
+    }
+    if let Err(error) = show() {
+        destroy();
+        return Err(format!("Could not show player after initializing audio: {error}"));
+    }
+    Ok(())
+}
+
 impl Host {
     pub fn start() -> Result<Self, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
@@ -155,15 +178,19 @@ impl Host {
         #[cfg(not(feature = "e2e-tests"))]
         let chat_channel = login.to_owned();
         let label = self.label(id, settings.demo);
+        let native_mute = self.mode == ViewerMode::TwitchPage && !settings.demo
+            && crate::window_audio::supported();
         let origin = url.origin();
+        let initial_url = if native_mute { Url::parse("about:blank").expect("valid blank URL") }
+            else { url.clone() };
         #[cfg(not(feature = "e2e-tests"))]
         let demo = settings.demo;
         #[cfg(not(feature = "e2e-tests"))]
         let mode = self.mode;
-        let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url.clone()))
+        let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(initial_url))
             .title(window_title(login, settings.demo, None))
             .inner_size(1180.0, 720.0).min_inner_size(430.0, 480.0)
-            .focused(false);
+            .focused(false).visible(!native_mute);
         #[cfg(feature = "e2e-tests")]
         let builder = crate::e2e::isolate(builder);
         #[cfg(feature = "e2e-tests")]
@@ -184,8 +211,9 @@ impl Host {
             })));
             builder.initialization_script(adapter)
         } else { builder };
-        builder
+        let window = builder
             .on_navigation(move |target| {
+                if native_mute && target.as_str() == "about:blank" { return true; }
                 #[cfg(feature = "e2e-tests")]
                 return target.origin() == origin;
                 #[cfg(not(feature = "e2e-tests"))]
@@ -194,6 +222,13 @@ impl Host {
             .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
             .on_download(|_, _| false)
             .build().map_err(|e| format!("Could not create player: {e}"))?;
+        if native_mute {
+            initialize_native_page(settings.muted,
+                |muted| crate::window_audio::set_muted(&window, muted),
+                || window.navigate(url).map_err(|error| error.to_string()),
+                || window.show().map_err(|error| error.to_string()),
+                || { let _ = window.destroy(); })?;
+        }
         Ok(label)
     }
 }
@@ -258,9 +293,16 @@ pub fn audio(app: &AppHandle, label: &str, settings: &Settings) -> Result<(), St
     Ok(())
 }
 
+pub fn window_mute(app: &AppHandle, label: &str, muted: bool) -> Result<(), String> {
+    if !label.starts_with("twitch-page-") { return Err("Window mute requires a full-page Twitch session.".into()); }
+    let window = app.get_webview_window(label).ok_or("Player window is no longer available.")?;
+    crate::window_audio::set_muted(&window, muted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     #[test]
     fn chat_navigation_is_bound_to_assignment_and_parent() {
         let light = "https://www.twitch.tv/embed/alpha/chat?parent=parent.mpdviewer.com";
@@ -326,10 +368,28 @@ mod tests {
         h.mode = ViewerMode::TwitchPage;
         assert_eq!(h.label(3, false), "twitch-page-3");
         assert!(!h.capabilities(false).media_controls);
+        assert_eq!(h.capabilities(false).window_mute_controls, crate::window_audio::supported());
         assert!(allowed_navigation(&page, &page.origin(), false, h.mode, "alpha", "www.twitch.tv"));
         assert!(!allowed_navigation(&wrapper, &page.origin(), false, h.mode, "alpha", "www.twitch.tv"));
         assert_eq!(h.label(3, true), "player-3");
         assert!(h.capabilities(true).media_controls);
+        assert!(!h.capabilities(true).window_mute_controls);
+    }
+
+    #[test]
+    fn failed_initial_mute_destroys_blank_window_before_navigation_or_show() {
+        let navigated = Cell::new(false);
+        let shown = Cell::new(false);
+        let destroyed = Cell::new(false);
+        let error = initialize_native_page(true,
+            |_| Err("simulated setter failure".into()),
+            || { navigated.set(true); Ok(()) },
+            || { shown.set(true); Ok(()) },
+            || destroyed.set(true)).unwrap_err();
+        assert!(error.contains("simulated setter failure"));
+        assert!(destroyed.get());
+        assert!(!navigated.get());
+        assert!(!shown.get());
     }
 
     #[test]
@@ -360,6 +420,7 @@ mod tests {
         assert_eq!(capabilities.backend, "twitch-page");
         assert!(!capabilities.telemetry);
         assert!(!capabilities.media_controls);
+        assert_eq!(capabilities.window_mute_controls, crate::window_audio::supported());
         assert!(capabilities.twitch_channel_page);
     }
     #[test]
