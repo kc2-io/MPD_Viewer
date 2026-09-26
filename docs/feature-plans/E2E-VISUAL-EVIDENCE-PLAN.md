@@ -4,7 +4,7 @@ Date: 2026-09-25
 
 Planning baseline: `87458ac` (`origin/main`)
 
-Status: first read-only rollout implemented locally; hosted acceptance pending
+Status: hosted capture accepted; read-only reporter merged; comment rollout under review
 
 ## Outcome
 
@@ -389,11 +389,27 @@ failure/milestone screenshots ahead of routine checkpoints, hardening malformed
 tool/metadata probes, adding fragmented-MP4 packet flushing, using per-head
 non-cancelling reporter concurrency, null-safe API parsing, fixed bot identity,
 truthful merge-SHA labeling, and reconstructing artifacts across failed-job
-reruns. The reporter remains dry-run and metadata-only in this first rollout.
+reruns. The first reporter rollout remained dry-run and metadata-only.
 
 A final read-only sub-agent audit found two additional hosted blockers: the
 reporter needed explicit `pull-requests: read`, and the interrupt path could wait
 indefinitely before finalizing FFmpeg. Both are fixed and covered by policy/static
-tests. No high-severity local review finding remains. Actual Windows, macOS and
-Linux hosted capture/playback, default-branch dry-run reporting and the later
-write-enabled comment rollout remain acceptance work rather than inferred success.
+tests. No high-severity local review finding remains. Hosted Windows x64, macOS
+arm64 and Linux x64 capture/playback passed on
+[run 36215087749](https://github.com/kc2-io/MPD_Viewer/actions/runs/36215087749),
+with checksum-valid artifacts and independently probed H.264 video. The native
+Linux x64, Windows x64, macOS arm64 and macOS x64 matrix passed on
+[run 36215087751](https://github.com/kc2-io/MPD_Viewer/actions/runs/36215087751).
+The default-branch dry-run reporter is merged; the separately reviewed
+write-enabled comment rollout and the remaining deliberate failure, cancellation,
+repeatability and real-fork gates remain acceptance work rather than inferred success.
+
+The second-stage privilege review found that GitHub can omit `pull_requests` from
+the workflow-run metadata. The original fallback could therefore rebind a late run
+to a newer PR that reused the same fork branch and head commit. The write rollout
+now queries historical PRs and requires exactly one matching PR that was active
+when the run began, fails closed on missing timestamps or overlapping histories,
+and rechecks both base and head immediately before writing. It also reruns capture
+when a PR is edited and displays the current base SHA; later default-branch advances
+remain visible as the stated base-at-report-time rather than being represented as
+part of the tested head identity.

@@ -2,7 +2,7 @@ name: Desktop E2E
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:

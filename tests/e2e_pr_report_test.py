@@ -17,12 +17,14 @@ def run():
             "repository": {"id": 5}, "head_repository": {"id": 7, "owner": {"login": "forker"}},
             "head_branch": "feature", "head_sha": SHA, "name": "Desktop E2E",
             "path": report.PATH, "workflow_id": 99, "status": "completed", "conclusion": "failure",
-            "pull_requests": [], "updated_at": "2026-09-25T00:00:00Z"}
+            "pull_requests": [], "created_at": "2026-09-25T00:00:00Z",
+            "updated_at": "2026-09-25T00:10:00Z"}
 
 
 def pr():
     return {"number": 4, "state": "open", "head": {"sha": SHA, "repo": {"id": 7}},
-            "base": {"sha": "b" * 40, "repo": {"id": 5}}}
+            "base": {"sha": "b" * 40, "repo": {"id": 5}},
+            "created_at": "2026-09-24T00:00:00Z", "closed_at": None}
 
 
 class FakeApi:
@@ -53,7 +55,7 @@ class FakeApi:
             return {"id": 99, "path": report.PATH}
         if "/contents/" in path:
             return {"sha": "same"}
-        if "/pulls/4" in path:
+        if "/pulls/" in path:
             return self.current_pr
         if "/actions/runs/123" in path:
             return self.live
@@ -90,6 +92,39 @@ class ReporterTests(unittest.TestCase):
         api.pull_requests.append(pr())
         with self.assertRaisesRegex(ValueError, "exactly one"):
             report.report(api, {"repository": {"full_name": REPO, "id": 5}, "workflow_run": run()}, True)
+        self.assertEqual(api.mutations, [])
+
+    def test_closed_old_pr_does_not_rebind_run_to_new_pr(self):
+        api = FakeApi()
+        old = {**pr(), "state": "closed", "closed_at": "2026-09-25T01:00:00Z"}
+        new = {**pr(), "number": 5, "created_at": "2026-09-25T00:01:00Z"}
+        api.pull_requests = [new, old]
+        result = report.report(api, {"repository": {"full_name": REPO, "id": 5}, "workflow_run": run()}, True)
+        self.assertIn("moved or closed", result)
+        self.assertEqual(api.mutations, [])
+
+    def test_overlapping_historical_prs_fail_closed(self):
+        api = FakeApi()
+        second = {**pr(), "number": 5, "created_at": "2026-09-24T12:00:00Z"}
+        api.pull_requests.append(second)
+        with self.assertRaisesRegex(ValueError, "active when the run began"):
+            report.report(api, {"repository": {"full_name": REPO, "id": 5}, "workflow_run": run()}, True)
+        self.assertEqual(api.mutations, [])
+
+    def test_missing_historical_timestamp_fails_closed(self):
+        api = FakeApi()
+        api.pull_requests[0] = {**pr(), "created_at": None}
+        with self.assertRaisesRegex(ValueError, "pull request creation timestamp"):
+            report.report(api, {"repository": {"full_name": REPO, "id": 5}, "workflow_run": run()}, True)
+        self.assertEqual(api.mutations, [])
+
+    def test_supplied_association_created_after_run_fails_closed(self):
+        api = FakeApi()
+        associated = run()
+        associated["pull_requests"] = [{"number": 5}]
+        api.current_pr = {**pr(), "number": 5, "created_at": "2026-09-25T00:01:00Z"}
+        with self.assertRaisesRegex(ValueError, "not active when the run began"):
+            report.report(api, {"repository": {"full_name": REPO, "id": 5}, "workflow_run": associated}, True)
         self.assertEqual(api.mutations, [])
 
     def test_stale_attempt_never_writes(self):
@@ -143,7 +178,12 @@ class ReporterTests(unittest.TestCase):
 
     def test_rerun_failed_jobs_keeps_prior_success_artifact(self):
         api = FakeApi()
-        api.jobs_by_attempt[2] = [{"name": "GUI (Windows-x64)", "conclusion": "failure"}]
+        api.jobs_by_attempt[2] = [
+            {"name": "GUI (Windows-x64)", "conclusion": "failure"},
+            # GitHub clones a prior successful job into the latest attempt's job
+            # listing while leaving its artifact named for the original attempt.
+            {"name": "GUI (Linux-x64)", "conclusion": "success"},
+        ]
         api.artifacts = [
             {"id": 77, "name": "Desktop-E2E-Linux-x64-123-attempt1", "expired": False},
             {"id": 78, "name": "Desktop-E2E-Windows-x64-123-attempt2", "expired": False},
@@ -160,6 +200,15 @@ class ReporterTests(unittest.TestCase):
         api.pull_requests = [first]
         api.current_pr = {**first, "head": {"sha": "c" * 40, "repo": {"id": 7}}}
         self.assertIn("Skipped PR whose head", report.report(
+            api, {"repository": {"full_name": REPO, "id": 5}, "workflow_run": run()}, True))
+        self.assertEqual(api.mutations, [])
+
+    def test_base_changes_before_write_skips_comment(self):
+        api = FakeApi()
+        first = pr()
+        api.pull_requests = [first]
+        api.current_pr = {**first, "base": {"sha": "c" * 40, "repo": {"id": 5}}}
+        self.assertIn("head, base or newest run", report.report(
             api, {"repository": {"full_name": REPO, "id": 5}, "workflow_run": run()}, True))
         self.assertEqual(api.mutations, [])
 
