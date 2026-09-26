@@ -3,8 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "pretest": "node --test support.test.mjs",
     "test": "node run.mjs",
-    "check": "node --check run.mjs && node --check support.mjs && node --check specs.mjs && node --check video.mjs"
+    "check": "node --check run.mjs && node --check support.mjs && node --check specs.mjs && node --check video.mjs && node --test support.test.mjs"
   },
   "engines": {
     "node": ">=22.12.0"

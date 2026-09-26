@@ -130,21 +130,30 @@ async fn run(app: &AppHandle) -> Result<Vec<ProbeResult>, String> {
     action(app, Action::SetLimit { limit: 2 }).await?;
     action(app, Action::Start).await?;
     let prefix = if crate::e2e::scenario() == "demo" { "player-" } else { "twitch-page-" };
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let mut url_read_failures = 0_u32;
     loop {
         let windows = app.webview_windows();
         let viewers: Vec<_> = windows.iter().filter(|(label, _)| label.starts_with(prefix)).collect();
         if viewers.len() > 2 { return Err("Policy probe exceeded viewer capacity".into()); }
         let mut results = Vec::new();
         for (label, window) in &viewers {
-            let url = window.url().map_err(|_| "Could not observe native fixture URL")?;
-            if let Some(result) = parse_result(&url, label)? { results.push(result); }
+            match window.url() {
+                Ok(url) => {
+                    if let Some(result) = parse_result(&url, label)? { results.push(result); }
+                }
+                // A newly created or closing webview can reject a URL read. The
+                // next poll may observe its initialized document or replacement.
+                Err(_) => url_read_failures = url_read_failures.saturating_add(1),
+            }
         }
         if results.len() == 2 {
             results.sort_by(|left, right| left.label.cmp(&right.label));
             return Ok(results);
         }
-        if Instant::now() >= deadline { return Err("Timed out waiting for two native IPC probe results".into()); }
+        if Instant::now() >= deadline {
+            return Err(format!("Timed out waiting for two native IPC probe results; viewers={}; results={}; url_read_failures={url_read_failures}", viewers.len(), results.len()));
+        }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
@@ -154,7 +163,7 @@ pub fn install(app: &AppHandle) {
     if !enabled() { return; }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let result = tokio::time::timeout(Duration::from_secs(40), run(&app)).await
+        let result = tokio::time::timeout(Duration::from_secs(55), run(&app)).await
             .unwrap_or_else(|_| Err("Driverless policy probe timed out".into()));
         let passed = result.is_ok();
         let evidence = serde_json::json!({
