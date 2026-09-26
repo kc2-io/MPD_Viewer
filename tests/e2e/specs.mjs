@@ -159,7 +159,7 @@ export async function webSmoke(app, test, extended) {
     if (windowMute) {
       await until(() => browser.execute(async () => (await window.__TAURI__.core.invoke('get_state')).players.every(player => player.window_muted === true)), 'New full-page windows did not inherit confirmed global mute');
       const handlesBeforeMuteChanges = (await browser.getWindowHandles()).sort();
-      assert.equal(await (await browser.$(byLabel('Unmute alpha_fixture page window'))).isEnabled(), false);
+      assert.equal(await (await browser.$(byLabel('alpha_fixture page window is muted; global mute control is on'))).isEnabled(), false);
       await click(browser, '#window-muted');
       await until(() => browser.execute(async () => { const state=await window.__TAURI__.core.invoke('get_state');return !state.settings.muted&&state.players.every(player=>player.window_muted===false); }), 'Global unmute did not restore individual page state');
       await click(browser, byLabel('Mute alpha_fixture page window'));
