@@ -51,6 +51,22 @@ Association-less runs are matched against the unique PR that was active when the
 run began, and both base and head are rechecked before a comment write. Editing a
 PR triggers a fresh capture; the comment identifies the base SHA as of reporting.
 
+### Downloading review evidence
+
+From a pull request, use the bot comment's per-platform **Download** link to fetch
+that job's ZIP, or open the linked Actions run and use its Artifacts section. With
+GitHub CLI, the equivalent is:
+
+```console
+gh run download RUN_ID --repo kc2-io/MPD_Viewer --name ARTIFACT_NAME
+```
+
+Open the numbered PNG checkpoints directly and play each `video-*.mp4`. To verify
+the extracted files before investigation, run `sha256sum -c SHA256SUMS.txt` from
+the artifact directory (or an equivalent SHA-256 checker on Windows). Links and
+the comment state their seven-day expiration; the Actions run remains the source
+of truth if a comment update is delayed.
+
 Design, threat model, implementation packets and acceptance gates are recorded in
 [`E2E-VISUAL-EVIDENCE-PLAN.md`](../feature-plans/E2E-VISUAL-EVIDENCE-PLAN.md).
 
