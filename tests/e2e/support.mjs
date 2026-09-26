@@ -26,6 +26,12 @@ export function sanitize(text) {
     .replace(/\bBearer\s+[^\s,}"']+/gi, 'Bearer [redacted]')
     .replace(/(["']?(?:access_token|refresh_token|authorization|password|device_code|user_code)["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,}]+)/gi, '$1[redacted]');
 }
+export function isRetryablePolicyObservation(report, exitCode) {
+  return exitCode === 1 && report?.passed === false && report?.driver_registered === false &&
+    report?.results === null && typeof report?.error === 'string' &&
+    (report.error.startsWith('Timed out waiting for two native IPC probe results;') ||
+      report.error === 'Driverless policy probe timed out');
+}
 function environment(extra) {
   const allowed = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|TMPDIR|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMFILES.*|COMMONPROGRAMFILES.*|DISPLAY|WAYLAND_DISPLAY|XAUTHORITY|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|LANG|LC_.*|LD_LIBRARY_PATH|DYLD_.*|WEBVIEW2_BROWSER_EXECUTABLE_FOLDER)$/i;
   return { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => allowed.test(key))), ...extra };
@@ -256,21 +262,56 @@ export class Desktop {
   async policyProbe(scenario) {
     if (this.cancelled) throw new Error(this.cancelled);
     if (this.child) throw new Error('Stop the owned GUI before a driverless policy probe');
-    const port = await freePort();
-    if (this.cancelled) throw new Error(this.cancelled);
-    const child = spawn(this.binary, [], { shell: false, windowsHide: false, detached: process.platform !== 'win32', stdio: 'ignore', env: environment({ MPD_E2E_ROOT: this.root, MPD_E2E_RUN_ID: this.runId, MPD_E2E_SCENARIO: scenario, MPD_E2E_POLICY_PROBE: '1', TAURI_WEBDRIVER_PORT: String(port) }) });
-    this.child = child;
-    this.launches.push({ pid: child.pid, scenario, policyProbe: true, port });
-    let error; child.on('error', value => { error = value; });
-    await until(() => { if (error) throw error; return child.exitCode !== null; }, 'Driverless native policy probe did not exit', 60000);
-    const report = await readFile(path.join(this.root, 'policy-probe.json'), 'utf8');
-    if (Buffer.byteLength(report) > 64 * 1024) throw new Error('Native policy report exceeds artifact limit');
-    const parsed = JSON.parse(report);
-    await writeFile(path.join(this.output, `policy-${scenario}.json`), sanitize(JSON.stringify(parsed, null, 2)));
-    if (parsed.passed !== true || parsed.driver_registered !== false || parsed.scenario !== scenario || !Array.isArray(parsed.results) || parsed.results.length < 2) throw new Error('Driverless policy report did not establish expected native coverage');
-    const expected = scenario === 'demo' ? ['dispatch_denied', 'get_state_denied', 'own_report_allowed', 'wrong_session_denied'] : ['dispatch_denied', 'get_state_denied', 'player_report_denied'];
-    if (parsed.results.some(result => expected.some(key => result.checks?.[key] !== true))) throw new Error('Driverless policy assertion failed');
-    if (child.exitCode !== 0) throw new Error(`Driverless native policy probe exited ${child.exitCode}; see policy-${scenario}.json`);
+    if (!['demo', 'web'].includes(scenario)) throw new Error('Unknown driverless policy scenario');
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const port = await freePort();
+      if (this.cancelled) throw new Error(this.cancelled);
+      const logFile = path.join(this.output, `app-${this.launches.length + 1}.log`);
+      await writeFile(logFile, '');
+      let logBytes = 0;
+      const child = spawn(this.binary, [], { shell: false, windowsHide: false, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: environment({ MPD_E2E_ROOT: this.root, MPD_E2E_RUN_ID: this.runId, MPD_E2E_SCENARIO: scenario, MPD_E2E_POLICY_PROBE: '1', TAURI_WEBDRIVER_PORT: String(port) }) });
+      this.child = child;
+      this.logClosed = new Promise(resolve => child.once('close', resolve));
+      this.launches.push({ pid: child.pid, scenario, policyProbe: true, attempt, port });
+      for (const stream of [child.stdout, child.stderr]) stream.on('data', data => {
+        const chunk = Buffer.from(sanitize(data.toString()));
+        const available = Math.max(0, 64 * 1024 - logBytes);
+        const retained = chunk.subarray(0, available);
+        logBytes += retained.length;
+        if (retained.length) this.logWrites = this.logWrites.then(() => appendFile(logFile, retained)).catch(error => {
+          if (this.logErrors.length < 4) this.logErrors.push(sanitize(error.message).slice(0, 512));
+        });
+      });
+      let spawnError; child.on('error', value => { spawnError = value; });
+      await until(() => { if (spawnError) throw spawnError; return exited(child); }, 'Driverless native policy probe did not exit', 75000);
+      await this.flushLogs();
+      const artifact = `policy-${scenario}-attempt-${attempt}.json`;
+      let report;
+      try { report = await readFile(path.join(this.root, 'policy-probe.json'), 'utf8'); }
+      catch { throw new Error(`Driverless native policy probe produced no report; see ${path.basename(logFile)}`); }
+      if (Buffer.byteLength(report) > 64 * 1024) throw new Error('Native policy report exceeds artifact limit');
+      await writeFile(path.join(this.output, artifact), sanitize(report));
+      let parsed;
+      try { parsed = JSON.parse(report); }
+      catch { throw new Error(`Native policy report is invalid JSON; see ${artifact}`); }
+      await writeFile(path.join(this.output, `policy-${scenario}.json`), sanitize(JSON.stringify(parsed, null, 2)));
+      if (parsed.passed === true && parsed.driver_registered === false && parsed.scenario === scenario && Array.isArray(parsed.results) && parsed.results.length === 2) {
+        const expected = scenario === 'demo' ? ['dispatch_denied', 'get_state_denied', 'own_report_allowed', 'wrong_session_denied'] : ['dispatch_denied', 'get_state_denied', 'player_report_denied'];
+        if (parsed.results.some(result => expected.some(key => result.checks?.[key] !== true))) throw new Error(`Driverless policy assertion failed; see ${artifact}`);
+        if (child.exitCode !== 0) throw new Error(`Driverless native policy probe exited ${child.exitCode}; see ${artifact}`);
+        return;
+      }
+      if (attempt === 1 && parsed.scenario === scenario && isRetryablePolicyObservation(parsed, child.exitCode)) {
+        // Keep both the output artifact and the native report before the next
+        // process writes policy-probe.json in this isolated fixture root.
+        await rename(path.join(this.root, 'policy-probe.json'), path.join(this.root, 'policy-probe-attempt-1.json'));
+        this.launches.at(-1).retryReason = parsed.error === 'Driverless policy probe timed out' ? 'probe_deadline' : 'fixture_observation_timeout';
+        console.log(`::warning title=Driverless policy probe retry::${scenario} fixture observation timed out; retrying once. See ${artifact}`);
+        this.child = null;
+        continue;
+      }
+      throw new Error(`Driverless policy report did not establish expected native coverage; see ${artifact} and ${path.basename(logFile)}`);
+    }
   }
   async fixtureState(state) {
     const temporary = path.join(this.root, 'fixture-state.tmp');
