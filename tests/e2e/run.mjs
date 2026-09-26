@@ -7,6 +7,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Desktop, sanitize } from './support.mjs';
 import { demoSmoke, webSmoke, authSmoke, embeddedSmoke } from './specs.mjs';
+import { VideoRecorder } from './video.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const results = [];
@@ -23,8 +24,10 @@ const root = await mkdtemp(path.join(os.tmpdir(), 'mpd-desktop-e2e-'));
 const runId = randomBytes(16).toString('hex');
 await writeFile(path.join(root, '.mpd-e2e-root'), runId, { flag: 'wx' });
 const app = new Desktop({ binary, root, runId, output });
+const recorder = new VideoRecorder(output);
 const roots = [{ root, runId }];
 async function activateRoot(name) {
+  if (app.cancelled) throw new Error(app.cancelled);
   app.root = path.join(root, name); app.runId = randomBytes(16).toString('hex');
   roots.push({ root: app.root, runId: app.runId });
   await mkdir(app.root);
@@ -36,19 +39,25 @@ let active = 'initialization';
 async function test(name, action) {
   if (app.cancelled) throw new Error(app.cancelled);
   active = name; const begin = Date.now();
-  try { await action(); results.push({ name, seconds: (Date.now() - begin) / 1000 }); console.log(`PASS ${name}`); }
+  try { await action(); if (app.cancelled) throw new Error(app.cancelled); results.push({ name, seconds: (Date.now() - begin) / 1000 }); console.log(`PASS ${name}`); }
   catch (error) {
     results.push({ name, seconds: (Date.now() - begin) / 1000, failure: sanitize(error.stack).slice(0, 12000) });
-    await app.screenshot(`failure-${results.length}`); throw error;
+    try { await app.screenshot(`failure-${results.length}`); } catch (captureError) { app.checkpoints.error = sanitize(captureError.message).slice(0, 256); }
+    throw error;
+  } finally {
+    try { await app.checkpoint(name); } catch (captureError) { app.checkpoints.skipped++; app.checkpoints.error = sanitize(captureError.message).slice(0, 256); }
   }
 }
 let interrupt;
-const interruption = new Promise((_, reject) => { interrupt = reason => { app.cancelled = reason; reject(new Error(reason)); }; });
+const interruption = new Promise((_, reject) => { interrupt = reason => { if (app.cancelled) return; app.cancelled = reason; reject(new Error(reason)); }; });
 const onInterrupt = () => interrupt('Desktop suite interrupted by signal');
-process.once('SIGINT', onInterrupt); process.once('SIGTERM', onInterrupt);
+process.on('SIGINT', onInterrupt); process.on('SIGTERM', onInterrupt);
 const deadline = setTimeout(() => interrupt('Desktop suite exceeded its overall deadline'), (extended ? 20 : 10) * 60 * 1000);
+let suiteSettled = true;
 try {
-  await Promise.race([interruption, (async () => {
+  await recorder.start();
+  suiteSettled = false;
+  const suite = (async () => {
     await demoSmoke(app, test, extended);
     await app.stop();
     await activateRoot('web');
@@ -66,15 +75,34 @@ try {
       await test(`driverless ${scenario} native policy probe`, () => app.policyProbe(scenario));
       await app.stop();
     }
-  })()]);
+  })().finally(() => { suiteSettled = true; });
+  try { await Promise.race([interruption, suite]); }
+  catch (error) {
+    // Give an in-flight command a short chance to settle, but preserve enough
+    // workflow margin to finalize FFmpeg even if WebDriver is hung.
+    if (app.cancelled) await Promise.race([
+      suite.catch(() => {}),
+      new Promise(resolve => setTimeout(resolve, 2000))
+    ]);
+    throw error;
+  }
 } catch (error) {
   if (!results.some(result => result.failure)) results.push({ name: active, seconds: 0, failure: sanitize(error.stack).slice(0, 12000) });
   console.error(sanitize(error.message)); process.exitCode = 1;
 } finally {
   clearTimeout(deadline);
-  process.removeListener('SIGINT', onInterrupt); process.removeListener('SIGTERM', onInterrupt);
+  let visualEvidence = recorder.info;
+  try { visualEvidence = await recorder.stop(Boolean(app.cancelled)); }
+  catch (error) { visualEvidence.error = `Recorder finalization failed: ${sanitize(error.message).slice(0, 256)}`; }
   let cleanupComplete = true, rootRemoved = false;
-  try { await app.stop(); } catch (error) { results.push({ name: 'owned process cleanup', seconds: 0, failure: sanitize(error.message) }); cleanupComplete = false; process.exitCode = 1; }
+  try {
+    if (suiteSettled) await app.stop();
+    else {
+      await app.abortOwned();
+      results.push({ name: 'interrupted suite cleanup', seconds: 0, failure: 'Retained isolated profile because an in-flight GUI action did not settle before recorder finalization' });
+      cleanupComplete = false; process.exitCode = 1;
+    }
+  } catch (error) { results.push({ name: 'owned process cleanup', seconds: 0, failure: sanitize(error.message) }); cleanupComplete = false; process.exitCode = 1; }
   if (cleanupComplete) for (const ownedRoot of roots) {
     try { await app.cleanupRoot(ownedRoot.root, ownedRoot.runId); }
     catch (error) { results.push({ name: 'scoped credential cleanup', seconds: 0, failure: sanitize(error.message) }); cleanupComplete = false; process.exitCode = 1; break; }
@@ -97,12 +125,12 @@ try {
     webdriverio: '9.32.0', driver: 'tauri-plugin-wdio-webdriver 1.4.0 (embedded W3C)',
     runnerImage: process.env.ImageOS || null, runnerImageVersion: process.env.ImageVersion || null,
     elapsedSeconds: (Date.now() - started) / 1000, extended, launches: app.launches, readiness: app.readiness, tests: results.map(({ name, failure }) => ({ name, result: failure ? 'failed' : 'passed' })),
+    visualEvidence: { schema: 1, recorder: visualEvidence, checkpoints: app.checkpoints },
     evidenceBoundary: 'Real native Tauri windows and Rust backend with demo data. Embedded driver synthesizes DOM input; not OS input or Twitch acceptance.',
     notCovered: ['Native OS select/dropdown input (coverage uses labeled synthetic DOM events)', 'Native OS pointer/HTML5 drag', 'OS titlebar click (CloseRequested covered via native close API)', 'OS settings app theme toggle (window theme API covered)', 'Live Twitch authentication/playback/rewards', 'Real credential vault/account recovery (fake-token lifecycle covered)', 'Live Twitch remote-origin native IPC probe (driverless bundled/local origins covered)']
   };
   await writeFile(path.join(output, 'manifest.json'), JSON.stringify(manifest, null, 2));
   await writeFile(path.join(output, 'results.xml'), `<?xml version="1.0" encoding="UTF-8"?><testsuites><testsuite name="MPD desktop GUI" tests="${results.length}" failures="${results.filter(result => result.failure).length}">${results.map(result => `<testcase name="${xml(result.name)}" time="${result.seconds}">${result.failure ? `<failure>${xml(result.failure)}</failure>` : ''}</testcase>`).join('')}</testsuite></testsuites>`);
+  process.removeListener('SIGINT', onInterrupt); process.removeListener('SIGTERM', onInterrupt);
   console.log(`Evidence: ${output}`);
 }
-
-

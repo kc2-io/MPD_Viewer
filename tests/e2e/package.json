@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node run.mjs",
-    "check": "node --check run.mjs && node --check support.mjs && node --check specs.mjs"
+    "check": "node --check run.mjs && node --check support.mjs && node --check specs.mjs && node --check video.mjs"
   },
   "engines": {
     "node": ">=22.12.0"

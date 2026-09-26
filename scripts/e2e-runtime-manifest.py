@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Record bounded, non-secret host facts for the native GUI run."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import platform
@@ -16,6 +17,24 @@ def command(*args):
         return {"exit_code": result.returncode, "output": result.stdout.strip()[:4096]}
     except (OSError, subprocess.TimeoutExpired) as error:
         return {"error": type(error).__name__}
+
+
+def tool_identity(name):
+    try:
+        executable = shutil.which(name)
+        if not executable:
+            return {"available": False}
+        digest = hashlib.sha256()
+        with open(executable, "rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+        version = command(executable, "-version")
+        first_line = ((version.get("output") or "").splitlines() or [""])[0][:200]
+        return {"available": True, "path": executable, "sha256": digest.hexdigest(),
+                "version": first_line, "version_exit_code": version.get("exit_code"),
+                "probe_error": version.get("error")}
+    except (OSError, ValueError, TypeError) as error:
+        return {"available": False, "error": type(error).__name__}
 
 
 def main():
@@ -36,6 +55,8 @@ def main():
         "extended": os.environ.get("MPD_E2E_EXTENDED") == "1",
         "node": command("node", "--version"),
         "rust": command("rustc", "--version"),
+        "ffmpeg": tool_identity("ffmpeg"),
+        "ffprobe": tool_identity("ffprobe"),
         "npm_dependencies": command("npm.cmd" if os.name == "nt" else "npm", "ls", "--prefix", "tests/e2e", "--depth=0", "--json"),
         "evidence_boundary": "Native Tauri application with controlled fixtures; no live Twitch or native OS input certification.",
     }

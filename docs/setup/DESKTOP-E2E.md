@@ -22,6 +22,38 @@ elapsed one-minute rotation and longer recovery checks. Every job captures bound
 JUnit, JSON manifests, native application logs and screenshots. Test profiles and
 credential stores are never artifacts.
 
+## Visual evidence rollout
+
+The first rollout records the disposable desktop only while the GUI harness runs,
+without microphone or system audio. It uses bounded one-minute H.264 segments and
+captures numbered per-case PNGs while preserving the previously active native
+window. Recorder failure is reported separately from the GUI result during this
+advisory phase. Every platform artifact also carries JUnit, runtime/test manifests,
+sanitized logs, hashes, staging decisions and an independent media-validation
+report. The job summary links the exact GitHub artifact and its GitHub-provided
+digest; retention remains seven days.
+
+Hosted runner images do not currently include FFmpeg. The workflow therefore
+downloads the fixed `eugeneware/ffmpeg-static` `b6.1.1` FFmpeg and FFprobe assets
+for its exact OS/architecture, verifies committed SHA-256 values before bounded
+decompression under `RUNNER_TEMP`, and checks the required capture backend and
+H.264 encoder. Tool paths, versions and executable hashes are retained in the
+runtime and test manifests.
+
+The pull-request reporter is deliberately split from the untrusted PR workflow.
+It runs reviewed default-branch code on `workflow_run`, reads only GitHub job and
+artifact metadata, and never downloads PR artifacts. The first deployment used
+`contents: read`, `actions: read` and `pull-requests: read`; its hosted dry run was
+observed before the separately reviewed rollout granted only `pull-requests: write`.
+The reporter now creates or updates one bot-owned PR comment while the same evidence
+remains downloadable from the Actions run and job summary.
+Association-less runs are matched against the unique PR that was active when the
+run began, and both base and head are rechecked before a comment write. Editing a
+PR triggers a fresh capture; the comment identifies the base SHA as of reporting.
+
+Design, threat model, implementation packets and acceptance gates are recorded in
+[`E2E-VISUAL-EVIDENCE-PLAN.md`](../feature-plans/E2E-VISUAL-EVIDENCE-PLAN.md).
+
 ## Driver decision and limits
 
 Published `tauri-plugin-wdio-webdriver` 1.4.0 was inspected before integration.
