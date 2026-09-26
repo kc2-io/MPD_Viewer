@@ -178,7 +178,12 @@ class ReporterTests(unittest.TestCase):
 
     def test_rerun_failed_jobs_keeps_prior_success_artifact(self):
         api = FakeApi()
-        api.jobs_by_attempt[2] = [{"name": "GUI (Windows-x64)", "conclusion": "failure"}]
+        api.jobs_by_attempt[2] = [
+            {"name": "GUI (Windows-x64)", "conclusion": "failure"},
+            # GitHub clones a prior successful job into the latest attempt's job
+            # listing while leaving its artifact named for the original attempt.
+            {"name": "GUI (Linux-x64)", "conclusion": "success"},
+        ]
         api.artifacts = [
             {"id": 77, "name": "Desktop-E2E-Linux-x64-123-attempt1", "expired": False},
             {"id": 78, "name": "Desktop-E2E-Windows-x64-123-attempt2", "expired": False},

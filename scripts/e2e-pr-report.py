@@ -197,15 +197,23 @@ def rows(api, run):
     artifacts = api.pages(f"/repos/{api.repo}/actions/runs/{run_id}/artifacts", "artifacts")
     result = []
     for platform in PLATFORMS:
-        job, job_attempt = jobs_by_platform.get(platform, (None, attempt))
+        job, _job_attempt = jobs_by_platform.get(platform, (None, attempt))
         state = (job or {}).get("conclusion") or ((job or {}).get("status") if job else "not scheduled")
         if state not in CONCLUSIONS | {"queued", "in_progress", "not scheduled"}:
             state = "unknown"
-        artifact_name = f"Desktop-E2E-{platform}-{run_id}-attempt{job_attempt}"
-        matching_artifacts = [item for item in artifacts if isinstance(item, dict)
-                              and item.get("name") == artifact_name and not item.get("expired")
-                              and numeric(item.get("id"))]
-        artifact = matching_artifacts[0] if len(matching_artifacts) == 1 else None
+        artifact_pattern = re.compile(rf"Desktop-E2E-{re.escape(platform)}-{run_id}-attempt([1-9]\d*)\Z")
+        matching_artifacts = []
+        for item in artifacts:
+            if not isinstance(item, dict) or item.get("expired") or not numeric(item.get("id")):
+                continue
+            match = artifact_pattern.fullmatch(str(item.get("name", "")))
+            if match and int(match.group(1)) <= attempt:
+                matching_artifacts.append((int(match.group(1)), item))
+        artifact = None
+        if matching_artifacts:
+            latest_artifact_attempt = max(item[0] for item in matching_artifacts)
+            latest = [item[1] for item in matching_artifacts if item[0] == latest_artifact_attempt]
+            artifact = latest[0] if len(latest) == 1 else None
         if artifact:
             url = f"https://github.com/{api.repo}/actions/runs/{run_id}/artifacts/{artifact['id']}"
             evidence = f"[Download]({url})"
