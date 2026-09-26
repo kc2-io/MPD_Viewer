@@ -53,6 +53,9 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
+      - name: Install pinned Windows Rust toolchain in isolated home
+        if: runner.os == 'Windows'
+        run: python scripts/setup-ci-rustup.py
       - name: Install pinned E2E video tools
         run: python scripts/install-e2e-ffmpeg.py
       - name: Initialize isolated evidence paths
