@@ -9,7 +9,7 @@ export async function demoSmoke(app, test, extended) {
     assert.deepEqual(await order(browser), []);
     await windows(browser, 1);
   });
-  await test('load demo, add/remove and arrow ranking through real UI', async () => {
+  await test('load demo, add/remove and drag ranking through real UI', async () => {
     await selectValue(browser, '#source', 'demo');
     await click(browser, '#load-demo');
     await until(async () => (await order(browser)).length === 4, 'Demo channels not loaded');
@@ -17,8 +17,8 @@ export async function demoSmoke(app, test, extended) {
     await until(async () => (await order(browser)).includes('e2e_temporary'), 'Added channel missing');
     await click(browser, byLabel('Remove e2e_temporary'));
     await until(async () => (await order(browser)).length === 4, 'Removed channel retained');
-    await click(browser, byLabel('Move bravo_demo up'));
-    await until(async () => JSON.stringify(await order(browser)) === JSON.stringify(expectedOrder), 'Arrow rank not persisted into rendered state');
+    await dragBefore(browser, 'bravo_demo', 'alpha_demo');
+    await until(async () => JSON.stringify(await order(browser)) === JSON.stringify(expectedOrder), 'Dragged rank not persisted into rendered state');
     await click(browser, byLabel('Enable alpha_demo'));
     await until(async () => (await browser.$('li[data-login="alpha_demo"]')).getAttribute('aria-disabled').then(value => value === 'true'), 'Enable change missing');
   });
@@ -44,6 +44,8 @@ export async function demoSmoke(app, test, extended) {
     await until(async () => (await visibleText(browser, 'li[data-login="bravo_demo"]')).includes('10 min assigned time'), 'Timer preset not saved');
     await input(browser, '#limit', 2); await click(browser, 'h1');
     await until(async () => (await visibleText(browser, '#session-count')).includes('/ 2'), 'Limit not saved');
+    await input(browser, '#rescan', 5); await click(browser, 'h1');
+    await until(() => browser.execute(async () => (await window.__TAURI__.core.invoke('get_state')).settings.rescan_minutes === 5), 'Rescan interval not saved');
     await selectValue(browser, '#quality', '360p');
   });
   await test('invalid timer is rejected and Always removes the saved timer', async () => {
@@ -60,7 +62,7 @@ export async function demoSmoke(app, test, extended) {
   });
   await test('two viewer handles render; pause/resume and Stop clean up', async () => {
     await click(browser, '#start');
-    await until(async () => await visibleText(browser, '#run-status') === 'Monitoring', 'Start did not enter monitoring');
+    await until(async () => await visibleText(browser, '#run-status') === 'Running', 'Start did not enter running state');
     const handles = await windows(browser, 3);
     const channels = [];
     for (const handle of handles.filter(handle => handle !== app.manager)) {
@@ -74,7 +76,7 @@ export async function demoSmoke(app, test, extended) {
     await until(async () => await visibleText(browser, '#run-status') === 'Automation paused', 'Pause did not render');
     await windows(browser, 3);
     await click(browser, '#start');
-    await until(async () => await visibleText(browser, '#run-status') === 'Monitoring', 'Resume did not render');
+    await until(async () => await visibleText(browser, '#run-status') === 'Running', 'Resume did not render');
     assert.equal(await app.screenshot('demo-two-windows'), 3, 'Screenshot capture must work for every native window');
     await click(browser, '#stop');
     await windows(browser, 1);
@@ -122,6 +124,7 @@ export async function demoSmoke(app, test, extended) {
     assert.deepEqual(await order(browser), expectedOrder);
     assert.equal(await visibleText(browser, '#run-status'), 'Stopped');
     assert.equal(await (await browser.$('#limit')).getValue(), '2');
+    assert.equal(await (await browser.$('#rescan')).getValue(), '5');
     assert.equal(await (await browser.$('#quality')).getValue(), '360p');
     assert.equal(await (await browser.$(byLabel('Assignment timer minutes for bravo_demo'))).getValue(), '10');
     assert.equal(await (await browser.$('li[data-login="alpha_demo"]')).getAttribute('aria-disabled'), 'true');
@@ -184,7 +187,7 @@ export async function webSmoke(app, test, extended) {
     assert.equal(probes.missingNativeBridge, undefined, 'Native IPC bridge must exist for a genuine denial probe');
     assert.deepEqual(probes.results, ['get_state', 'dispatch', 'player_report'].map(command => ({ command, denied: true })));
     await browser.switchToWindow(app.manager);
-    assert.equal(await visibleText(browser, '#run-status'), 'Monitoring');
+    assert.equal(await visibleText(browser, '#run-status'), 'Running');
   });
   await test('native theme API changes manager scheme without replacing viewers', async () => {
     const handles = await browser.getWindowHandles();

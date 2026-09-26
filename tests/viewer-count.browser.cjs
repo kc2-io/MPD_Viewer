@@ -121,9 +121,6 @@ const names = ['alpha_demo','bravo_demo','charlie_demo','delta_demo'];
       await page.waitForFunction(() => document.querySelector('.favorite:last-child')?.dataset.login === 'alpha_demo');
       await expectLabel(page,names[0],'42 viewers');
       assert.deepEqual(await page.evaluate(() => __actions.filter(a => a.type === 'move')),[{type:'move',login:names[0],position:3}]);
-      await page.getByRole('button',{name:`Move ${names[0]} up`,exact:true}).click();
-      await page.waitForFunction(() => document.querySelectorAll('.favorite')[2]?.dataset.login === 'alpha_demo');
-      await expectLabel(page,names[0],'42 viewers');
     });
     await check('minimum width keeps maximum and stale viewer labels clear of row controls',async page => {
       await page.setViewportSize({width:860,height:1100});

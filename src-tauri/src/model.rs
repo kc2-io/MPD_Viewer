@@ -12,6 +12,7 @@ pub struct Settings {
     pub schema: u32,
     pub favorites: Vec<Favorite>,
     pub limit: usize,
+    pub rescan_minutes: u32,
     pub volume: u8,
     pub muted: bool,
     pub preferred_quality: String,
@@ -19,7 +20,7 @@ pub struct Settings {
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { schema: 1, favorites: vec![], limit: 3, volume: 25,
+        Self { schema: 1, favorites: vec![], limit: 3, rescan_minutes: 1, volume: 25,
             muted: false, preferred_quality: "auto".into(), demo: true }
     }
 }
@@ -30,6 +31,7 @@ impl Settings {
         }
         if self.schema != 1 { return Err("Unsupported settings version.".into()); }
         if self.limit == 0 || self.limit > 1000 { return Err("Set a tab limit between 1 and 1000 (POC safety bound).".into()); }
+        if !(1..=60).contains(&self.rescan_minutes) { return Err("Set a live-status rescan interval between 1 and 60 whole minutes.".into()); }
         if self.volume > 100 { return Err("Volume must be 0–100%.".into()); }
         if self.favorites.len() > 2000 { return Err("POC supports at most 2000 saved favorites.".into()); }
         let mut seen = std::collections::HashSet::new();
@@ -54,6 +56,7 @@ pub enum Action {
     Move { login: String, position: usize },
     Enable { login: String, enabled: bool },
     SetLimit { limit: usize },
+    SetRescan { minutes: u32 },
     SetTimer { login: String, minutes: Option<u32> },
     SetAudio { volume: u8, muted: bool },
     SetQuality { quality: String },
@@ -201,6 +204,14 @@ mod action_tests {
         assert!(serde_json::from_str::<Action>(r#"{"type":"connect"}"#).is_ok());
         assert!(serde_json::from_str::<Action>(r#"{"type":"connect","client_id":"other"}"#).is_err());
         assert!(serde_json::from_str::<Action>(r#"{"type":"connect","url":"https://evil.example"}"#).is_err());
+    }
+    #[test]
+    fn rescan_rejects_malformed_or_extra_fields_at_the_manager_boundary() {
+        assert!(serde_json::from_str::<Action>(r#"{"type":"set_rescan","minutes":1}"#).is_ok());
+        for value in ["-1","1.5","4294967296","\"NaN\"","true"] {
+            assert!(serde_json::from_str::<Action>(&format!(r#"{{"type":"set_rescan","minutes":{value}}}"#)).is_err());
+        }
+        assert!(serde_json::from_str::<Action>(r#"{"type":"set_rescan","minutes":1,"seconds":30}"#).is_err());
     }
 }
 

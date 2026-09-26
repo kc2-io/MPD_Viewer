@@ -7,7 +7,7 @@ export function viewerCountLabel(value) {
 // Presentation helpers only. Selection policy lives exclusively in mpd-core.
 export function playbackLabel(player, demo = false, telemetry = true) {
   if (player.closing) return 'Closing · capacity reserved';
-  if (!telemetry) return 'Twitch channel page · playback managed by Twitch';
+  if (!telemetry) return 'Playback managed by Twitch';
   if (player.report_age_seconds == null) return 'Waiting for player telemetry';
   if (player.report_age_seconds > 20) return 'Telemetry stale · playback unknown';
   const labels = { loading:'Loading', ready:'Ready', buffering:'Buffering', playing:'Playing',
@@ -23,6 +23,10 @@ export function secondsAgo(value) {
   if (value == null) return 'No status check yet';
   if (value < 60) return `Last successful check ${value}s ago`;
   return `Last successful check ${Math.floor(value / 60)}m ago`;
+}
+
+export function rescanLabel(minutes) {
+  return `Every ${minutes} min`;
 }
 
 export function timerLabel(timer) {
