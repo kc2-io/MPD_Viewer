@@ -23,7 +23,8 @@ class EvidenceBoundaryTests(unittest.TestCase):
             profile.mkdir()
             (profile / "cookies.json").write_text("private profile")
             self.assertTrue(evidence.stage(source, target))
-            self.assertEqual({item.name for item in target.iterdir()}, {"run.json", "upload-summary.json"})
+            self.assertEqual({item.name for item in target.iterdir()},
+                             {"run.json", "upload-summary.json", "SHA256SUMS.txt"})
 
     def test_sensitive_filename_and_oversize_fail_closed(self):
         with tempfile.TemporaryDirectory(prefix="mpd-e2e-stage-") as directory:

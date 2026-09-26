@@ -55,12 +55,13 @@ async function terminateOwned(child) {
   }
 }
 export class Desktop {
-  constructor(options) { Object.assign(this, options); this.launches = []; this.readiness = []; this.logWrites = Promise.resolve(); this.logErrors = []; }
+  constructor(options) { Object.assign(this, options); this.launches = []; this.readiness = []; this.logWrites = Promise.resolve(); this.logErrors = []; this.checkpoints = { enabled: process.env.MPD_E2E_CHECKPOINTS !== '0', attempted: 0, captured: 0, skipped: 0, quota: 64, cases: [] }; }
   async start(scenario = 'demo', args = []) {
     if (this.cancelled) throw new Error(this.cancelled);
     if (this.child) throw new Error('Previous owned app must be stopped before launch');
     this.spawnError = null;
     const port = await freePort();
+    if (this.cancelled) throw new Error(this.cancelled);
     const logFile = path.join(this.output, `app-${this.launches.length + 1}.log`);
     let logBytes = 0;
     await writeFile(logFile, '');
@@ -215,28 +216,48 @@ export class Desktop {
       return true;
     }, `Native ${command.action} acknowledgement missing`);
   }
-  async screenshot(name) {
+  async screenshot(name, maxImages = 8) {
     if (!this.browser) return;
+    let original;
+    try { original = await this.browser.getWindowHandle(); } catch { return; }
     let handles;
     try { handles = await this.browser.getWindowHandles(); } catch { return; }
     let captured = 0;
-    for (const [index, handle] of handles.slice(0, 8).entries()) {
-      try {
-        await this.browser.switchToWindow(handle);
-        const base64 = await this.browser.takeScreenshot();
-        const buffer = Buffer.from(base64, 'base64');
-        if (buffer.length > 8 * 1024 * 1024 || buffer.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new Error('Screenshot must be a bounded PNG');
-        await writeFile(path.join(this.output, `${name}-${index}.png`), buffer);
-        captured++;
-      } catch (error) { await appendFile(path.join(this.output, 'capture.log'), `${sanitize(error.message).slice(0, 1000)}\n`); }
+    try {
+      for (const [index, handle] of handles.slice(0, Math.min(8, maxImages)).entries()) {
+        try {
+          await this.browser.switchToWindow(handle);
+          const base64 = await this.browser.takeScreenshot();
+          const buffer = Buffer.from(base64, 'base64');
+          if (buffer.length > 8 * 1024 * 1024 || buffer.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new Error('Screenshot must be a bounded PNG');
+          await writeFile(path.join(this.output, `${name}${name.endsWith('-w') ? '' : '-'}${index}.png`), buffer);
+          captured++;
+        } catch (error) { await appendFile(path.join(this.output, 'capture.log'), `${sanitize(error.message).slice(0, 1000)}\n`); }
+      }
+    } finally {
+      try { await this.browser.switchToWindow(original); } catch {}
     }
-    try { await this.browser.switchToWindow(this.manager); } catch {}
     return captured;
+  }
+  async checkpoint(testName) {
+    const evidence = this.checkpoints;
+    evidence.attempted++;
+    const sequence = String(evidence.attempted).padStart(3, '0');
+    if (!evidence.enabled || !this.browser || this.cancelled || evidence.captured >= evidence.quota) {
+      evidence.skipped++;
+      if (evidence.cases.length < 128) evidence.cases.push({ sequence: evidence.attempted, name: testName, captured: 0, skipped: true });
+      return;
+    }
+    const count = await this.screenshot(`checkpoint-${sequence}-w`, Math.min(8, evidence.quota - evidence.captured));
+    evidence.captured += count || 0;
+    if (!count) evidence.skipped++;
+    if (evidence.cases.length < 128) evidence.cases.push({ sequence: evidence.attempted, name: testName, captured: count || 0, skipped: !count });
   }
   async policyProbe(scenario) {
     if (this.cancelled) throw new Error(this.cancelled);
     if (this.child) throw new Error('Stop the owned GUI before a driverless policy probe');
     const port = await freePort();
+    if (this.cancelled) throw new Error(this.cancelled);
     const child = spawn(this.binary, [], { shell: false, windowsHide: false, detached: process.platform !== 'win32', stdio: 'ignore', env: environment({ MPD_E2E_ROOT: this.root, MPD_E2E_RUN_ID: this.runId, MPD_E2E_SCENARIO: scenario, MPD_E2E_POLICY_PROBE: '1', TAURI_WEBDRIVER_PORT: String(port) }) });
     this.child = child;
     this.launches.push({ pid: child.pid, scenario, policyProbe: true, port });
@@ -283,6 +304,20 @@ export class Desktop {
   }
   async stop() {
     try { await this.browser?.deleteSession(); } catch {}
+    this.browser = null;
+    if (this.child) {
+      await terminateOwned(this.child);
+      this.child = null;
+    }
+    if (this.cleanupChild) {
+      await terminateOwned(this.cleanupChild);
+      this.cleanupChild = null;
+    }
+    await this.flushLogs();
+  }
+  async abortOwned() {
+    // An interrupted WebDriver command can make deleteSession unsafe or
+    // unbounded. Drop that client and terminate only processes we spawned.
     this.browser = null;
     if (this.child) {
       await terminateOwned(this.child);
