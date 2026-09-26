@@ -112,6 +112,7 @@ struct PlayerSession {
     id: u64, login: String, label: String, closing: bool,
     report: Option<Report>, reported: Option<Instant>,
     rate_start: Instant, rate_count: u8, quality_dirty: bool,
+    window_mute_override: bool, window_muted: Option<bool>,
 }
 
 impl PlayerSession {
@@ -119,6 +120,67 @@ impl PlayerSession {
         if matches!(report.state, Playback::Loading | Playback::Ready) { self.quality_dirty = true; }
         self.reported = Some(Instant::now()); self.report = Some(report);
     }
+}
+
+#[derive(Clone, Debug)]
+struct MuteTarget { id: u64, label: String, before: bool, after: bool }
+struct MuteTransaction { confirmed: HashMap<u64, bool>, error: Option<String> }
+
+fn apply_mute_transaction(targets: &[MuteTarget], mut apply: impl FnMut(&str, bool) -> Result<(), String>) -> MuteTransaction {
+    let mut confirmed: HashMap<_, _> = targets.iter().map(|target| (target.id, target.before)).collect();
+    let mut changed = Vec::new();
+    for target in targets {
+        match apply(&target.label, target.after) {
+            Ok(()) => {
+                confirmed.insert(target.id, target.after);
+                if target.before != target.after { changed.push(target); }
+            }
+            Err(error) => {
+                let mut rollback_failed = Vec::new();
+                for previous in changed.into_iter().rev() {
+                    if let Err(rollback_error) = apply(&previous.label, previous.before) {
+                        rollback_failed.push(format!("{} ({rollback_error})", previous.id));
+                    } else { confirmed.insert(previous.id, previous.before); }
+                }
+                let rollback = if rollback_failed.is_empty() { String::new() }
+                    else { format!(" Rollback also failed for sessions {}.", rollback_failed.join(", ")) };
+                return MuteTransaction { confirmed,
+                    error: Some(format!("Could not change page-window mute for session {}: {error}.{rollback}", target.id)) };
+            }
+        }
+    }
+    MuteTransaction { confirmed, error: None }
+}
+
+fn apply_persisted_mute_transaction(
+    targets: &[MuteTarget],
+    mut apply: impl FnMut(&str, bool) -> Result<(), String>,
+    persist: impl FnOnce() -> Result<(), String>,
+) -> MuteTransaction {
+    let applied = apply_mute_transaction(targets, &mut apply);
+    if applied.error.is_some() { return applied; }
+    if let Err(storage_error) = persist() {
+        let mut confirmed: HashMap<_, _> = targets.iter().map(|target| (target.id, target.after)).collect();
+        let mut rollback_failed = Vec::new();
+        for target in targets.iter().rev() {
+            match apply(&target.label, target.before) {
+                Ok(()) => { confirmed.insert(target.id, target.before); }
+                Err(error) => rollback_failed.push(format!("{} ({error})", target.id)),
+            }
+        }
+        let rollback_error = if rollback_failed.is_empty() { String::new() }
+            else { format!(" Rollback also failed for sessions {}.", rollback_failed.join(", ")) };
+        return MuteTransaction { confirmed,
+            error: Some(format!("Could not save global page mute: {storage_error}.{rollback_error}")) };
+    }
+    applied
+}
+
+fn session_mute_label(players: &HashMap<u64, PlayerSession>, id: u64) -> Result<String, String> {
+    let player = players.get(&id).ok_or("That player session is no longer active.")?;
+    if player.closing { return Err("That player session is closing.".into()); }
+    player.window_muted.ok_or("That player does not support native window mute.")?;
+    Ok(player.label.clone())
 }
 
 pub struct Controller {
@@ -157,6 +219,41 @@ impl Controller {
     fn changed(&mut self) { self.generation += 1; self.request_poll(); }
     fn save(&mut self, proposed: Settings) -> Result<(), String> {
         self.store.save(&proposed)?; self.settings = proposed; Ok(())
+    }
+    fn record_confirmed_mutes(&mut self, confirmed: &HashMap<u64, bool>) {
+        for (id, muted) in confirmed {
+            if let Some(player) = self.players.get_mut(id) { player.window_muted = Some(*muted); }
+        }
+    }
+    fn set_window_mute(&mut self, session: Option<u64>, muted: bool) -> Result<(), String> {
+        let capabilities = self.host.capabilities(self.settings.demo);
+        if !capabilities.twitch_channel_page || !capabilities.window_mute_controls {
+            return Err("Native page-window mute is unavailable for the active viewer mode and platform.".into());
+        }
+        if let Some(id) = session {
+            if self.settings.muted { return Err("Turn off global page mute before changing one player.".into()); }
+            let label = session_mute_label(&self.players, id)?;
+            player::window_mute(&self.app, &label, muted)?;
+            let player = self.players.get_mut(&id).ok_or("That player session is no longer active.")?;
+            player.window_mute_override = muted; player.window_muted = Some(muted);
+            self.log(format!("{} page audio for session {id}.", if muted { "Muted" } else { "Unmuted" }));
+            return Ok(());
+        }
+        let targets: Vec<_> = self.players.values().filter(|player| !player.closing)
+            .filter_map(|player| player.window_muted.map(|before| MuteTarget {
+                id: player.id, label: player.label.clone(), before,
+                after: muted || player.window_mute_override,
+            })).collect();
+        let mut proposed = self.settings.clone(); proposed.muted = muted;
+        let app = self.app.clone();
+        let applied = apply_persisted_mute_transaction(&targets,
+            |label, target| player::window_mute(&app, label, target),
+            || self.store.save(&proposed));
+        self.record_confirmed_mutes(&applied.confirmed);
+        if let Some(error) = applied.error { return Err(error); }
+        self.settings = proposed;
+        self.log(format!("{} all page-window audio.", if muted { "Muted" } else { "Unmuted" }));
+        Ok(())
     }
     fn update_demo(&mut self) {
         if !self.settings.demo { return; }
@@ -248,13 +345,20 @@ impl Controller {
                 self.log(format!("Timer for {login}: {}.",minutes.map_or("Always".into(),|m| format!("{m} minutes assigned time"))));
             }
             Action::SetAudio { volume, muted } => {
+                if !self.host.capabilities(self.settings.demo).media_controls {
+                    return Err("Volume controls are unavailable for full Twitch pages.".into());
+                }
                 let mut s = self.settings.clone(); s.volume = volume; s.muted = muted; self.save(s)?;
                 for p in self.players.values() { player::audio(&self.app, &p.label, &self.settings)?; }
             }
             Action::SetQuality { quality } => {
+                if !self.host.capabilities(self.settings.demo).media_controls {
+                    return Err("Preferred quality is unavailable for full Twitch pages.".into());
+                }
                 let mut s = self.settings.clone(); s.preferred_quality = quality; self.save(s)?;
                 for p in self.players.values_mut() { p.quality_dirty = true; }
             }
+            Action::SetWindowMute { session, muted } => self.set_window_mute(session, muted)?,
             Action::SetDemo { demo } => {
                 // Idempotent updates must not restart recovery while a token is rotating.
                 if demo == self.settings.demo { return Ok(()); }
@@ -428,7 +532,9 @@ impl Controller {
                 Ok(_) => {
                     self.advance_timers();
                     self.players.insert(id,PlayerSession {id,login:login.clone(),label,closing:false,
-                        report:None,reported:None,rate_start:Instant::now(),rate_count:0,quality_dirty:true});
+                        report:None,reported:None,rate_start:Instant::now(),rate_count:0,quality_dirty:true,
+                        window_mute_override:false,
+                        window_muted:self.host.capabilities(self.settings.demo).window_mute_controls.then_some(self.settings.muted)});
                     if let Some(broadcast)=self.presence.get(&login).and_then(|p| p.broadcast_id.as_deref()) {
                         let minutes=self.settings.favorites.iter().find(|f| f.login==login).and_then(|f| f.watch_minutes);
                         self.rotation.opened(&login,broadcast,minutes);
@@ -564,6 +670,8 @@ impl Controller {
             report_age_seconds: p.reported.map(|t| t.elapsed().as_secs()),
             visible: p.report.as_ref().map(|r| r.visible), volume: p.report.as_ref().and_then(|r| r.volume),
             muted: p.report.as_ref().and_then(|r| r.muted),
+            window_muted: p.window_muted,
+            window_mute_override: p.window_muted.map(|_| p.window_mute_override),
         }).collect();
         players.sort_by_key(|p| self.settings.favorites.iter().position(|f| f.login == p.login).unwrap_or(usize::MAX));
         View { mode: self.mode, settings: self.settings.clone(),
@@ -764,7 +872,8 @@ mod quality_sync_tests {
     #[test]
     fn new_document_readiness_rearms_quality_sync_without_telemetry_flooding() {
         let mut p = PlayerSession { id: 1, login: "alpha".into(), label: "player-1".into(),
-            closing: false, report: None, reported: None, rate_start: Instant::now(), rate_count: 0, quality_dirty: true };
+            closing: false, report: None, reported: None, rate_start: Instant::now(), rate_count: 0, quality_dirty: true,
+            window_mute_override: false, window_muted: None };
         let report = |state| Report { session: 1, state, visible: true, volume: None, muted: None };
         // An early preference waits for a report from the initialized document.
         assert!(p.quality_dirty && p.report.is_none());
@@ -778,6 +887,91 @@ mod quality_sync_tests {
         // Reloading the same window creates another READY with its old bootstrap.
         p.accept_report(report(Playback::Ready));
         assert!(p.quality_dirty);
+    }
+}
+
+#[cfg(test)]
+mod window_mute_tests {
+    use super::*;
+    fn target(id: u64, before: bool, after: bool) -> MuteTarget {
+        MuteTarget { id, label: format!("twitch-page-{id}"), before, after }
+    }
+    #[test]
+    fn global_change_confirms_every_target() {
+        let targets = [target(1, false, true), target(2, true, true)];
+        let mut calls = Vec::new();
+        let result = apply_mute_transaction(&targets, |label, muted| { calls.push((label.to_owned(), muted)); Ok(()) });
+        assert!(result.error.is_none());
+        assert_eq!(result.confirmed, HashMap::from([(1, true), (2, true)]));
+        assert_eq!(calls, [("twitch-page-1".into(), true), ("twitch-page-2".into(), true)]);
+    }
+    #[test]
+    fn one_failure_rolls_back_changed_windows_and_never_claims_target_state() {
+        let targets = [target(1, false, true), target(2, false, true), target(3, true, true)];
+        let mut calls = Vec::new();
+        let result = apply_mute_transaction(&targets, |label, muted| {
+            calls.push((label.to_owned(), muted));
+            if label == "twitch-page-2" { Err("simulated setter failure".into()) } else { Ok(()) }
+        });
+        assert!(result.error.as_deref().is_some_and(|error| error.contains("session 2")));
+        assert_eq!(result.confirmed, HashMap::from([(1, false), (2, false), (3, true)]));
+        assert_eq!(calls, [("twitch-page-1".into(), true), ("twitch-page-2".into(), true), ("twitch-page-1".into(), false)]);
+    }
+    #[test]
+    fn rollback_failure_retains_last_confirmed_native_value_and_is_reported() {
+        let targets = [target(1, false, true), target(2, false, true)];
+        let mut first = true;
+        let result = apply_mute_transaction(&targets, |label, muted| {
+            if label == "twitch-page-1" && muted && first { first = false; return Ok(()); }
+            Err("simulated failure".into())
+        });
+        assert_eq!(result.confirmed, HashMap::from([(1, true), (2, false)]));
+        let error = result.error.unwrap();
+        assert!(error.contains("session 2") && error.contains("Rollback also failed for sessions 1"));
+    }
+    #[test]
+    fn storage_failure_rolls_every_window_back_before_reporting_failure() {
+        let targets = [target(1, false, true), target(2, false, true)];
+        let mut calls = Vec::new();
+        let result = apply_persisted_mute_transaction(&targets,
+            |label, muted| { calls.push((label.to_owned(), muted)); Ok(()) },
+            || Err("simulated storage failure".into()));
+        assert_eq!(result.confirmed, HashMap::from([(1, false), (2, false)]));
+        assert!(result.error.as_deref().is_some_and(|error| error.contains("simulated storage failure")));
+        assert_eq!(calls, [
+            ("twitch-page-1".into(), true), ("twitch-page-2".into(), true),
+            ("twitch-page-2".into(), false), ("twitch-page-1".into(), false),
+        ]);
+    }
+    #[test]
+    fn storage_rollback_keeps_each_last_confirmed_result_when_one_restore_fails() {
+        let targets = [target(1, false, true), target(2, false, true)];
+        let mut applied = false;
+        let result = apply_persisted_mute_transaction(&targets,
+            |label, muted| {
+                if !muted && label == "twitch-page-2" { return Err("simulated restore failure".into()); }
+                applied = true; Ok(())
+            },
+            || Err("simulated storage failure".into()));
+        assert!(applied);
+        assert_eq!(result.confirmed, HashMap::from([(1, false), (2, true)]));
+        assert!(result.error.as_deref().is_some_and(|error| error.contains("Rollback also failed for sessions 2")));
+    }
+    fn session(id: u64, closing: bool, window_muted: Option<bool>) -> PlayerSession {
+        PlayerSession { id, login: "alpha".into(), label: format!("twitch-page-{id}"), closing,
+            report: None, reported: None, rate_start: Instant::now(), rate_count: 0, quality_dirty: true,
+            window_mute_override: false, window_muted }
+    }
+    #[test]
+    fn session_validation_rejects_stale_closing_and_unsupported_targets() {
+        let mut players = HashMap::new();
+        assert!(session_mute_label(&players, 7).unwrap_err().contains("no longer active"));
+        players.insert(7, session(7, true, Some(false)));
+        assert!(session_mute_label(&players, 7).unwrap_err().contains("closing"));
+        players.insert(7, session(7, false, None));
+        assert!(session_mute_label(&players, 7).unwrap_err().contains("does not support"));
+        players.insert(7, session(7, false, Some(false)));
+        assert_eq!(session_mute_label(&players, 7).unwrap(), "twitch-page-7");
     }
 }
 

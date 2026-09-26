@@ -60,6 +60,7 @@ pub enum Action {
     SetTimer { login: String, minutes: Option<u32> },
     SetAudio { volume: u8, muted: bool },
     SetQuality { quality: String },
+    SetWindowMute { session: Option<u64>, muted: bool },
     SetDemo { demo: bool },
     DemoLive { login: String, live: bool },
     LoadDemo,
@@ -134,6 +135,8 @@ pub struct PlayerView {
     pub visible: Option<bool>,
     pub volume: Option<f64>,
     pub muted: Option<bool>,
+    pub window_muted: Option<bool>,
+    pub window_mute_override: Option<bool>,
 }
 
 #[derive(Clone, Serialize)]
@@ -151,16 +154,18 @@ pub struct ViewerCapabilities {
     pub backend: String,
     pub telemetry: bool,
     pub media_controls: bool,
+    pub window_mute_controls: bool,
     pub twitch_channel_page: bool,
 }
 impl ViewerCapabilities {
     pub fn twitch_page() -> Self {
         Self { backend: "twitch-page".into(), telemetry: false,
-            media_controls: false, twitch_channel_page: true }
+            media_controls: false, window_mute_controls: crate::window_audio::supported(),
+            twitch_channel_page: true }
     }
     pub fn wrapper(backend: &str) -> Self {
         Self { backend: backend.into(), telemetry: true,
-            media_controls: true, twitch_channel_page: false }
+            media_controls: true, window_mute_controls: false, twitch_channel_page: false }
     }
     pub fn selected() -> Self {
         match crate::viewer_mode::selected() {
@@ -212,6 +217,13 @@ mod action_tests {
             assert!(serde_json::from_str::<Action>(&format!(r#"{{"type":"set_rescan","minutes":{value}}}"#)).is_err());
         }
         assert!(serde_json::from_str::<Action>(r#"{"type":"set_rescan","minutes":1,"seconds":30}"#).is_err());
+    }
+    #[test]
+    fn window_mute_accepts_only_the_bounded_global_or_session_shape() {
+        assert!(serde_json::from_str::<Action>(r#"{"type":"set_window_mute","muted":true}"#).is_ok());
+        assert!(serde_json::from_str::<Action>(r#"{"type":"set_window_mute","session":7,"muted":false}"#).is_ok());
+        assert!(serde_json::from_str::<Action>(r#"{"type":"set_window_mute","login":"alpha","muted":true}"#).is_err());
+        assert!(serde_json::from_str::<Action>(r#"{"type":"set_window_mute","session":"7","muted":true}"#).is_err());
     }
 }
 
