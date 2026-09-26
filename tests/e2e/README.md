@@ -36,6 +36,21 @@ profile, credentials or raw environment. App child environments use an OS/displa
 allowlist. No Twitch account is used, and external navigation is disabled by the
 native test build.
 
+Set `MPD_E2E_RECORD_VIDEO=1` to request a silent desktop recording. The harness
+uses the locally installed FFmpeg executable (`MPD_E2E_FFMPEG` may specify an
+absolute path), records at eight frames per second in 60-second fragmented MP4
+segments, and stops its exact child before application and profile cleanup. A
+recorder failure is reported under `visualEvidence.recorder` in `manifest.json`;
+it does not change the GUI suite result. The separate evidence validation step
+checks whether video segments are actually playable. On Linux the recorder uses
+the job's private 1600 x 1000 Xvfb screen. Screenshots named
+`checkpoint-###-w#.png` are attempted after each completed test case, capped at
+64 routine images; existing failure and named milestone screenshots have their
+own priority. Checkpoints restore the exact WebDriver window that was active
+before capture and report skipped cases in the manifest. Set
+`MPD_E2E_CHECKPOINTS=0` to disable routine per-case checkpoints for an explicit
+same-revision overhead comparison; failure and named milestone capture remains.
+
 The embedded driver synthesizes DOM input. These tests establish rendered GUI,
 native-window lifecycle and backend behavior under fixtures, **not native OS
 pointer/drag fidelity, titlebar close events, Twitch login/playback or rewards**.

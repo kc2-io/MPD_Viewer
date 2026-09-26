@@ -22,6 +22,28 @@ elapsed one-minute rotation and longer recovery checks. Every job captures bound
 JUnit, JSON manifests, native application logs and screenshots. Test profiles and
 credential stores are never artifacts.
 
+## Visual evidence rollout
+
+The first rollout records the disposable desktop only while the GUI harness runs,
+without microphone or system audio. It uses bounded one-minute H.264 segments and
+captures numbered per-case PNGs while preserving the previously active native
+window. Recorder failure is reported separately from the GUI result during this
+advisory phase. Every platform artifact also carries JUnit, runtime/test manifests,
+sanitized logs, hashes, staging decisions and an independent media-validation
+report. The job summary links the exact GitHub artifact and its GitHub-provided
+digest; retention remains seven days.
+
+The pull-request reporter is deliberately split from the untrusted PR workflow.
+It runs reviewed default-branch code on `workflow_run`, reads only GitHub job and
+artifact metadata, and never downloads PR artifacts. Its initial deployment is
+dry-run only with `contents: read`, `actions: read` and `pull-requests: read`; it
+receives `pull-requests: write` only in a second reviewed change after hosted read-only
+behavior is observed. Until that second rollout, evidence remains available from
+the Actions run/job summary but no PR comment is created.
+
+Design, threat model, implementation packets and acceptance gates are recorded in
+[`E2E-VISUAL-EVIDENCE-PLAN.md`](../feature-plans/E2E-VISUAL-EVIDENCE-PLAN.md).
+
 ## Driver decision and limits
 
 Published `tauri-plugin-wdio-webdriver` 1.4.0 was inspected before integration.

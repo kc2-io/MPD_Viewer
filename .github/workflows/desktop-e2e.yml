@@ -11,6 +11,10 @@ on:
         description: Run extended cases and Intel macOS
         type: boolean
         default: true
+      checkpoints:
+        description: Capture a screenshot checkpoint after each GUI case
+        type: boolean
+        default: true
   schedule:
     - cron: '23 8 * * 1'
 
@@ -36,6 +40,8 @@ jobs:
       MPD_E2E_EXTENDED: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.extended) || contains(github.event.pull_request.labels.*.name, 'desktop-e2e-extended')) && '1' || '0' }}
       MPD_E2E_PLATFORM: ${{ matrix.platform }}
       MPD_E2E_BUILD_COMMIT: ${{ github.sha }}
+      MPD_E2E_RECORD_VIDEO: '1'
+      MPD_E2E_CHECKPOINTS: ${{ (github.event_name != 'workflow_dispatch' || inputs.checkpoints) && '1' || '0' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -112,7 +118,7 @@ jobs:
         if: runner.os != 'Linux'
         env:
           MPD_E2E_RUNNER_ENVIRONMENT: ${{ runner.environment }}
-        timeout-minutes: ${{ env.MPD_E2E_EXTENDED == '1' && 20 || 10 }}
+        timeout-minutes: ${{ env.MPD_E2E_EXTENDED == '1' && 25 || 15 }}
         shell: bash
         run: |
           python scripts/e2e-runtime-manifest.py
@@ -122,7 +128,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           MPD_E2E_RUNNER_ENVIRONMENT: ${{ runner.environment }}
-        timeout-minutes: ${{ env.MPD_E2E_EXTENDED == '1' && 20 || 10 }}
+        timeout-minutes: ${{ env.MPD_E2E_EXTENDED == '1' && 25 || 15 }}
         shell: bash
         run: dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' bash scripts/e2e-linux-session.sh
       - name: Stage bounded GUI evidence
@@ -131,7 +137,12 @@ jobs:
         env:
           MPD_E2E_JOB_STATUS: ${{ job.status }}
         run: python scripts/e2e-stage-evidence.py
+      - name: Validate visual evidence (advisory rollout)
+        if: always()
+        shell: bash
+        run: python scripts/e2e-validate-evidence.py "$RUNNER_TEMP/mpd-e2e-upload" --mode advisory
       - name: Upload GUI evidence (never profiles or databases)
+        id: evidence-upload
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -140,3 +151,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           include-hidden-files: false
+          compression-level: 0
+      - name: Summarize GUI evidence
+        if: always()
+        shell: bash
+        env:
+          MPD_E2E_JOB_STATUS: ${{ job.status }}
+          MPD_E2E_UPLOAD_OUTCOME: ${{ steps.evidence-upload.outcome }}
+          MPD_E2E_UPLOAD_URL: ${{ steps.evidence-upload.outputs.artifact-url }}
+          MPD_E2E_UPLOAD_DIGEST: ${{ steps.evidence-upload.outputs.artifact-digest }}
+        run: python scripts/e2e-job-summary.py "$RUNNER_TEMP/mpd-e2e-upload"
