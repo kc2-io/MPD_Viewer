@@ -138,6 +138,14 @@ export async function webSmoke(app, test, extended) {
     assert.equal(await visibleText(browser, '#run-status'), 'Stopped');
     assert.equal(await (await browser.$('#media-controls')).isDisplayed(), false);
     assert.equal(await (await browser.$('#twitch-page-note')).isDisplayed(), true);
+    const windowMute = await browser.execute(async () => (await window.__TAURI__.core.invoke('get_state')).viewer.window_mute_controls);
+    assert.equal(await (await browser.$('#window-mute-controls')).isDisplayed(), windowMute);
+    if (windowMute) {
+      await click(browser, '#window-muted');
+      await until(() => browser.execute(async () => (await window.__TAURI__.core.invoke('get_state')).settings.muted), 'Global page mute was not persisted before launch');
+    } else {
+      assert.match(await visibleText(browser, '#twitch-page-note'), /unavailable on this platform/);
+    }
     await click(browser, '#start');
     const handles = await windows(browser, 3);
     const channels = [];
@@ -148,6 +156,16 @@ export async function webSmoke(app, test, extended) {
     }
     assert.deepEqual(channels.sort(), ['alpha_fixture', 'bravo_fixture']);
     await browser.switchToWindow(app.manager);
+    if (windowMute) {
+      await until(() => browser.execute(async () => (await window.__TAURI__.core.invoke('get_state')).players.every(player => player.window_muted === true)), 'New full-page windows did not inherit confirmed global mute');
+      const handlesBeforeMuteChanges = (await browser.getWindowHandles()).sort();
+      assert.equal(await (await browser.$(byLabel('alpha_fixture page window is muted; global mute control is on'))).isEnabled(), false);
+      await click(browser, '#window-muted');
+      await until(() => browser.execute(async () => { const state=await window.__TAURI__.core.invoke('get_state');return !state.settings.muted&&state.players.every(player=>player.window_muted===false); }), 'Global unmute did not restore individual page state');
+      await click(browser, byLabel('Mute alpha_fixture page window'));
+      await until(() => browser.execute(async () => { const player=(await window.__TAURI__.core.invoke('get_state')).players.find(player=>player.login==='alpha_fixture');return player?.window_muted===true&&player?.window_mute_override===true; }), 'Per-page native mute was not confirmed');
+      assert.deepEqual((await browser.getWindowHandles()).sort(), handlesBeforeMuteChanges, 'Mute controls replaced a native viewer window');
+    }
     assert.equal(await app.screenshot('web-two-windows'), 3);
   });
   await test('fixture viewer count updates through Check now without replacing viewers', async () => {

@@ -6,6 +6,7 @@ mod credential_store;
 mod viewer_mode;
 mod model;
 mod player;
+mod window_audio;
 mod storage;
 mod viewer_auth;
 #[cfg(feature = "e2e-tests")]

@@ -46,7 +46,11 @@
           <label class="check"><input id="muted" type="checkbox">Mute all managed players</label>
           <p class="hint">Volume applies to every player. Muting is independent.</p>
         </div>
-        <p class="hint" id="twitch-page-note" hidden>Use the Twitch player’s volume slider and Settings → Quality in each viewer. Central volume and quality controls are unavailable for full Twitch pages. For dark mode, open your Twitch avatar menu and turn on Dark Theme; Twitch remembers this separately from Windows.</p>
+        <div id="window-mute-controls" hidden>
+          <label class="check"><input id="window-muted" type="checkbox">Mute all full-page viewers</label>
+          <p class="hint">Mutes each native viewer window without pausing playback. Individual mute buttons are available in Player sessions.</p>
+        </div>
+        <p class="hint" id="twitch-page-note" hidden></p>
       </section>
       <section class="panel auth-panel" id="auth-panel">
         <div class="section-header"><h2>Twitch account</h2><span id="auth-status" class="dot-label">Not connected</span></div>
