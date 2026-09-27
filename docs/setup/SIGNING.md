@@ -1,10 +1,19 @@
-# Signing configuration — Azure trust provisioned; signing untested
+# Signing configuration — Windows exercised; Apple signing unavailable
 
-Azure application/service-principal creation, exact GitHub OIDC trust, the existing certificate-profile-scoped signer role, and all seven Windows environment variables were provisioned and read back on September 18, 2026. See [the current setup record](PUBLIC-SETUP-2026-09-18.md). Actual GitHub OIDC exchange and MPD Viewer signing have **not** been tested. Apple credentials are unavailable; macOS signing/notarization remain pending. Secrets must be entered in the appropriate provider/secret settings, never pasted into chat or committed.
+Azure application/service-principal creation, exact GitHub OIDC trust, the
+existing certificate-profile-scoped signer role, and all seven Windows
+environment variables were provisioned and read back on September 18, 2026. The
+release pipeline subsequently produced timestamped signed Windows alpha
+artifacts through alpha.8. Apple credentials remain unavailable; the current
+manual-test alpha scope labels macOS artifacts explicitly unsigned and
+unnotarized. Secrets belong only in the appropriate provider/secret settings,
+never in chat or source.
 
 ## Windows: Azure Artifact Signing + OIDC
 
-This is the prepared Windows implementation. Compare it with the current BotOrNot/mpd-bot workflows before adopting the exact variable names. Reuse an existing authorized signing account/profile where appropriate; this package does not purchase or create an Azure signing resource.
+This is the active Windows implementation. Reuse only the authorized signing
+account/profile and keep the existing least-privilege boundaries. Do not infer
+future provider access from earlier successful runs.
 
 Environment: **release-windows**. Use environment Actions variables:
 
@@ -32,7 +41,10 @@ The live repository OIDC API reports immutable subjects and the prefix above; it
 
 Only the Windows signing job requests an OIDC token. It receives the binary from the same workflow run, signs and timestamps it, then independently checks Authenticode status, exact publisher subject and timestamp before making the ZIP. No compilation runs after signing. No MSI/NSIS installer is produced in this first setup.
 
-A successful signature is not a guarantee about Windows reputation or SmartScreen prompts. Verify the downloaded executable independently. Azure authentication setup, certificate policy and actual access must be tested; do not infer success from the presence of variables.
+A successful signature is not a guarantee about Windows reputation or
+SmartScreen prompts. Verify every downloaded executable independently. Earlier
+successful OIDC/signing runs do not replace per-release authentication,
+publisher, timestamp, and artifact verification.
 
 ## macOS: Developer ID + notarization
 

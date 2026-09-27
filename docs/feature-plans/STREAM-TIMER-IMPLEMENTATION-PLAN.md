@@ -3,13 +3,20 @@
 **Audience:** Claude implementation agent and independent reviewer<br>
 **Prepared:** September 21, 2026<br>
 **Verified planning baseline:** `b167bdc` (`main`, matching `origin/main`, clean when inspected)<br>
-**Status:** Plan only. No application behavior, release, hosted site, or wrapper was changed.
+**Status:** Historical implementation plan. Per-channel timers were implemented
+later; use `docs/PROJECT-STATE.md` and current code for present behavior. This
+file is not a standing implementation task or authorization.
 
 ## 0. Claude execution brief
 
-Implement this as one bounded feature task in a dedicated worktree. Before writing code, read `AGENTS.md`, `CODEX-START-HERE.md`, `docs/HOSTED-SOURCE-PLAN-ADDENDUM.md`, and `docs/feature-plans/AGENT-RULES.md`; then inspect the actual branch, HEAD, worktree status, and recent timer-related changes. The baseline above records what this plan reviewed, not permission to reset or overwrite a newer checkout. The coordinator must provide the implementation base commit, worktree, and exclusive lease listed in section 6.
+This brief records the original implementation approach. For current timer work,
+read `AGENTS.md`, `docs/PROJECT-STATE.md`, `docs/PRODUCT-CONTRACT.md`, and
+`crates/core/AGENTS.md`, then inspect the actual branch, HEAD, worktree status,
+and recent timer-related changes. The baseline above is historical evidence, not
+permission to reset or overwrite a newer checkout.
 
-Return a small reviewable patch. Do not delegate shared-file edits, deploy, publish, tag, or push unless a separate instruction explicitly authorizes it.
+Current delivery authority and external-action boundaries come only from the root
+`AGENTS.md` and the user's actual request.
 
 ## 1. Outcome
 

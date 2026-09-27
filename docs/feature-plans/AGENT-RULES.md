@@ -1,46 +1,55 @@
-# MPD Viewer — Implementation Agent Rules
+# Feature-packet execution rules
 
-Merge these project-specific rules with the repository's existing instructions. Do not overwrite its `AGENTS.md`, security policies, or Codex settings.
+The repository-root `AGENTS.md` is authoritative for scope, safety, review,
+coordination, verification, Git/PR delivery, and external-action permissions.
+This file adds only the conventions for a task explicitly assigned from the
+historical `docs/feature-plans/` packet. It does not activate every packet task
+or proposed contract.
 
 ## Work unit
 
-One agent receives one task packet, one base commit, one worktree, and an explicit writable-file lease. Read the packet and its referenced contracts first; inspect only the related paths before expanding. Return a small patch rather than opportunistic cleanup.
+One worker receives one task packet, a verified base commit, a worktree, and an
+explicit writable-file lease. Read that packet and the current code before
+expanding scope. Return a small patch instead of opportunistic cleanup.
 
-Use the assigned model and effort when available. Report substitutions. Do not claim that a model, browser, test suite, or operating system ran when it did not. Escalate a concrete unresolved decision to the coordinator, not the entire task to a vague rewrite.
+Source-file ownership is exclusive across worktrees. Experimental spikes may
+touch overlapping code only when isolated and not merged; return findings and a
+minimal reproduction. Shared Rust/controller/permission files and `ui/app.js`
+remain coordinator-serialized.
 
-A source file lease is exclusive even across worktrees if both changes will merge. Experimental spikes may touch overlapping code only when clearly isolated and not merged; deliver findings and minimal reproduction instead. Shared Rust/controller/permission files and `ui/app.js` are coordinator-serialized.
+Model names and effort levels in packet examples are historical suggestions.
+Use available capabilities appropriate to task risk and cost, preserve current
+tool settings, and report a meaningful substitution only when it affects the
+result. Do not copy example configuration over active user/repository settings.
 
-## Scope and safety
+## Packet-specific boundaries
 
-Preserve the existing Client ID, HTTPS parent hostname, settings identity, favorites, volume semantics, session-cap semantics, and user-pause behavior. The user-facing brand is MPD Viewer; the exact tagline is `View fav channels in priority`.
+- Preserve the exact tagline `View fav channels in priority` and the identity,
+  Twitch, authority, and evidence invariants in `docs/PRODUCT-CONTRACT.md`.
+- No browser-engine replacement, Leptos rewrite, automatic chat, artificial
+  engagement, ad blocking, unsupported Twitch APIs, cookie transfer, credential
+  scraping, or fabricated viewer/rewards claims.
+- The proposed grid, surface protocol, reset APIs, and authentication contracts
+  in this packet are not implemented merely because the packet exists.
+- A research-only task completes with bounded findings and evidence; it does not
+  silently become an implementation, deployment, or account-administration task.
 
-No browser-engine replacement, Leptos rewrite, auto-chat, artificial engagement, ad blocking, unsupported Twitch APIs, cookie import/export, credential scraping, browser-security disabling, or fabricated viewer/Turbo credit. Do not collect account credentials or unredacted authentication logs. Let the user perform Twitch password/MFA interaction in Twitch's UI.
+## Required packet handoff
 
-Keep remote content separate from manager authority. A login popup has no custom native permissions. Source and response-header CSP must remain effective. Test least privilege with real native callers, not only a mocked JS bridge.
-
-Do not publish website changes, change DNS, edit the Twitch registration, send messages, or create releases without explicit authorization for that external action. Produce local deployment assets and checklists when publication is not authorized.
-
-## Tests and review
-
-Run the smallest relevant checks while implementing, then the assigned integration checks. Do not weaken assertions or strip CSP just to turn a failure green. Mocks and test doubles are valid for logic tests, but label their evidence correctly. Native login, Turbo observations, persistent profiles, cross-platform window lifecycle, and native ACLs require native evidence.
-
-Every implementation patch is reviewed independently. Security reviewer does not implement their own finding in the review pass: route it to the appropriate owning task, then re-review. Severe permission, data-loss, or duplicate-playback defects block release.
-
-## Required handoff
-
-Return this concise record:
+Use the root contract's final handoff, adding these task fields when relevant:
 
 ```text
-Task / base commit / worktree:
-Model and effort actually used:
-Files changed:
-Behavior implemented:
+Task packet / verified base commit / worktree:
+File lease and files changed:
+Behavior implemented or research finding:
 Checks run: exact commands and outcomes
 Checks blocked or not run: reason and needed environment
 Native runtime / wrapper version where relevant:
 Known limitations and remaining decisions:
 Security or migration implications:
-Patch/commit and suggested merge order:
+Commit / PR and suggested dependency order:
 ```
 
-Include links to bounded evidence files, not raw reasoning transcripts. Task completion means its acceptance criteria passed or its explicitly research-only finding was delivered. Writing code or a test is not the same as running it successfully.
+Task completion means its acceptance criteria passed or its explicitly
+research-only deliverable was produced. Writing code or a test is not evidence
+that it ran successfully.

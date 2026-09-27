@@ -22,7 +22,8 @@ INFRA_PATHS = (PATH, "tests/e2e/run.mjs", "tests/e2e/support.mjs", "tests/e2e/sp
                "scripts/e2e-runtime-manifest.py", "scripts/e2e-validate-evidence.py",
                "scripts/e2e-job-summary.py", "scripts/install-linux-deps.sh",
                "scripts/install-e2e-ffmpeg.py",
-               "scripts/verify-native-host.py", ".github/action-pins.json")
+               "scripts/verify-native-host.py", "scripts/ci-impact.py", "justfile",
+               ".github/action-pins.json")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 GITHUB_ACTIONS_BOT_ID = 41898282
 
@@ -229,7 +230,18 @@ def rows(api, run):
     return result
 
 
-def body(api, run, pr, changed):
+def e2e_not_required(api, run):
+    if run.get("status") != "completed":
+        return False
+    jobs = api.pages(
+        f"/repos/{api.repo}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs",
+        "jobs",
+    )
+    matches = [job for job in jobs if isinstance(job, dict) and job.get("name") == "GUI (Not-required)"]
+    return len(matches) == 1 and matches[0].get("conclusion") == "success"
+
+
+def body(api, run, pr, changed, not_required=False):
     status = run.get("conclusion") or run.get("status") or "unknown"
     if status not in CONCLUSIONS | {"requested", "queued", "in_progress", "waiting", "pending"}:
         status = "unknown"
@@ -239,15 +251,21 @@ def body(api, run, pr, changed):
     if not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", completed) and completed != "running":
         completed = "unknown"
     banner = "Test infrastructure differs from the default branch; this PR controls its E2E tests and capture code.\n\n" if changed else ""
-    return (f"{MARKER}\n### Desktop E2E evidence\n\n{banner}"
-            f"PR head / Actions run head: `{pr['head']['sha']}`. PR base at report time: "
-            f"`{pr['base']['sha']}`. GitHub tested the generated "
-            "pull-request merge ref; its exact checkout SHA is recorded inside each artifact manifest.\n\n"
+    revision = (f"PR head / Actions run head: `{pr['head']['sha']}`. PR base at report time: "
+                f"`{pr['base']['sha']}`. The exact compared revisions are recorded in the Change impact job.\n\n"
+                if not_required else
+                f"PR head / Actions run head: `{pr['head']['sha']}`. PR base at report time: "
+                f"`{pr['base']['sha']}`. GitHub tested the generated pull-request merge ref; its exact checkout "
+                "SHA is recorded inside each artifact manifest.\n\n")
+    evidence = ("Desktop GUI E2E was **not applicable** because the shared classifier found only "
+                "explicitly non-build-impacting paths. The lightweight decision job succeeded; no GUI "
+                "artifacts are expected.\n\n" if not_required else
+                "| Platform | Job | Evidence |\n| --- | --- | --- |\n" + "\n".join(rows(api, run)) + "\n\n"
+                "GitHub retains these artifacts for seven days. Downloading the ZIP links requires GitHub sign-in. "
+                "Results come from controlled fixtures at the PR revision and do not establish live Twitch behavior.\n")
+    return (f"{MARKER}\n### Desktop E2E evidence\n\n{banner}{revision}"
             f"Run {run_id}, attempt {attempt}: **{status}**; updated {completed}. "
-            f"[Open run and summary]({link}).\n\n"
-            "| Platform | Job | Evidence |\n| --- | --- | --- |\n" + "\n".join(rows(api, run)) + "\n\n"
-            "GitHub retains these artifacts for seven days. Downloading the ZIP links requires GitHub sign-in. "
-            "Results come from controlled fixtures at the PR revision and do not establish live Twitch behavior.\n")
+            f"[Open run and summary]({link}).\n\n" + evidence)
 
 
 def owned_comment(comment):
@@ -278,7 +296,7 @@ def report(api, event, write=False):
     run = {**run, "status": live.get("status"), "conclusion": live.get("conclusion"),
            "updated_at": live.get("updated_at")}
     changed = infrastructure_changed(api, obj(pr.get("base"))["sha"], run["head_sha"])
-    content = body(api, run, pr, changed)
+    content = body(api, run, pr, changed, e2e_not_required(api, run))
     number = pr["number"]
     comments = api.pages(f"/repos/{api.repo}/issues/{number}/comments")
     matches = [comment for comment in comments if owned_comment(comment) and numeric(obj(comment).get("id"))]

@@ -80,6 +80,10 @@ class FakeApi:
 
 
 class ReporterTests(unittest.TestCase):
+    def test_change_classifier_is_e2e_infrastructure(self):
+        self.assertIn("scripts/ci-impact.py", report.INFRA_PATHS)
+        self.assertIn("justfile", report.INFRA_PATHS)
+
     def test_fork_fallback_and_metadata_only_dry_run(self):
         api = FakeApi()
         content = report.report(api, {"repository": {"full_name": REPO, "id": 5}, "workflow_run": run()})
@@ -193,6 +197,18 @@ class ReporterTests(unittest.TestCase):
         self.assertIn("| Linux-x64 | success |", content)
         self.assertIn("actions/runs/123/artifacts/78", content)
         self.assertIn("| Windows-x64 | failure |", content)
+
+    def test_non_build_only_run_expects_no_gui_artifacts(self):
+        api = FakeApi()
+        api.live = {**run(), "conclusion": "success"}
+        api.runs = [api.live]
+        api.jobs_by_attempt[2] = [{"name": "GUI (Not-required)", "conclusion": "success"}]
+        api.artifacts = []
+        content = report.report(
+            api, {"repository": {"full_name": REPO, "id": 5}, "workflow_run": api.live}
+        )
+        self.assertIn("Desktop GUI E2E was **not applicable**", content)
+        self.assertNotIn("Missing or expired", content)
 
     def test_head_changes_before_write_skips_comment(self):
         api = FakeApi()

@@ -5,9 +5,11 @@
 ## Gate status
 
 The live repository has valid releases through the multiplatform manual-test
-alpha.7. Alpha.5 is a lightweight tag on alpha.4-versioned source with an empty
+alpha.8, published September 27, 2026. Alpha.5 is a lightweight tag on
+alpha.4-versioned source with an empty
 manually created release, so it is not repaired or counted as release evidence.
-The next candidate is alpha.8 under the explicit manual-test scope above.
+Do not assume the next version or current live gate state from this document;
+verify them with `just state` before release work.
 
 ## Version and tag contract
 
@@ -16,13 +18,21 @@ Keep `Cargo.toml` workspace version, `src-tauri/tauri.conf.json` version, and th
 ```text
 v0.1.0-rc.1
 v0.1.0-beta.2
-v0.1.0-alpha.8
+v0.1.0-alpha.N
 v0.1.0
 ```
 
 Use an annotated tag identifying a reviewed commit on main. Build metadata and alternate prefixes are rejected by this first implementation. Tags never move; failed releases are investigated rather than repaired by force-moving a tag.
 
-`RELEASES_ENABLED=true` permits configured releases; stable versions also require `STABLE_RELEASES_ENABLED=true`. Both start false. The gate requires a committed nonempty Cargo.lock, a numeric pinned Rust version and full commit-SHA Action references. Repository identity and visibility must match `.github/release-policy.json`: `kc2-io/MPD_Viewer`, public, following the owner's explicit visibility change on September 18, 2026. Missing or mismatched policy data stops the release; live identity and visibility are checked again before draft creation and immediately before publication.
+`RELEASES_ENABLED=true` permits configured releases; stable versions also require
+`STABLE_RELEASES_ENABLED=true`. At the September 27 verification, prereleases
+were enabled and stable releases remained disabled; both values are mutable and
+must be checked live. The gate requires a committed nonempty Cargo.lock, a
+numeric pinned Rust version and full commit-SHA Action references. Repository
+identity and visibility must match `.github/release-policy.json`:
+`kc2-io/MPD_Viewer`, public. Missing or mismatched policy data stops the release;
+live identity and visibility are checked again before draft creation and
+immediately before publication.
 
 ## Release sequence
 
@@ -32,15 +42,28 @@ before tagging. Record its run URL and commit alongside existing native/signing
 evidence. Fixture GUI success does not replace live Twitch checks or signing
 verification; E2E binaries are unsigned test tools and never release inputs.
 
-1. Complete setup, signing configuration, workflow review and native build validation. Keep the reference repositories unchanged.
-2. Prepare and merge a version PR. For the POC, a prerelease such as `0.1.0-rc.1` is preferable to implying production acceptance. This is a proposed first version, not a tag already created.
-3. On clean local main identical to origin/main, create/push explicitly:
+1. Obtain explicit authorization for the candidate version and signing/artifact
+   scope. Verify current repository, environment, and provider gates without
+   changing reference repositories.
+2. Prepare and merge a reviewed version PR, then run the extended four-platform
+   Desktop E2E matrix against the exact merge commit.
+3. On clean local `main` identical to `origin/main`, choose exactly one command.
+   To create the tag locally without publishing it:
 
-```powershell
-py -3 scripts/tag-release.py v0.1.0-rc.1 --push
+```text
+just tag-release v0.1.0-alpha.N
 ```
 
-Without `--push`, the helper creates only the local tag. It never edits versions, moves tags, creates a repository or enables release flags.
+To create and immediately push the tag in one step after separately confirming
+the target commit and explicit push authorization:
+
+```text
+just tag-release-push v0.1.0-alpha.N
+```
+
+Do not run `just tag-release-push` after `just tag-release`; the helper rejects
+an existing tag rather than moving it. The helper never edits versions, moves
+tags, creates a repository, or enables release flags.
 
 4. GitHub validates the approved repository identity and visibility, tag form/version/annotation, main ancestry and pins. Source checks and all four native builds run without signing secrets.
 5. Approve the narrowly scoped environments when supported/configured. Windows signs/verifies. In full scope macOS signs/notarizes/staples both architectures; in the manual-test alpha scope it bundles explicitly unsigned/unnotarized apps without Apple credentials. Linux creates checksum-covered native packages.
@@ -73,6 +96,13 @@ PR artifacts use `MPD_Viewer-<platform>-pr<N>-UNSIGNED`; main artifacts use the 
 
 Do not rerun by overwriting a release, deleting safety checks or moving tags. Inspect a failed draft and provider logs without exposing credentials. Fix source/configuration in a reviewed commit and normally create the next prerelease number. Existing drafts are left for an explicit maintainer decision; helpers never delete releases automatically.
 
-## Limits of the initial configuration
+## Current limits
 
-Unsigned PR builds are expected. Signed release jobs, packaging commands and branch/environment APIs have not been run here. Exact provider settings must be compared with current BotOrNot/mpd-bot. No auto-updater, GitHub Pages, parent-host deployment, billing changes, Linux native signature or Windows installer is configured. Never call the POC's known hosted/native protocol mismatch fixed because a signed artifact exists.
+Unsigned PR builds remain expected. The release pipeline has published verified
+manual-test alphas through alpha.8, including a timestamped signed Windows ZIP
+and explicitly unsigned macOS/Linux packages. That evidence does not establish
+Apple signing/notarization, stable-release readiness, live Twitch acceptance, or
+future provider access. No auto-updater, GitHub Pages, parent-host deployment,
+billing change, Linux native signature, or Windows installer is configured.
+Never call hosted/native protocol behavior fixed merely because an artifact is
+signed or published.
