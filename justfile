@@ -18,6 +18,22 @@ state:
 verify-source:
     bash scripts/ci-check.sh
 
+# Classify the checked-out CI diff from MPD_CI_BASE to MPD_CI_HEAD.
+ci-impact:
+    @python3 scripts/ci-impact.py --base "$MPD_CI_BASE" --head "$MPD_CI_HEAD"
+
+# Force full CI for scheduled and manually dispatched workflows.
+ci-impact-full:
+    @python3 scripts/ci-impact.py --full
+
+# Record an explicit successful required check for a non-build-only change.
+ci-native-not-required:
+    @printf 'native build not applicable: non-build-only change\nbase=%s\nhead=%s\nreason=%s\n' "$MPD_CI_BASE" "$MPD_CI_HEAD" "$MPD_CI_REASON"
+
+# Record that GUI E2E is not applicable to a non-build-only change.
+ci-e2e-not-required:
+    @printf 'desktop GUI E2E not applicable: non-build-only change\nbase=%s\nhead=%s\nreason=%s\n' "$MPD_CI_BASE" "$MPD_CI_HEAD" "$MPD_CI_REASON"
+
 # Verify pinned GitHub Action references and their manifest.
 verify-pins:
     python3 scripts/pin-actions.py --check

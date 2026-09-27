@@ -96,20 +96,27 @@ class CiRustupTests(unittest.TestCase):
             self.assertEqual(github_env.read_text(encoding="utf-8"), "")
 
     def test_workflows_install_before_implicit_rustup_and_only_on_windows(self):
-        step = ("      - name: Install pinned Windows Rust toolchain in isolated home\n"
-                "        if: runner.os == 'Windows'\n"
-                "        run: python scripts/setup-ci-rustup.py")
+        step_name = "      - name: Install pinned Windows Rust toolchain in isolated home\n"
         for filename in ("ci.yml", "desktop-e2e.yml", "release.yml"):
             with self.subTest(filename=filename):
                 text = (ROOT / ".github/workflows" / filename).read_text(encoding="utf-8")
-                self.assertEqual(text.count(step), 1)
-                self.assertLess(text.index(step), text.index("rustup show"))
+                self.assertEqual(text.count(step_name), 1)
+                start = text.index(step_name)
+                end = text.find("\n      - ", start + len(step_name))
+                block = text[start:end if end >= 0 else len(text)]
+                self.assertIn("runner.os == 'Windows'", block)
+                self.assertIn("run: python scripts/setup-ci-rustup.py", block)
+                if filename == "ci.yml":
+                    self.assertIn("needs.impact.outputs.full", block)
+                elif filename == "desktop-e2e.yml":
+                    self.assertIn("matrix.full", block)
+                self.assertLess(start, text.index("rustup show"))
         check = (ROOT / "scripts/ci-check.sh").read_text(encoding="utf-8")
-        self.assertIn("python3 -m unittest discover -s tests -p 'ci_rustup_test.py' -v", check)
-        for filename in ("ci.yml", "release.yml"):
-            with self.subTest(source_gate=filename):
-                text = (ROOT / ".github/workflows" / filename).read_text(encoding="utf-8")
-                self.assertIn("- run: bash scripts/ci-check.sh", text)
+        self.assertIn("python3 -m unittest discover -s tests -p 'ci_*_test.py' -v", check)
+        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertIn("- run: just verify", ci)
+        self.assertIn("- run: bash scripts/ci-check.sh", release)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,36 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  impact:
+    name: Change impact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.classify.outputs.full }}
+      reason: ${{ steps.classify.outputs.reason }}
+      base: ${{ steps.classify.outputs.base }}
+      head: ${{ steps.classify.outputs.head }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+      - name: Classify the checked-out change
+        id: classify
+        shell: bash
+        env:
+          MPD_CI_EVENT_NAME: ${{ github.event_name }}
+          MPD_CI_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          MPD_CI_HEAD: ${{ github.sha }}
+        run: |
+          if [[ "$MPD_CI_EVENT_NAME" == 'workflow_dispatch' ]]; then
+            just ci-impact-full
+          else
+            just ci-impact
+          fi >> "$GITHUB_OUTPUT"
   source:
     name: Source checks
     runs-on: ubuntu-24.04
@@ -24,10 +54,14 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
-      - run: bash scripts/ci-check.sh
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+      - run: just verify
   native:
     name: Native (${{ matrix.platform }})
-    needs: source
+    needs: [source, impact]
+    if: ${{ always() && needs.source.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -40,21 +74,33 @@ jobs:
             platform: macOS-x64
           - os: ubuntu-22.04
             platform: Linux-x64
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ needs.impact.result == 'success' && needs.impact.outputs.full == 'false' && 'ubuntu-24.04' || matrix.os }}
     timeout-minutes: 60
+    env:
+      MPD_CI_BASE: ${{ needs.impact.outputs.base }}
+      MPD_CI_HEAD: ${{ needs.impact.outputs.head }}
+      MPD_CI_REASON: ${{ needs.impact.outputs.reason }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.58.0'
+      - name: Record non-build-only result
+        if: ${{ needs.impact.result == 'success' && needs.impact.outputs.full == 'false' }}
+        run: just ci-native-not-required
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: ${{ !(needs.impact.result == 'success' && needs.impact.outputs.full == 'false') }}
         with:
           python-version: '3.13'
       - name: Install pinned Windows Rust toolchain in isolated home
-        if: runner.os == 'Windows'
+        if: ${{ !(needs.impact.result == 'success' && needs.impact.outputs.full == 'false') && runner.os == 'Windows' }}
         run: python scripts/setup-ci-rustup.py
-      - if: runner.os == 'Linux'
+      - if: ${{ !(needs.impact.result == 'success' && needs.impact.outputs.full == 'false') && runner.os == 'Linux' }}
         run: bash scripts/install-linux-deps.sh
       - name: Toolchain and committed dependencies
+        if: ${{ !(needs.impact.result == 'success' && needs.impact.outputs.full == 'false') }}
         shell: bash
         run: |
           rustup show
@@ -62,17 +108,20 @@ jobs:
           python scripts/release-tools.py require-lock
           cargo metadata --locked --format-version 1 > /dev/null
       - name: Compile and test
+        if: ${{ !(needs.impact.result == 'success' && needs.impact.outputs.full == 'false') }}
         shell: bash
         run: |
           cargo test --locked --workspace --features mpd-tabber/custom-protocol
           cargo clippy --locked --workspace --all-targets --features mpd-tabber/custom-protocol
           cargo build --locked --release -p mpd-tabber --features custom-protocol
       - name: Stage UNSIGNED diagnostic binary
+        if: ${{ !(needs.impact.result == 'success' && needs.impact.outputs.full == 'false') }}
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
         run: python scripts/release-tools.py stage-ci --platform "$PLATFORM"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ !(needs.impact.result == 'success' && needs.impact.outputs.full == 'false') }}
         with:
           name: MPD_Viewer-${{ matrix.platform }}-${{ github.event_name == 'pull_request' && format('pr{0}', github.event.number) || github.sha }}-UNSIGNED
           path: .release-assets/ci/

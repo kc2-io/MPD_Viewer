@@ -8,5 +8,6 @@
   "actions/setup-python@v6": "ece7cb06caefa5fff74198d8649806c4678c61a1",
   "actions/upload-artifact@v7": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
   "azure/artifact-signing-action@v2": "c7ab2a863ab5f9a846ddb8265964877ef296ee82",
-  "azure/login@v3": "a641126d1b8aa4d1fa005f4f92df94a3a4c4c906"
+  "azure/login@v3": "a641126d1b8aa4d1fa005f4f92df94a3a4c4c906",
+  "extractions/setup-just@v4": "53165ef7e734c5c07cb06b3c8e7b647c5aa16db3"
 }
