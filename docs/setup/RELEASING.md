@@ -4,10 +4,10 @@
 
 ## Gate status
 
-The live repository has valid signed Windows releases through alpha.6. Alpha.5
-is a lightweight tag on alpha.4-versioned source with an empty manually created
-release, so it is not repaired or counted as release evidence. The next candidate
-is alpha.7 under the explicit manual-test scope above.
+The live repository has valid releases through the multiplatform manual-test
+alpha.7. Alpha.5 is a lightweight tag on alpha.4-versioned source with an empty
+manually created release, so it is not repaired or counted as release evidence.
+The next candidate is alpha.8 under the explicit manual-test scope above.
 
 ## Version and tag contract
 
@@ -16,7 +16,7 @@ Keep `Cargo.toml` workspace version, `src-tauri/tauri.conf.json` version, and th
 ```text
 v0.1.0-rc.1
 v0.1.0-beta.2
-v0.1.0-alpha.7
+v0.1.0-alpha.8
 v0.1.0
 ```
 

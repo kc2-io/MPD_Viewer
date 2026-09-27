@@ -332,8 +332,10 @@ def publish() -> None:
                      "Close the old app, extract the Windows ZIP, and run MPD_Viewer.exe. "
                      "Existing preferences are preserved. This is a ZIP distribution, not an installer.\n\n"
                      + install_notes +
-                     "Compared with alpha.6, this release adds clearly labeled macOS and Linux manual-test "
-                     "packages; the application feature set is unchanged. Current functionality includes "
+                     "Compared with alpha.7, this release adds native mute controls for full-page viewer "
+                     "windows, clearer current-session status and the configured rescan interval in the "
+                     "manager, refreshed locked application and CI dependencies, and more resilient "
+                     "cross-platform GUI evidence and release CI. Current functionality includes "
                      "isolated native GUI end-to-end coverage on Windows, macOS and Linux and full Twitch "
                      "channel pages as the default viewer. "
                      "The same executable retains embedded mode behind --embedded-viewer. Optional "
