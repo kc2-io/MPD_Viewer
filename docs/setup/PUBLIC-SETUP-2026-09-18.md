@@ -1,6 +1,10 @@
 # Public repository setup — September 18, 2026
 
-> Current alpha scope: [ALPHA-RELEASE-PLAN.md](ALPHA-RELEASE-PLAN.md). The owner approved signed Windows-only alpha distribution; historical full-platform requirements below still apply to other release stages.
+> Dated setup record. Use [`../PROJECT-STATE.md`](../PROJECT-STATE.md) for a
+> newer snapshot and verify live state before writes. The current manual-test
+> alpha scope is [ALPHA-RELEASE-PLAN.md](ALPHA-RELEASE-PLAN.md): signed Windows,
+> explicitly unsigned macOS/Linux, with full signing still required for beta,
+> release-candidate, and stable releases.
 
 The owner explicitly changed `kc2-io/MPD_Viewer` to public. GitHub API readback
 confirmed `isPrivate=false`. This record supersedes the earlier private-repository
@@ -90,19 +94,21 @@ release flags were checked before writes. The provisioning script received
 independent security review. No paid signing resources, client secrets, broad
 roles, or reference-repository trust changes were created.
 
-**Configuration is verified; actual OIDC exchange and MPD Viewer signing are
-still untested.** No signing job or release tag was launched to bypass the
-release gates. A successful future signed artifact must independently pass
-publisher, signature and timestamp verification.
+At the time of this setup record, OIDC exchange and MPD Viewer signing were
+untested. They were subsequently exercised by published Windows alpha releases
+through alpha.8. Every future candidate must still independently pass publisher,
+signature, timestamp, download, and hash verification.
 
 The owner confirmed **no Apple signing credentials are available yet**. The
-existing macOS Developer ID/notarization and complete release-asset gates remain
-mandatory. Do not publish a Windows-only or unsigned substitute to bypass them.
-Any different release-platform scope needs a separate explicit decision.
+manual-test alpha scope therefore labels macOS and Linux artifacts explicitly
+unsigned. Apple Developer ID/notarization and the full release-asset gates remain
+mandatory for beta, release-candidate, and stable releases. Any different scope
+needs a separate explicit decision.
 
-Keep the release flags off until prerequisites are verified. A specific reviewed
-prerelease instruction is still required before creating/pushing a release tag
-or publishing. The parent website is outside this setup and remains untouched.
+Prerelease publication was enabled after its gates passed; stable publication
+remains disabled. Verify both flags live. A specific reviewed release instruction
+is still required before creating/pushing a tag or publishing. The parent website
+is outside this setup and remains untouched.
 
 ## Validation scope
 

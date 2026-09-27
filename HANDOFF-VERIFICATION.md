@@ -31,4 +31,6 @@ The handoff does not install plugins, copy credentials, activate a `.codex/confi
 
 No project was registered in the user's desktop UI, and no full conversation history was imported. No GitHub authentication/creation/push or signing-service administration was performed. No native Rust build, actual Twitch/website authentication, grid/chat acceptance, code signing, notarization, tag push, release publication or website deployment was performed. Original reports remain historical evidence, not current remote state.
 
-The next agent must verify current machine/repository/provider state and follow `CODEX-START-PROMPT.md`.
+This record belongs to the archived bootstrap handoff. Current agents must verify
+live machine/repository/provider state and follow the root `AGENTS.md` plus the
+user's actual request; `CODEX-START-PROMPT.md` is a historical pointer only.

@@ -23,7 +23,7 @@ gates. `STABLE_RELEASES_ENABLED` remains false.
   manual-test alpha.
 - Source archives, metadata and checksums remain supporting verification files.
 
-Expected `v0.1.0-alpha.8` assets:
+Published `v0.1.0-alpha.8` assets, which illustrate the current alpha contract:
 
 - `MPD_Viewer-v0.1.0-alpha.8-Windows-x64.zip`
 - `MPD_Viewer-v0.1.0-alpha.8-macOS-arm64-UNSIGNED.zip`
@@ -41,18 +41,23 @@ download/hash round trip, live repository/tag rechecks and protected publication
 approval. A failed or partial matrix remains unpublished. No workflow may replace
 a failed signed Windows binary with an unsigned one.
 
-`v0.1.0-alpha.7` was published as the first valid multiplatform manual-test
-alpha under this scope. It is preserved. The next candidate is alpha.8; no
-existing tag or release is moved or overwritten.
+`v0.1.0-alpha.7` was the first valid multiplatform manual-test alpha under this
+scope, and `v0.1.0-alpha.8` was published under the same scope. Both are
+preserved. Determine any future candidate from current source and live releases;
+no existing tag or release is moved or overwritten.
 
 ## Sequence and acceptance boundary
 
-Prepare and merge the protected alpha.8 version PR, then run the extended
-Desktop E2E matrix on the exact merged commit. On clean `main` equal to
-`origin/main`, create the annotated alpha.8 tag with `scripts/tag-release.py`.
-Approve the Windows signing and publication environments only after their
-candidates and workflow state are reviewed. Verify the published checksums and
-Windows signature independently after download.
+For a separately authorized future alpha, prepare and merge the protected
+version PR, then run the extended Desktop E2E matrix on the exact merged commit.
+On clean `main` equal to `origin/main`, choose one mutually exclusive command:
+`just tag-release VERSION` creates a local tag without publishing, while
+`just tag-release-push VERSION` creates and pushes the tag in one step and
+therefore requires explicit push authorization. The push recipe rejects a tag
+already created by the local-only recipe. Approve the Windows signing and
+publication environments only after their candidates and workflow state are
+reviewed. Verify the published checksums and Windows signature independently
+after download.
 
 The release provides binaries for manual platform testing; compilation and local
 fixture E2E are not claims of live Twitch playback, login, Turbo/reward credit,

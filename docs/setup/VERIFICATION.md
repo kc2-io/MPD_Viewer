@@ -1,6 +1,10 @@
-# Setup verification record
+# Historical setup verification record
 
-> Current public-repository setup: [PUBLIC-SETUP-2026-09-18.md](PUBLIC-SETUP-2026-09-18.md). The earlier private/disconnected handoff status below is historical; releases remain disabled.
+> This entire file records the disconnected September 17 preparation baseline.
+> Its repository, build, signing, and release status is historical. Use
+> [`../PROJECT-STATE.md`](../PROJECT-STATE.md) and live verification for current
+> state. The later transition is recorded in
+> [PUBLIC-SETUP-2026-09-18.md](PUBLIC-SETUP-2026-09-18.md).
 
 Prepared September 17, 2026 (America/Los_Angeles). This record concerns the new repository/CI/signing/release source, not the verification reports from earlier POC turns.
 

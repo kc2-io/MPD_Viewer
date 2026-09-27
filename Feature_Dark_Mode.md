@@ -1,6 +1,7 @@
 # MPD Viewer system dark/light mode plan
 
-**Status:** Ready for Claude Code execution; feature work not started  
+**Status:** Historical implementation plan; implemented by PR #19. Do not use
+this file as a current task or agent configuration.
 **Prepared against:** clean `main` at `b167bdcd58a81e9125f9fb0a7574cf53eefbf2ed` on 2026-09-21  
 **Baseline check:** `bash scripts/ci-check.sh` passed (6 Node suites, 15 configuration tests, 51 release tests)  
 **Goal:** Follow the operating-system light/dark preference at startup and while the app is running. Apply it to the manager, bundled/Demo viewer chrome, native-injected hosted-viewer chrome, and the official embedded Twitch chat.
@@ -10,15 +11,16 @@
 Act as the implementation coordinator. Read, in order:
 
 1. `AGENTS.md`
-2. `CODEX-START-HERE.md`
+2. `docs/PROJECT-STATE.md`
 3. `docs/HOSTED-SOURCE-PLAN-ADDENDUM.md`
 4. `docs/feature-plans/AGENT-RULES.md`
 5. `docs/setup/CHAT-2026-09-18.md`
-6. This plan
+6. This historical plan
 
 Verify the checkout, branch, dirty state, and current source before writing. The commit above is planning evidence, not permission to overwrite a newer checkout. Preserve user changes.
 
-Use one coordinator and at most three workers, with at most two production-code writers at once. Give every worker a base commit, separate worktree, exclusive writable-file lease, bounded task packet, and required handoff. Only the coordinator integrates branches. Do not let an agent repair findings from its own independent review pass.
+The root `AGENTS.md` now governs coordination, review, and delivery. The original
+execution guidance below is preserved only as planning history.
 
 Use the most capable available Claude model/high reasoning for architecture, Twitch feasibility, native navigation security, and final review; a balanced coding model/medium reasoning for chat behavior and browser tests; and a fast/simple model for mechanical CSS-token work. Verify the actual Claude Code model and subagent types at execution time instead of copying possibly stale model identifiers.
 

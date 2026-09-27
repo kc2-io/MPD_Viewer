@@ -1,5 +1,10 @@
 # MPD Viewer — Implementation planning packet
 
+> **Planning archive, not current project state.** Use this packet only when a
+> user explicitly assigns one of its tasks. The root `AGENTS.md`,
+> `docs/PROJECT-STATE.md`, current code, and live repository state take
+> precedence. Proposed contracts here are not evidence of implemented features.
+
 Current testing proposal: [Multiplatform desktop E2E plan](MULTIPLATFORM-E2E-PLAN.md)
 (2026-09-24, alpha.4 baseline; planning only). Grid work remains paused.
 
@@ -10,7 +15,11 @@ Start with [PLAN.md](PLAN.md). The detailed contracts are in [CONTRACTS.md](CONT
 ## Use with a coding coordinator
 
 1. Copy the planning documents, `tasks/`, and `task-manifest.json` into a documentation folder such as `docs/mpd-viewer-v0.2/` in the **current** working repository. Do not replace the repository with the reviewed old archive.
-2. Merge [AGENT-RULES.md](AGENT-RULES.md) with existing project instructions. Review [codex-examples/](codex-examples/README.md); copy selected role TOML files into the repository's `.codex/agents/` and merge the example settings only after checking local model availability. Do not overwrite existing config or credentials.
+2. Follow the root `AGENTS.md`, then apply the narrower packet additions in
+   [AGENT-RULES.md](AGENT-RULES.md). The files under
+   [codex-examples/](codex-examples/README.md) are inactive historical examples;
+   do not copy their provider/model/approval settings automatically or overwrite
+   active configuration or credentials.
 3. Give the coordinator [ORCHESTRATOR-PROMPT.md](ORCHESTRATOR-PROMPT.md), including this packet's actual location. It starts at MV-000 and assigns [16 scoped task packets](tasks/README.md) through their dependency graph.
 
 ## What is covered

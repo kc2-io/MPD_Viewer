@@ -2,64 +2,100 @@
 
 **View fav channels in priority**
 
-Rust / Tauri desktop proof of concept for Windows, Linux and macOS. Maintains a prioritized list of favorite Twitch channels and user-configurable viewer capacity and audio settings.
+MPD Viewer is a Rust/Tauri desktop application for Windows, Linux, and macOS. It
+maintains a ranked list of favorite Twitch channels and opens the highest-priority
+live selections within a configurable viewer capacity.
 
-## Viewer behavior
+## Current behavior
 
-Full Twitch channel pages are the default. See [web viewer controls, appearance and
-authorization](docs/setup/WEB-VIEWER.md). The same binary retains the embedded mode
-behind `--embedded-viewer`. Optional per-channel timers rotate assigned sessions to
-the next eligible live favorite; Always preserves normal priority. Windows
-monitoring authorization is saved securely for subsequent launches.
+Full Twitch channel pages are the default viewer. The same binary retains the
+embedded viewer with `--embedded-viewer`. The manager supports ranked drag
+ordering, live viewer counts, configurable status rescans, per-channel timers,
+system light/dark appearance, and saved Windows monitoring authorization.
 
-## Historical preparation status
+Full-page mode relies on Twitch's own supported playback, appearance, volume,
+and quality controls. Windows and Linux also expose native whole-page mute;
+macOS reports that capability as unsupported. Embedded mode retains its separate
+wrapper chat, volume, and preferred-quality controls.
 
-This repository snapshot contains the POC, the owner-supplied hosted-player HTML, feature/subagent plans, and a new build/sign/release configuration. It has **not** been compiled or signed in the preparation environment. The remote GitHub repository has **not** been created by this handoff. The intended repository is **private `kc2-io/MPD_Viewer`**.
+See [project state](docs/PROJECT-STATE.md) for a dated implementation/release
+snapshot and [product contract](docs/PRODUCT-CONTRACT.md) for durable boundaries.
 
-`Cargo.lock` and exact Rust/action pins must be generated, reviewed and committed before enabling releases. The uploaded POC did not include a resolved lockfile; a fabricated one is not supplied. Native CI intentionally stops when the lockfile is absent.
+## Development
 
-The supplied deployed host and native POC use different bootstrap/audio/telemetry protocols. See [the integration addendum](docs/HOSTED-SOURCE-PLAN-ADDENDUM.md). A green build or a valid signature is not proof that this mismatch, Twitch viewer sign-in, Turbo behavior, chat or grid integration has been fixed.
-
-## Start here
-
-For the Codex continuation, open this directory as a local project and read
-[CODEX-START-HERE.md](CODEX-START-HERE.md), then use
-[the first-chat prompt](CODEX-START-PROMPT.md). Full context and existing Git
-history are included; no remote or authentication is installed by this handoff.
-
-- [GitHub setup and reference-workflow comparison](docs/setup/GITHUB-SETUP.md)
-- [Signing configuration](docs/setup/SIGNING.md)
-- [Tags, release gates and expected artifacts](docs/setup/RELEASING.md)
-- [Preparation verification and outstanding gates](docs/setup/VERIFICATION.md)
-- [Original POC instructions](docs/setup/ORIGINAL-POC-README.md)
-- [Feature tasks and subagent packet](docs/feature-plans/)
-- [Repository guidance for agents](AGENTS.md)
-
-## Local source checks
-
-Python 3.11+ and Node 22:
+Install Bash, Rust and the platform-specific
+[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), Python 3.11+
+available as `python3`, Node 22.12+, and
+[`just`](https://github.com/casey/just). Then list the supported project
+commands:
 
 ```sh
-bash scripts/ci-check.sh
+just
 ```
 
-After installing Rust and platform-specific [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), resolve and commit dependencies as described in setup, then:
+Common lanes:
 
 ```sh
-cargo test --locked --workspace --features mpd-tabber/custom-protocol
-cargo run --locked -p mpd-tabber --features custom-protocol
+just verify
+just verify-core
+just verify-native
+just verify-e2e
+just verify-all
 ```
 
-The binary/crate remains `mpd-tabber`; the visible product is **MPD Viewer**. The existing bundle identifier, preferences path, public Twitch Client ID and parent URL are preserved. This avoids treating a display-name change as a browser-profile/data migration.
+The lanes and their evidence boundaries are defined in the
+[verification matrix](docs/TEST-MATRIX.md). `just verify` is the safe default: it
+does not install packages, modify lockfiles, launch a GUI, or contact Twitch.
 
-## Workflows
+Run the application in its default mode:
 
-| Workflow | Purpose | Privileges |
-|---|---|---|
-| CI | Source checks, four native build/test targets, explicitly unsigned diagnostic ZIPs | Read-only token; no signing credentials |
-| Bootstrap dependency lock | Produce a real initial Cargo lock and resolved Rust pin for review | Read-only; manual main-branch run; no automatic commit |
-| Tagged release | Validate tag/source/pins, build without secrets, sign/package, verify complete assets, publish | Separate signing and publication environments; disabled until configured |
+```sh
+just run
+```
 
-Tags are annotated `vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-{alpha,beta,rc}.N`. Tag, workspace and Tauri versions must agree. No tag or release is created by merely opening this source archive. No workflow deploys the parent website.
+Run the embedded fallback:
 
-The source imports retain their existing license and provenance. Credentials, local reference-workflow audit output and signing material are excluded from Git.
+```sh
+just run-embedded
+```
+
+The binary/crate remains `mpd-tabber`; the visible product is MPD Viewer. The
+bundle identifier and stored settings/profile identities intentionally remain
+stable for compatibility.
+
+## Repository workflow
+
+Project-wide agent and contributor expectations are in
+[`AGENTS.md`](AGENTS.md). The default implementation workflow includes focused
+verification, independent review, a task branch and pull request, required-check
+monitoring, and revision-bound UI evidence where applicable. Merge, tags,
+releases, deployments, and provider administration still require explicit
+authorization.
+
+The repository has:
+
+- Read-only source and native CI on pull requests.
+- Native build/test lanes for Windows x64, Linux x64, macOS arm64, and macOS x64.
+- Desktop GUI fixture E2E with bounded screenshot/video evidence.
+- A fail-closed tagged-release pipeline with separate signing and publication
+  environments.
+
+Pull-request artifacts are unsigned diagnostics. Release scope and signing
+requirements are documented in [tagged releases](docs/setup/RELEASING.md) and
+[signing configuration](docs/setup/SIGNING.md). No workflow deploys the parent
+website.
+
+## Architecture and provenance
+
+Rust is authoritative for favorites, selection, assignments, timers, persistence,
+permissions, and native window lifecycle. Web content renders only assigned
+state.
+
+`web/parent.mpdviewer.com/index.html` is a provenance snapshot of owner-supplied
+hosted source. It is not interchangeable with the bundled wrapper and is not a
+deployment instruction. Read the
+[hosted-source addendum](docs/HOSTED-SOURCE-PLAN-ADDENDUM.md) before protocol,
+chat, or grid work.
+
+Historical repository-bootstrap handoffs are retained under `docs/archive/` for
+provenance only. They are not current instructions or authorization.
