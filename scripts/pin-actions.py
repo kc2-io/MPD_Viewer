@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PATTERN = re.compile(r'^(\s*(?:-\s*)?uses:\s*)(actions/cache/(?:restore|save)|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([^\s#]+)([^\n]*)$', re.M)
 SHA = re.compile(r'[0-9a-f]{40}')
 ALLOW = {'actions/cache', 'actions/cache/restore', 'actions/cache/save', 'actions/checkout', 'actions/setup-node', 'actions/setup-python', 'actions/upload-artifact',
-         'actions/download-artifact', 'azure/login', 'azure/artifact-signing-action'}
+         'actions/download-artifact', 'azure/login', 'azure/artifact-signing-action', 'extractions/setup-just'}
 
 def api(path):
     return json.loads(subprocess.run(['gh','api',path],check=True,text=True,stdout=subprocess.PIPE).stdout)

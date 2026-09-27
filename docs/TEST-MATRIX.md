@@ -51,3 +51,34 @@ single-platform pass does not replace the hosted platform matrix.
 
 Record commands and outcomes exactly. A skipped, cancelled, unavailable, or
 mocked lane must be described as such.
+
+## Hosted change impact
+
+Pull-request and `main`-push workflows always run the lightweight source and
+change-impact jobs. The shared `just ci-impact` classifier compares the actual
+checked-out revision with its event base using the complete Git history,
+NUL-delimited paths, and rename detection disabled so both sides of a move are
+classified.
+
+A change is non-build-only only when every changed path is one of:
+
+- A Markdown file anywhere in the repository.
+- A file below `docs/` or `.github/ISSUE_TEMPLATE/`.
+- Root `LICENSE`, `.github/CODEOWNERS`, or the pull-request template.
+
+Only an exact successful `full=false` result uses lightweight mode. Invalid or
+missing revisions, classifier errors, empty diffs, unknown paths, workflow or
+action-pin changes, and missing/failed classifier output all select the full
+suite. Scheduled and manually dispatched Desktop E2E runs always select full
+execution.
+
+In lightweight mode, the four required Native check names each run a small
+Ubuntu job that reports native compilation as not applicable and publishes no
+binary. Desktop E2E runs one `GUI (Not-required)` decision job and produces no
+GUI evidence. These are explicit successful applicability decisions, not claims
+that native or GUI tests ran.
+
+Full pull-request Desktop E2E remains the Windows x64, macOS arm64, and Linux
+x64 fixture matrix. Scheduled runs, opted-in manual runs, and the
+`desktop-e2e-extended` label add Intel macOS; this policy does not turn ordinary
+pull requests into the extended matrix.
