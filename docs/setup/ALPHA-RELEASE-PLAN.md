@@ -23,15 +23,15 @@ gates. `STABLE_RELEASES_ENABLED` remains false.
   manual-test alpha.
 - Source archives, metadata and checksums remain supporting verification files.
 
-Expected `v0.1.0-alpha.7` assets:
+Expected `v0.1.0-alpha.8` assets:
 
-- `MPD_Viewer-v0.1.0-alpha.7-Windows-x64.zip`
-- `MPD_Viewer-v0.1.0-alpha.7-macOS-arm64-UNSIGNED.zip`
-- `MPD_Viewer-v0.1.0-alpha.7-macOS-x64-UNSIGNED.zip`
-- `MPD_Viewer-v0.1.0-alpha.7-Linux-x64-UNSIGNED.deb`
-- `MPD_Viewer-v0.1.0-alpha.7-Linux-x64-UNSIGNED.AppImage`
-- `MPD_Viewer-v0.1.0-alpha.7-source.zip`
-- `MPD_Viewer-v0.1.0-alpha.7-player-sources.zip`
+- `MPD_Viewer-v0.1.0-alpha.8-Windows-x64.zip`
+- `MPD_Viewer-v0.1.0-alpha.8-macOS-arm64-UNSIGNED.zip`
+- `MPD_Viewer-v0.1.0-alpha.8-macOS-x64-UNSIGNED.zip`
+- `MPD_Viewer-v0.1.0-alpha.8-Linux-x64-UNSIGNED.deb`
+- `MPD_Viewer-v0.1.0-alpha.8-Linux-x64-UNSIGNED.AppImage`
+- `MPD_Viewer-v0.1.0-alpha.8-source.zip`
+- `MPD_Viewer-v0.1.0-alpha.8-player-sources.zip`
 - `BUILD-METADATA.json`
 - `SHA256SUMS.txt`
 
@@ -41,15 +41,15 @@ download/hash round trip, live repository/tag rechecks and protected publication
 approval. A failed or partial matrix remains unpublished. No workflow may replace
 a failed signed Windows binary with an unsigned one.
 
-`v0.1.0-alpha.6` was published as the latest valid signed Windows-only alpha
-while this scope change was being prepared. It is preserved. The next candidate
-is alpha.7; no existing tag or release is moved or overwritten.
+`v0.1.0-alpha.7` was published as the first valid multiplatform manual-test
+alpha under this scope. It is preserved. The next candidate is alpha.8; no
+existing tag or release is moved or overwritten.
 
 ## Sequence and acceptance boundary
 
-Prepare and merge the protected alpha.7 version/scope PR, then run the extended
+Prepare and merge the protected alpha.8 version PR, then run the extended
 Desktop E2E matrix on the exact merged commit. On clean `main` equal to
-`origin/main`, create the annotated alpha.7 tag with `scripts/tag-release.py`.
+`origin/main`, create the annotated alpha.8 tag with `scripts/tag-release.py`.
 Approve the Windows signing and publication environments only after their
 candidates and workflow state are reviewed. Verify the published checksums and
 Windows signature independently after download.
