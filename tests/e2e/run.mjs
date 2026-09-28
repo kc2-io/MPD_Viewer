@@ -95,7 +95,7 @@ try {
   let visualEvidence = recorder.info;
   try { visualEvidence = await recorder.stop(Boolean(app.cancelled)); }
   catch (error) { visualEvidence.error = `Recorder finalization failed: ${sanitize(error.message).slice(0, 256)}`; }
-  let cleanupComplete = true, rootRemoved = false;
+  let cleanupComplete = true, rootRemoved = false, rootRemovalSeconds = null;
   try {
     if (suiteSettled) await app.stop();
     else {
@@ -110,9 +110,12 @@ try {
   }
   // Never remove profiles/markers while an app or cleanup process may still hold them.
   if (cleanupComplete && !app.child && !app.cleanupChild) {
-    try {
-      await removeIsolatedRoot(root, runId); rootRemoved = true;
-    } catch (error) { results.push({ name: 'isolated profile cleanup', seconds: 0, failure: sanitize(error.message) }); cleanupComplete = false; process.exitCode = 1; }
+    const removalStarted = Date.now();
+    let removalError;
+    try { await removeIsolatedRoot(root, runId); rootRemoved = true; }
+    catch (error) { removalError = error; }
+    rootRemovalSeconds = (Date.now() - removalStarted) / 1000;
+    if (removalError) { results.push({ name: 'isolated profile cleanup', seconds: rootRemovalSeconds, failure: sanitize(removalError.message) }); cleanupComplete = false; process.exitCode = 1; }
   }
   if (!rootRemoved) console.error(`Retaining isolated test root after unresolved cleanup: ${root}`);
   try { await app.flushLogs(); } catch (error) { results.push({ name: 'application log drain', seconds: 0, failure: sanitize(error.message) }); process.exitCode = 1; }
@@ -121,7 +124,7 @@ try {
   const binaryUnchanged = await binaryHash() === binarySha256;
   if (!binaryUnchanged) { results.push({ name: 'binary provenance', seconds: 0, failure: 'Binary changed during suite execution' }); process.exitCode = 1; }
   const manifest = {
-    schema: 1, cleanup: { complete: cleanupComplete, rootRemoved, unresolvedOwnedProcess: Boolean(app.child || app.cleanupChild) }, harnessCommit: commit, harnessDirty, binarySha256, binaryUnchanged, buildCommit: /^[0-9a-f]{40}$/.test(process.env.MPD_E2E_BUILD_COMMIT || '') ? process.env.MPD_E2E_BUILD_COMMIT : null, platform: process.platform, architecture: process.arch, osRelease: os.release(), node: process.version,
+    schema: 1, cleanup: { complete: cleanupComplete, rootRemoved, unresolvedOwnedProcess: Boolean(app.child || app.cleanupChild), rootRemovalSeconds }, harnessCommit: commit, harnessDirty, binarySha256, binaryUnchanged, buildCommit: /^[0-9a-f]{40}$/.test(process.env.MPD_E2E_BUILD_COMMIT || '') ? process.env.MPD_E2E_BUILD_COMMIT : null, platform: process.platform, architecture: process.arch, osRelease: os.release(), node: process.version,
     webdriverio: '9.32.0', driver: 'tauri-plugin-wdio-webdriver 1.4.0 (embedded W3C)',
     runnerImage: process.env.ImageOS || null, runnerImageVersion: process.env.ImageVersion || null,
     elapsedSeconds: (Date.now() - started) / 1000, extended, launches: app.launches, readiness: app.readiness, tests: results.map(({ name, failure }) => ({ name, result: failure ? 'failed' : 'passed' })),

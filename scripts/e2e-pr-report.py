@@ -15,7 +15,8 @@ PATH = ".github/workflows/desktop-e2e.yml"
 PLATFORMS = ("Windows-x64", "macOS-arm64", "Linux-x64", "macOS-x64")
 CONCLUSIONS = {"success", "failure", "cancelled", "timed_out", "action_required",
                "startup_failure", "stale", "skipped", "neutral"}
-INFRA_PATHS = (PATH, "tests/e2e/run.mjs", "tests/e2e/support.mjs", "tests/e2e/specs.mjs",
+INFRA_PATHS = (PATH, "tests/e2e/run.mjs", "tests/e2e/support.mjs", "tests/e2e/cleanup.mjs",
+               "tests/e2e/specs.mjs",
                "tests/e2e/video.mjs", "tests/e2e/package.json", "tests/e2e/package-lock.json",
                "scripts/e2e-linux-session.sh", "scripts/e2e-no-driver-probe.py",
                "scripts/e2e-runner-test.py", "scripts/e2e-stage-evidence.py",
