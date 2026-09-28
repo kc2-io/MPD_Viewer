@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, rm, realpath, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, realpath, stat } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -6,6 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Desktop, sanitize } from './support.mjs';
+import { removeIsolatedRoot } from './cleanup.mjs';
 import { demoSmoke, webSmoke, authSmoke, embeddedSmoke } from './specs.mjs';
 import { VideoRecorder } from './video.mjs';
 
@@ -110,8 +111,7 @@ try {
   // Never remove profiles/markers while an app or cleanup process may still hold them.
   if (cleanupComplete && !app.child && !app.cleanupChild) {
     try {
-      if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith('mpd-desktop-e2e-') || await readFile(path.join(root, '.mpd-e2e-root'), 'utf8') !== runId) throw new Error('Refusing cleanup of unverified test root');
-      await rm(root, { recursive: true }); rootRemoved = true;
+      await removeIsolatedRoot(root, runId); rootRemoved = true;
     } catch (error) { results.push({ name: 'isolated profile cleanup', seconds: 0, failure: sanitize(error.message) }); cleanupComplete = false; process.exitCode = 1; }
   }
   if (!rootRemoved) console.error(`Retaining isolated test root after unresolved cleanup: ${root}`);
