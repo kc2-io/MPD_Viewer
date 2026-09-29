@@ -171,6 +171,19 @@ impl Rotation {
             }
         }
         let mut desired = crate::select(&selectable, presence, existing, skipped, limit);
+        // When no rotation is pending and no alternative streamer exists, restart
+        // the timers of any overdue currently assigned channels rather than leave
+        // them stuck in WaitingForAlternative.
+        if self.pending.is_none()
+            && allow_rotation
+            && !has_alternative(ranked, presence, existing, skipped, failed)
+        {
+            for id in desired.iter().filter(|id| existing.contains(*id)) {
+                if let Some(turn) = self.turns.get_mut(id).filter(|t| t.overdue()) {
+                    turn.elapsed = Duration::ZERO;
+                }
+            }
+        }
         if !allow_rotation
             || self.pending.is_some()
             || desired.len() < limit
@@ -245,6 +258,26 @@ pub fn next_waiting(
         .map(|n| &ranked[(start + n) % ranked.len()])
         .find(|id| candidates.contains(*id))
         .cloned()
+}
+
+/// Any enabled, unskipped favorite with a known broadcast (fresh or stale,
+/// deferred or not) outside the assigned set that has not failed to open.
+fn has_alternative(
+    ranked: &[crate::Favorite],
+    presence: &HashMap<String, crate::Presence>,
+    existing: &HashSet<String>,
+    skipped: &HashMap<String, String>,
+    failed: &HashSet<String>,
+) -> bool {
+    ranked.iter().any(|f| {
+        f.enabled
+            && !existing.contains(&f.login)
+            && !failed.contains(&f.login)
+            && presence
+                .get(&f.login)
+                .and_then(|p| p.broadcast_id.as_ref())
+                .is_some_and(|id| skipped.get(&f.login) != Some(id))
+    })
 }
 
 #[cfg(test)]
@@ -413,15 +446,70 @@ mod policy_tests {
         }
     }
     #[test]
-    fn single_channel_stays_overdue_without_churn() {
-        let mut h = Harness::new(&["a"], 1);
+    fn sole_live_channel_restarts_turn_without_churn() {
+        for cap in [1, 3] {
+            let mut h = Harness::new(&["a"], cap);
+            let desired = h.desired(true);
+            h.apply(desired, Some(1));
+            h.expire("a");
+            for _ in 0..20 {
+                assert_eq!(h.desired(true), vec!["a"]);
+                assert!(h.r.pending.is_none());
+                assert!(!h.r.overdue("a"));
+            }
+        }
+        // Normal rotation resumes once an alternative actually comes online.
+        let mut h = Harness::new(&["a", "b"], 1);
+        h.presence.remove("b"); // only a is live initially
         let desired = h.desired(true);
         h.apply(desired, Some(1));
         h.expire("a");
-        for _ in 0..20 {
-            assert_eq!(h.desired(true), vec!["a"]);
-            assert!(h.r.pending.is_none());
-        }
+        assert_eq!(h.desired(true), vec!["a"]); // restarted, no alternative yet
+        h.presence.insert(
+            "b".into(),
+            Presence {
+                broadcast_id: Some("b-1".into()),
+                fresh: true,
+                ..Default::default()
+            },
+        );
+        h.expire("a");
+        assert_eq!(h.desired(true), vec!["b"]); // now b is an alternative
+    }
+    #[test]
+    fn alternative_eligibility_controls_restart() {
+        // A deferred but live channel counts as an alternative: do not restart.
+        let mut h = Harness::new(&["a", "b", "c"], 2);
+        let desired = h.desired(true);
+        h.apply(desired, Some(1));
+        h.expire("a");
+        h.expire("b");
+        let desired = h.desired(true);
+        Harness::assert_set(desired.clone(), &["b", "c"]);
+        h.apply(desired, Some(1));
+        assert!(h.r.deferred("a"));
+        h.r.turns.get_mut("b").unwrap().elapsed = Duration::from_secs(120);
+        let desired = h.desired(true);
+        Harness::assert_set(desired.clone(), &["b", "c"]);
+        assert!(h.r.overdue("b"));
+
+        // A failed channel does not count as an alternative: restart.
+        let mut h = Harness::new(&["a", "b"], 1);
+        let desired = h.desired(true);
+        h.apply(desired, Some(1));
+        h.failed.insert("b".into());
+        h.expire("a");
+        assert_eq!(h.desired(true), vec!["a"]);
+        assert!(!h.r.overdue("a"));
+
+        // A skipped current broadcast does not count as an alternative: restart.
+        let mut h = Harness::new(&["a", "b"], 1);
+        let desired = h.desired(true);
+        h.apply(desired, Some(1));
+        h.skips.insert("b".into(), "b-1".into());
+        h.expire("a");
+        assert_eq!(h.desired(true), vec!["a"]);
+        assert!(!h.r.overdue("a"));
     }
     #[test]
     fn one_slot_wraps_full_budgets() {

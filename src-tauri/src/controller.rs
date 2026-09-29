@@ -478,7 +478,7 @@ impl Controller {
         let before: HashSet<_>=self.rotation.turns.iter().filter(|(_,t)| t.overdue()).map(|(l,_)| l.clone()).collect();
         self.rotation.advance(elapsed,self.mode==Mode::Running,&assigned);
         let reached: Vec<_>=self.rotation.turns.iter().filter(|(l,t)| t.overdue() && !before.contains(*l)).map(|(l,_)| l.clone()).collect();
-        for login in reached { self.log(format!("Timer reached for {login}; waiting for an eligible live alternative.")); }
+        for login in reached { self.log(format!("Timer reached for {login}.")); }
     }
     fn reconcile(&mut self) {
         self.advance_timers();
@@ -510,6 +510,13 @@ impl Controller {
                     self.skipped.get(&f.login).is_none() || self.skipped.get(&f.login) != broadcast
                 }).take(self.settings.limit).map(|f| f.login.clone()).collect(),
         };
+        if self.mode == Mode::Running {
+            for (login, turn) in &before.turns {
+                if turn.overdue() && self.rotation.turns.get(login).is_some_and(|t| t.elapsed.is_zero()) {
+                    self.log(format!("No other live favorite; restarting {login}'s timer."));
+                }
+            }
+        }
         let closing: Vec<_> = self.players.values().filter(|p| !desired.contains(&p.login)).map(|p| p.id).collect();
         for id in closing { self.close(id); }
         if before.pending.is_none() {
