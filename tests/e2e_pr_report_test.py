@@ -82,6 +82,7 @@ class FakeApi:
 class ReporterTests(unittest.TestCase):
     def test_change_classifier_is_e2e_infrastructure(self):
         self.assertIn("scripts/ci-impact.py", report.INFRA_PATHS)
+        self.assertIn("tests/e2e/cleanup.mjs", report.INFRA_PATHS)
         self.assertIn("justfile", report.INFRA_PATHS)
 
     def test_fork_fallback_and_metadata_only_dry_run(self):

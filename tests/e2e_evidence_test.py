@@ -29,6 +29,8 @@ class EvidenceTests(unittest.TestCase):
         support = (root / "tests/e2e/support.mjs").read_text(encoding="utf-8")
         self.assertIn("new Promise(resolve => setTimeout(resolve, 2000))", runner)
         self.assertLess(runner.index("await recorder.stop"), runner.index("await app.abortOwned"))
+        self.assertIn("seconds: rootRemovalSeconds", runner)
+        self.assertIn("rootRemovalSeconds }, harnessCommit", runner)
         self.assertIn("async abortOwned()", support)
         self.assertIn("await terminateOwned(this.child)", support)
 
