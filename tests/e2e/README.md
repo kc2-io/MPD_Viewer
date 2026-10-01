@@ -163,7 +163,8 @@ native children in one container, non-overlapping native allocations, retained
 fixture document IDs and mutable state through both layout directions, timer
 continuity, manager/report IPC denial, cancellation by Stop, failed preparation
 and rollback, failed-close capacity reservations, automatic cleanup after partial
-open plus failed close, grid-close Stop, and overflow without capacity reduction.
+open plus failed close, exact-parent reuse during last-child replacement, normal retirement/restart,
+grid-close Stop, and overflow without capacity reduction.
 These actions use the native controller test bridge; the manager layout control
 is exercised separately through the ordinary GUI suite. Driverless processes
 register no WebDriver listener. Fault hooks and document inspection are excluded

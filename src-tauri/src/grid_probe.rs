@@ -495,6 +495,11 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         )
         .await?;
     }
+    let replacement_parent = app
+        .windows()
+        .into_keys()
+        .find(|label| label.starts_with("viewer-grid-"))
+        .ok_or("Missing replacement grid")?;
     let reserved = state(app)
         .players
         .into_iter()
@@ -536,6 +541,9 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         .find(|(label, _)| label.starts_with("viewer-grid-"))
         .ok_or("Grid disappeared before close test")?
         .1;
+    if grid.label() != replacement_parent {
+        return Err("Replacement recreated the active grid container".into());
+    }
     grid.close().map_err(|e| e.to_string())?;
     wait(app, "closing grid Stops rather than skipping", |v| {
         v.mode == Mode::Stopped && v.players.is_empty()
@@ -561,6 +569,9 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         },
     )
     .await?;
+    // Allow Stop's empty-parent retirement to dispatch, then restart before
+    // relying on an eventual Destroyed notification for cached ownership.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
     action(app, SetLimit { limit: 1000 }).await?;
     action(app, Start).await?;
     wait(app, "grid starts after explicit user request", |v| {

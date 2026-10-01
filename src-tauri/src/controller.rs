@@ -764,6 +764,9 @@ impl Controller {
         self.retire_retry
             .retain(|label, _| self.app.get_window(label).is_some());
         for (label, window) in self.app.windows() {
+            // A running/paused grid owns its empty container through replacement.
+            // Retiring it between close acknowledgement and open races the runtime.
+            if self.grid.as_deref()==Some(&label) && self.mode!=Mode::Stopped {continue;}
             if !(label.starts_with("player-")
                 || label.starts_with("twitch-page-")
                 || label.starts_with("viewer-standalone-")
@@ -785,6 +788,9 @@ impl Controller {
                 self.error = Some(format!(
                     "Could not retire empty viewer window {label}: {error}"
                 ));
+            } else if self.grid.as_deref()==Some(&label) {
+                // Do not let Start reuse a handle whose destruction is pending.
+                self.grid=None;
             }
         }
     }

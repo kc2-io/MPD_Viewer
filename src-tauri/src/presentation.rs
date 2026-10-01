@@ -311,7 +311,10 @@ pub fn close(
     app.run_on_main_thread(move || {
         let parent = view.window();
         let result = view.close().map_err(|e| e.to_string());
-        if result.is_ok() && parent.webviews().is_empty() {
+        if result.is_ok()
+            && !parent.label().starts_with("viewer-grid-")
+            && parent.webviews().is_empty()
+        {
             let _ = parent.destroy();
         }
         done(result);

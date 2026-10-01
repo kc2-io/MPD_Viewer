@@ -132,7 +132,11 @@ macOS desktops correctly reject two embedded cells; fixture evidence explicitly
 checks that rejection and reports one retained embedded child there, while the
 full-page probe still requires two. This is not two-child embedded acceptance
 on a small desktop. Exact Linux Openbox and small-display fixtures verify these
-corrections.
+corrections. A subsequent small-display run exposed last-child replacement
+retiring the active grid too soon. Running/paused grids now retain their empty
+parent through replacement; successful Stopped retirement clears the cached
+handle immediately. Fixtures check exact-parent reuse and normal retirement/
+restart; they do not deterministically delay Destroyed event delivery.
 
 Live Twitch pause/chat/profile/audio continuity, full-page sizing, DPI/monitor-loss
 acceptance, and platform-specific native results remain distinct gates. Keep the
