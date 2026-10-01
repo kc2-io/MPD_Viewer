@@ -84,21 +84,23 @@ export async function demoSmoke(app, test, extended) {
     await windows(browser, 1);
     await until(async () => (await browser.$$('#players > article')).length === 0, 'Stopped session cards retained');
   });
-  await test('grid layout control creates native children; closing grid stops monitoring', async () => {
+  await test('grid layout control creates a native child; closing grid stops monitoring', async () => {
+    await input(browser, '#limit', 1); await click(browser, 'h1');
     await selectValue(browser, '#layout', 'grid');
     await until(() => browser.execute(async () => (await window.__TAURI__.core.invoke('get_state')).settings.viewer_layout === 'grid'), 'Grid preference did not save');
     await click(browser, '#start');
     let native;
     await until(async () => {
       native = JSON.parse(await readFile(path.join(app.root, 'native-state.json'), 'utf8'));
-      return native.containers?.length === 2 && native.surfaces?.length === 3;
-    }, 'Grid did not create one native container with two children');
+      return native.containers?.length === 2 && native.surfaces?.length === 2;
+    }, 'Grid did not create one native container with one child');
     const grid = native.containers.find(label => label.startsWith('viewer-grid-'));
     assert.ok(grid);
     await app.nativeCommand({ action: 'close', label: grid });
     await until(() => browser.execute(async () => { const state = await window.__TAURI__.core.invoke('get_state'); return state.mode === 'stopped' && state.players.length === 0; }), 'Grid close did not Stop all');
     await selectValue(browser, '#layout', 'standalone');
     await until(() => browser.execute(async () => (await window.__TAURI__.core.invoke('get_state')).settings.viewer_layout === 'standalone'), 'Standalone preference did not restore');
+    await input(browser, '#limit', 2); await click(browser, 'h1');
   });
   if (extended) await test('real timer preserves paused time and rotates without observed capacity overshoot', async () => {
     await input(browser, '#limit', 1); await click(browser, 'h1');

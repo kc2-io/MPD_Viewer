@@ -158,7 +158,7 @@ are recorded even on failure; non-finite or out-of-bounds geometry is rejected.
 ### Native grid fixture probes
 
 The ordinary suite also runs fresh driverless `grid-demo` and `grid-web` processes
-with the existing isolated E2E root/profile. Their JSON reports verify two actual
+with the existing isolated E2E root/profile. Their JSON reports verify the selected actual
 native children in one container, non-overlapping native allocations, retained
 fixture document IDs and mutable state through both layout directions, timer
 continuity, manager/report IPC denial, cancellation by Stop, failed preparation
@@ -172,5 +172,8 @@ there is no passing-test retry of a failed grid probe.
 
 Reports and captured desktop video are local-fixture evidence. They do not prove
 Twitch playback, chat, rewards, login/profile continuity, full-page minimum size,
-or whole-page audio after reparent. Linux explicitly adapts Wry's GtkBox hosting
+or whole-page audio after reparent. On small desktops that cannot fit two embedded cells, the demo probe first
+asserts production no-fit Stop, then tests one retained cell and reports
+`two_embedded_cells_fit: false`. The full-page probe still requires two children.
+This does not establish two embedded cells on those small desktops. Linux explicitly adapts Wry's GtkBox hosting
 to native GtkFixed allocations; Windows/macOS need their own hosted GUI results.

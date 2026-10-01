@@ -138,6 +138,51 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         .await?;
     }
 
+    let geometry = crate::presentation::preflight(app, 2, demo);
+    if let Err(error) = &geometry {
+        if !demo || !error.starts_with("Grid cannot fit 2 selected viewers") {
+            return Err(error.clone());
+        }
+    }
+    let count = if demo && geometry.is_err() {
+        // Small hosted desktops cannot fit two 800x540 embedded cells. Prove
+        // the production rejection, then exercise retention with one cell.
+        action(
+            app,
+            SetLayout {
+                layout: ViewerLayout::Grid,
+            },
+        )
+        .await?;
+        action(app, Start).await?;
+        wait(app, "small display rejects two embedded cells", |v| {
+            v.mode == Mode::Stopped
+                && v.players.is_empty()
+                && v.error
+                    .as_deref()
+                    .is_some_and(|e| e.starts_with("Grid cannot fit 2 selected viewers"))
+        })
+        .await?;
+        action(
+            app,
+            SetLayout {
+                layout: ViewerLayout::Standalone,
+            },
+        )
+        .await?;
+        action(
+            app,
+            Enable {
+                login: "charlie_demo".into(),
+                enabled: false,
+            },
+        )
+        .await?;
+        action(app, ClearError).await?;
+        1
+    } else {
+        2
+    };
     action(app, SetLimit { limit: 1000 }).await?;
     action(
         app,
@@ -174,7 +219,7 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
                 .iter()
                 .filter(|f| f.open_error.is_some())
                 .count()
-                == 2
+                == count
         {
             if view.mode != Mode::Running {
                 return Err("Partial-open cleanup stopped monitoring".into());
@@ -188,11 +233,12 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
     }
     std::fs::write(crate::e2e::root().join("fixture-state.json"), b"{}")
         .map_err(|e| e.to_string())?;
-    for login in if demo {
-        ["bravo_demo", "charlie_demo"]
+    let logins = if demo {
+        vec!["bravo_demo", "charlie_demo"]
     } else {
-        ["alpha_fixture", "bravo_fixture"]
-    } {
+        vec!["alpha_fixture", "bravo_fixture"]
+    };
+    for login in logins.into_iter().take(count) {
         action(
             app,
             Retry {
@@ -202,7 +248,10 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         .await?;
     }
     action(app, ClearError).await?;
-    let initial = wait(app, "two selected fixtures", |v| v.players.len() == 2).await?;
+    let initial = wait(app, "selected native fixtures", |v| {
+        v.players.len() == count
+    })
+    .await?;
     let labels: Vec<_> = initial
         .players
         .iter()
@@ -242,7 +291,7 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         .await?;
         if preserved.mode != Mode::Running
             || preserved.settings.viewer_layout != ViewerLayout::Standalone
-            || app.windows().len() != 3
+            || app.windows().len() != count + 1
         {
             return Err("Preparation/rollback failure stopped or leaked intact sources".into());
         }
@@ -294,8 +343,8 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         .find(|(label, _)| label.starts_with("viewer-grid-"))
         .ok_or("No native grid container")?
         .1;
-    if grid.webviews().len() != 2 || app.windows().len() != 2 {
-        return Err("Grid did not produce one container with two children".into());
+    if grid.webviews().len() != count || app.windows().len() != 2 {
+        return Err("Grid did not produce one container with the selected children".into());
     }
     let mut bounds = Vec::new();
     for label in &labels {
@@ -312,18 +361,20 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
             .to_logical::<f64>(grid.scale_factor().map_err(|e| e.to_string())?);
         bounds.push(serde_json::json!({"label":label,"x":pos.x,"y":pos.y,"width":size.width,"height":size.height}));
     }
-    let a = &bounds[0];
-    let b = &bounds[1];
-    let separated = a["x"].as_f64().unwrap() + a["width"].as_f64().unwrap()
-        <= b["x"].as_f64().unwrap() + 1.0
-        || b["x"].as_f64().unwrap() + b["width"].as_f64().unwrap()
-            <= a["x"].as_f64().unwrap() + 1.0
-        || a["y"].as_f64().unwrap() + a["height"].as_f64().unwrap()
-            <= b["y"].as_f64().unwrap() + 1.0
-        || b["y"].as_f64().unwrap() + b["height"].as_f64().unwrap()
-            <= a["y"].as_f64().unwrap() + 1.0;
-    if !separated {
-        return Err(format!("Native child cells overlap: {bounds:?}"));
+    if count == 2 {
+        let a = &bounds[0];
+        let b = &bounds[1];
+        let separated = a["x"].as_f64().unwrap() + a["width"].as_f64().unwrap()
+            <= b["x"].as_f64().unwrap() + 1.0
+            || b["x"].as_f64().unwrap() + b["width"].as_f64().unwrap()
+                <= a["x"].as_f64().unwrap() + 1.0
+            || a["y"].as_f64().unwrap() + a["height"].as_f64().unwrap()
+                <= b["y"].as_f64().unwrap() + 1.0
+            || b["y"].as_f64().unwrap() + b["height"].as_f64().unwrap()
+                <= a["y"].as_f64().unwrap() + 1.0;
+        if !separated {
+            return Err(format!("Native child cells overlap: {bounds:?}"));
+        }
     }
     crate::presentation::focus(app, &labels[0])?;
     std::fs::write(crate::e2e::root().join("grid-ready"), b"fixture").map_err(|e| e.to_string())?;
@@ -354,7 +405,7 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         return Err("Timed assignment lost its turn".into());
     }
 
-    if app.windows().len() != 3 {
+    if app.windows().len() != count + 1 {
         return Err("Standalone restoration leaked containers".into());
     }
     // Native IPC probes run in the same children and survive container changes.
@@ -423,8 +474,8 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
     )
     .await?;
     action(app, Start).await?;
-    wait(app, "grid restart", |v| v.players.len() == 2).await?;
-    action(app, SetLimit { limit: 2 }).await?;
+    wait(app, "grid restart", |v| v.players.len() == count).await?;
+    action(app, SetLimit { limit: count }).await?;
     if demo {
         action(
             app,
@@ -463,7 +514,7 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
     )
     .await?;
     let failed = wait(app, "failed close reserves capacity", |v| v.error.is_some()).await?;
-    if failed.players.len() != 2 || !failed.players.iter().any(|p| p.session == reserved) {
+    if failed.players.len() != count || !failed.players.iter().any(|p| p.session == reserved) {
         return Err("Failed close released capacity".into());
     }
     std::fs::write(crate::e2e::root().join("fixture-state.json"), b"{}")
@@ -476,7 +527,7 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
     )
     .await?;
     wait(app, "confirmed close permits replacement", |v| {
-        v.players.len() == 2 && !v.players.iter().any(|p| p.session == reserved)
+        v.players.len() == count && !v.players.iter().any(|p| p.session == reserved)
     })
     .await?;
     let grid = app
@@ -513,7 +564,7 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
     action(app, SetLimit { limit: 1000 }).await?;
     action(app, Start).await?;
     wait(app, "grid starts after explicit user request", |v| {
-        v.players.len() >= 2
+        v.players.len() == count
     })
     .await?;
     // Growth beyond available geometry must stop rather than truncate selection.
@@ -546,7 +597,7 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         return Err("No-fit changed capacity/preference or hid its reason".into());
     }
     Ok(
-        serde_json::json!({"retained_document":true,"retained_fixture_state":true,"grid_children":2,"standalone_restored":true,"preparation_preserves_sources":true,"partial_open_cleanup":true,"partial_move_rollback":true,"configured_limit":1000,"ipc_isolation":true,"stop_during_move":true,"repeated_requests":true,"failed_close_reserves_capacity":true,"grid_close_stops":true,"timer_continuity":true,"no_fit_stops_without_truncation":true,"bounds":bounds,"live_twitch":false}),
+        serde_json::json!({"two_embedded_cells_fit": demo.then_some(count==2),"retained_document":true,"retained_fixture_state":true,"grid_children":count,"standalone_restored":true,"preparation_preserves_sources":true,"partial_open_cleanup":true,"partial_move_rollback":true,"configured_limit":1000,"ipc_isolation":true,"stop_during_move":true,"repeated_requests":true,"failed_close_reserves_capacity":true,"grid_close_stops":true,"timer_continuity":true,"no_fit_stops_without_truncation":true,"bounds":bounds,"live_twitch":false}),
     )
 }
 pub fn install(app: &AppHandle) {

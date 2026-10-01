@@ -121,10 +121,18 @@ This does not manipulate production page DOM.
 Independent review identified and corrected preparation mutation, orphaned partial
 opens, uncertain move cleanup, late supersession, Stop dominance, and cleanup retry
 intent. Final re-review and changed-revision checks are recorded in the PR.
-Native local-fixture evidence covers two retained surfaces, state/turn retention,
+Native local-fixture evidence covers two retained surfaces where they fit, state/turn retention,
 IPC isolation, cancellation, injected failure cleanup, and no-fit Stop. Geometry
 unit tests additionally cover counts 1/2/3/4/6/12; this is not native acceptance
 for all those counts.
+
+Hosted Linux exposed off-thread monitor conversion in the locked runtime: the
+complete monitor observation now runs on the native event thread. Hosted small
+macOS desktops correctly reject two embedded cells; fixture evidence explicitly
+checks that rejection and reports one retained embedded child there, while the
+full-page probe still requires two. This is not two-child embedded acceptance
+on a small desktop. Exact Linux Openbox and small-display fixtures verify these
+corrections.
 
 Live Twitch pause/chat/profile/audio continuity, full-page sizing, DPI/monitor-loss
 acceptance, and platform-specific native results remain distinct gates. Keep the

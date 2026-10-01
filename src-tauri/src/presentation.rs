@@ -34,6 +34,20 @@ pub struct MoveOutcome {
 }
 
 fn screen(app: &AppHandle) -> Result<(f64, f64, tauri::PhysicalPosition<i32>, f64), String> {
+    // The locked runtime converts Tao monitor handles after returning its getter.
+    // That conversion calls GTK/AppKit and must also run on the event thread.
+    let app_clone = app.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(screen_on_main(&app_clone));
+    })
+    .map_err(|e| e.to_string())?;
+    rx.recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|_| "Display observation timed out".to_owned())?
+}
+fn screen_on_main(
+    app: &AppHandle,
+) -> Result<(f64, f64, tauri::PhysicalPosition<i32>, f64), String> {
     let monitor = app
         .get_window("main")
         .and_then(|w| w.current_monitor().ok().flatten())
