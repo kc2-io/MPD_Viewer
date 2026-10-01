@@ -275,7 +275,57 @@ pub fn bounds(view: &tauri::Webview) -> Result<Rect, String> {
         rx.recv_timeout(std::time::Duration::from_secs(5))
             .map_err(|_| "Native bounds inspection did not complete.".into())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        // Locked Wry's child reparent leaves its cached parent unchanged, so
+        // bounds() maps coordinates against a retired source. Inspect the HWND's
+        // actual parent instead; this also makes rollback snapshots reliable.
+        let window = view.window();
+        let (tx, rx) = std::sync::mpsc::channel();
+        view.with_webview(move |platform| {
+            use windows::Win32::{
+                Foundation::{GetLastError, SetLastError, ERROR_SUCCESS, HWND, POINT, RECT},
+                Graphics::Gdi::MapWindowPoints,
+                UI::WindowsAndMessaging::{GetClientRect, GetParent},
+            };
+            let result = (|| -> Result<Rect, String> {
+                let mut hwnd = HWND::default();
+                unsafe { platform.controller().ParentWindow(&mut hwnd) }
+                    .map_err(|e| e.to_string())?;
+                let parent = unsafe { GetParent(hwnd) }.map_err(|e| e.to_string())?;
+                if parent != window.hwnd().map_err(|e| e.to_string())? {
+                    return Err("Native child belongs to another container".into());
+                }
+                let mut rect = RECT::default();
+                unsafe { GetClientRect(hwnd, &mut rect) }.map_err(|e| e.to_string())?;
+                let mut origin = [POINT {
+                    x: rect.left,
+                    y: rect.top,
+                }];
+                unsafe { SetLastError(ERROR_SUCCESS) };
+                let mapped = unsafe { MapWindowPoints(Some(hwnd), Some(parent), &mut origin) };
+                if mapped == 0 && unsafe { GetLastError() } != ERROR_SUCCESS {
+                    return Err("Native child coordinate mapping failed".into());
+                }
+                if rect.right <= rect.left || rect.bottom <= rect.top {
+                    return Err("Native child has no usable bounds".into());
+                }
+                Ok(Rect {
+                    position: tauri::PhysicalPosition::new(origin[0].x, origin[0].y).into(),
+                    size: tauri::PhysicalSize::new(
+                        (rect.right - rect.left) as u32,
+                        (rect.bottom - rect.top) as u32,
+                    )
+                    .into(),
+                })
+            })();
+            let _ = tx.send(result);
+        })
+        .map_err(|e| e.to_string())?;
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| "Native bounds inspection did not complete".to_owned())?
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         view.bounds().map_err(|e| e.to_string())
     }

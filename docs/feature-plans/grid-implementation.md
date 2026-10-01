@@ -138,6 +138,14 @@ parent through replacement; successful Stopped retirement clears the cached
 handle immediately. Fixtures check exact-parent reuse and normal retirement/
 restart; they do not deterministically delay Destroyed event delivery.
 
+Windows hosted geometry exposed another locked-runtime quirk: child reparent
+leaves Wry's coordinate parent cached. Bounds/rollback snapshots now inspect the
+native HWND's actual parent and client rectangle on the event thread, validate
+container ownership, and reject failed mapping. The Windows API body compiled
+against the committed versions on the Windows MSVC target; this is compile
+proof, not runtime evidence. Independent review approved the failure handling.
+Hosted Windows geometry still has to pass on the corrected revision.
+
 Live Twitch pause/chat/profile/audio continuity, full-page sizing, DPI/monitor-loss
 acceptance, and platform-specific native results remain distinct gates. Keep the
 PR draft until the required evidence is available. No release or deployment is

@@ -177,4 +177,7 @@ or whole-page audio after reparent. On small desktops that cannot fit two embedd
 asserts production no-fit Stop, then tests one retained cell and reports
 `two_embedded_cells_fit: false`. The full-page probe still requires two children.
 This does not establish two embedded cells on those small desktops. Linux explicitly adapts Wry's GtkBox hosting
-to native GtkFixed allocations; Windows/macOS need their own hosted GUI results.
+to native GtkFixed allocations; Windows bounds inspection uses the HWND's actual current parent, because locked
+Wry retains the original coordinate parent after child reparent. It checks native
+container ownership and rejects failed coordinate mapping. Windows/macOS need
+their own hosted GUI results.
