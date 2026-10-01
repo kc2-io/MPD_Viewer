@@ -91,6 +91,8 @@ fn main() {
             tauri::async_runtime::spawn(controller.run(rx));
             #[cfg(feature = "e2e-tests")]
             e2e::create_manager(app.handle())?;
+            #[cfg(target_os = "linux")]
+            presentation::watch_divider_theme(app.handle());
             #[cfg(feature = "e2e-tests")]
             if grid_probe::enabled() {
                 grid_probe::install(app.handle());
@@ -100,6 +102,18 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if let WindowEvent::ThemeChanged(theme)=event {
+                if window.label()=="main" {
+                    for (label,grid) in window.app_handle().windows() {
+                        if label.starts_with("viewer-grid-") {
+                            if let Err(error)=presentation::update_divider_theme(&grid,*theme) {eprintln!("Grid theme update failed: {error}");}
+                        }
+                    }
+                } else if window.label().starts_with("viewer-grid-") {
+                    let manager_theme=window.app_handle().get_window("main").and_then(|main|main.theme().ok()).unwrap_or(*theme);
+                    if let Err(error)=presentation::update_divider_theme(window,manager_theme) {eprintln!("Grid theme update failed: {error}");}
+                }
+            }
             if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
                 // Never leave invisible background player windows after manager exit.
                 window.app_handle().exit(0);

@@ -78,13 +78,63 @@ pub fn preflight(app: &AppHandle, count: usize, embedded: bool) -> Result<(), St
     .map(|_| ())
 }
 
+// Matches ui/style.css --panel-line in the manager's light/dark themes.
+pub fn divider_color(theme: tauri::Theme) -> tauri::window::Color {
+    match theme {
+        tauri::Theme::Dark => tauri::window::Color(0x4d, 0x71, 0x83, 255),
+        _ => tauri::window::Color(0x6f, 0x8a, 0x98, 255),
+    }
+}
+pub fn update_divider_theme(window: &Window, theme: tauri::Theme) -> Result<(), String> {
+    window
+        .set_background_color(Some(divider_color(theme)))
+        .map_err(|e| e.to_string())
+}
+
+// Tao's Linux SetTheme event uses a dummy window ID, so it is not delivered
+// through Tauri's per-window callback. Observe the GTK setting directly.
+#[cfg(target_os = "linux")]
+pub fn watch_divider_theme(app: &AppHandle) {
+    use gtk::prelude::*;
+    if let Some(settings) = gtk::Settings::default() {
+        let app = app.clone();
+        settings.connect_gtk_application_prefer_dark_theme_notify(move |settings| {
+            let fallback = if settings.is_gtk_application_prefer_dark_theme() {
+                tauri::Theme::Dark
+            } else {
+                tauri::Theme::Light
+            };
+            let theme = app
+                .get_window("main")
+                .and_then(|window| window.theme().ok())
+                .unwrap_or(fallback);
+            for (label, window) in app.windows() {
+                if label.starts_with("viewer-grid-") {
+                    if let Err(error) = update_divider_theme(&window, theme) {
+                        eprintln!("Grid theme update failed: {error}");
+                    }
+                }
+            }
+        });
+    }
+}
+
 pub fn container(app: &AppHandle, label: &str, title: &str, grid: bool) -> Result<Window, String> {
     #[cfg(feature = "e2e-tests")]
     if crate::e2e::fault("fail_layout_prepare") {
         return Err("Injected fixture container creation failure".into());
     }
     let (w, h, pos, scale) = screen(app)?;
-    let window = tauri::window::WindowBuilder::new(app, label)
+    let mut builder = tauri::window::WindowBuilder::new(app, label);
+    if grid {
+        let theme = app
+            .get_window("main")
+            .ok_or("Manager is unavailable")?
+            .theme()
+            .map_err(|e| e.to_string())?;
+        builder = builder.background_color(divider_color(theme));
+    }
+    let window = builder
         .title(title)
         .inner_size(
             if grid { w.min(1440.0) } else { 1180.0 },
@@ -181,12 +231,12 @@ pub fn arrange(app: &AppHandle, grid: &str, labels: &[String]) -> Result<Vec<Rec
     // Use the current row/column minimum to prevent ordinary undersizing.
     if let Some(first) = bounds.first() {
         let cell = first.size.to_logical::<f64>(1.0);
-        let columns = (size.width / cell.width).round();
-        let rows = (size.height / cell.height).round();
+        let columns = ((size.width + layout::DIVIDER) / (cell.width + layout::DIVIDER)).round();
+        let rows = ((size.height + layout::DIVIDER) / (cell.height + layout::DIVIDER)).round();
         window
             .set_min_size(Some(LogicalSize::new(
-                columns * min_width,
-                rows * min_height,
+                columns * min_width + (columns - 1.0) * layout::DIVIDER,
+                rows * min_height + (rows - 1.0) * layout::DIVIDER,
             )))
             .map_err(|e| e.to_string())?;
     }

@@ -365,18 +365,29 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         let a = &bounds[0];
         let b = &bounds[1];
         let separated = a["x"].as_f64().unwrap() + a["width"].as_f64().unwrap()
-            <= b["x"].as_f64().unwrap() + 1.0
+            <= b["x"].as_f64().unwrap() - crate::layout::DIVIDER + 0.5
             || b["x"].as_f64().unwrap() + b["width"].as_f64().unwrap()
-                <= a["x"].as_f64().unwrap() + 1.0
+                <= a["x"].as_f64().unwrap() - crate::layout::DIVIDER + 0.5
             || a["y"].as_f64().unwrap() + a["height"].as_f64().unwrap()
-                <= b["y"].as_f64().unwrap() + 1.0
+                <= b["y"].as_f64().unwrap() - crate::layout::DIVIDER + 0.5
             || b["y"].as_f64().unwrap() + b["height"].as_f64().unwrap()
-                <= a["y"].as_f64().unwrap() + 1.0;
+                <= a["y"].as_f64().unwrap() - crate::layout::DIVIDER + 0.5;
         if !separated {
             return Err(format!("Native child cells overlap: {bounds:?}"));
         }
     }
     crate::presentation::focus(app, &labels[0])?;
+    let manager = app.get_window("main").ok_or("Missing theme manager")?;
+    for (theme, marker) in [
+        (tauri::Theme::Light, "grid-light-ready"),
+        (tauri::Theme::Dark, "grid-dark-ready"),
+    ] {
+        manager.set_theme(Some(theme)).map_err(|e| e.to_string())?;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        std::fs::write(crate::e2e::root().join(marker), b"fixture").map_err(|e| e.to_string())?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    manager.set_theme(None).map_err(|e| e.to_string())?;
     std::fs::write(crate::e2e::root().join("grid-ready"), b"fixture").map_err(|e| e.to_string())?;
     tokio::time::sleep(Duration::from_secs(2)).await;
     action(
