@@ -8,7 +8,7 @@ use tokio::sync::oneshot;
 const HASH_KEY: &str = "mpd_e2e_policy";
 
 pub fn enabled() -> bool {
-    std::env::var("MPD_E2E_POLICY_PROBE").as_deref() == Ok("1")
+    std::env::var("MPD_E2E_POLICY_PROBE").as_deref() == Ok("1") || crate::grid_probe::enabled()
 }
 
 /// Attach only to the local fixture viewers of a driverless probe process.
@@ -94,16 +94,21 @@ fn parse_result(url: &url::Url, label: &str) -> Result<Option<ProbeResult>, Stri
     if values.len() != 1 || values[0].1.len() > 2048 { return Err("Invalid probe result envelope".into()); }
     let result: ProbeResult = serde_json::from_str(&values[0].1).map_err(|_| "Invalid probe result JSON")?;
     if result.label != label { return Err("Probe window identity mismatch".into()); }
-    if result.diagnostics.len() > 4 || result.diagnostics.iter().any(|(key, value)|
-        !matches!(key.as_str(), "get_state_denied" | "dispatch_denied" | "own_report_allowed" | "wrong_session_denied" | "player_report_denied")
-        || !matches!(value.as_str(), "allowed" | "expected_denial" | "timeout" | "other_error"))
-        || result.readiness.keys().any(|key| !matches!(key.as_str(), "document_complete" | "final_title" | "native_bridge")) {
+    if result.diagnostics.len() > 4 || result.diagnostics.iter().any(|(key, value)| {
+            !matches!(key.as_str(), "get_state_denied" | "dispatch_denied" | "own_report_allowed" | "wrong_session_denied" | "player_report_denied")
+        || !matches!(value.as_str(), "allowed" | "expected_denial" | "timeout" | "other_error")
+        })
+        || result.readiness.keys().any(|key| {
+            !matches!(key.as_str(), "document_complete" | "final_title" | "native_bridge")
+        }) {
         return Err("Invalid bounded probe diagnostics".into());
     }
     let expected: &[&str] = if label.starts_with("player-") {
-        &["dispatch_denied", "get_state_denied", "own_report_allowed", "wrong_session_denied"]
+        &["dispatch_denied", "get_state_denied", "own_report_allowed", "wrong_session_denied",
+        ]
     } else {
-        &["dispatch_denied", "get_state_denied", "player_report_denied"]
+        &["dispatch_denied", "get_state_denied", "player_report_denied",
+        ]
     };
     if result.checks.len() != expected.len() || expected.iter().any(|name| result.checks.get(*name) != Some(&true)) {
         let failed: Vec<_> = expected.iter().filter(|name| result.checks.get(**name) != Some(&true)).collect();
@@ -124,7 +129,7 @@ async fn run(app: &AppHandle) -> Result<Vec<ProbeResult>, String> {
     use crate::model::Action;
     match crate::e2e::scenario() {
         "demo" => action(app, Action::LoadDemo).await?,
-        "web" => {},
+        "web" => {}
         _ => return Err("Policy probe requires demo or web fixtures".into()),
     }
     action(app, Action::SetLimit { limit: 2 }).await?;
@@ -172,7 +177,8 @@ pub fn install(app: &AppHandle) {
             "boundary": "original Tauri IPC from real native fixture webviews",
             "results": result.as_ref().ok(), "error": result.as_ref().err(),
         });
-        let written = std::fs::write(crate::e2e::root().join("policy-probe.json"), evidence.to_string()).is_ok();
+        let written = std::fs::write(crate::e2e::root().join("policy-probe.json"), evidence.to_string(),
+        ).is_ok();
         app.exit(if passed && written { 0 } else { 1 });
     });
 }
@@ -186,7 +192,8 @@ mod tests {
         let evidence = serde_json::json!({"label":"twitch-page-1", "checks":{
             "dispatch_denied":true,"get_state_denied":true,"player_report_denied":true}});
         url.set_fragment(Some(&url::form_urlencoded::Serializer::new(String::new())
-            .append_pair(HASH_KEY, &evidence.to_string()).finish()));
+            .append_pair(HASH_KEY, &evidence.to_string()).finish(),
+        ));
         assert!(parse_result(&url,"twitch-page-1").unwrap().is_some());
         assert!(parse_result(&url,"twitch-page-2").is_err());
         assert!(parse_result(&url,"player-1").is_err());

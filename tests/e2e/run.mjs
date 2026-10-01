@@ -72,6 +72,11 @@ try {
     if (process.env.MPD_E2E_FORCE_FAILURE === '1') await test('intentional harness failure probe', () => { throw new Error('Requested failure to verify reports and cleanup'); });
     await app.stop();
     for (const scenario of ['demo', 'web']) {
+      await activateRoot(`grid-${scenario}`);
+      await test(`driverless ${scenario} native grid retained switching`, () => app.gridProbe(scenario));
+      await app.stop();
+    }
+    for (const scenario of ['demo', 'web']) {
       await activateRoot(`policy-${scenario}`);
       await test(`driverless ${scenario} native policy probe`, () => app.policyProbe(scenario));
       await app.stop();

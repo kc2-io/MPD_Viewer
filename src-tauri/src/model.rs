@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_CLIENT_ID: &str = "ha94kk20cfu1tp74pgg8isgi88cpo7";
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct Favorite { pub login: String, pub enabled: bool, #[serde(default)] pub watch_minutes: Option<u32> }
+pub struct Favorite { pub login: String, pub enabled: bool, #[serde(default)] pub watch_minutes: Option<u32>,
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -17,16 +18,20 @@ pub struct Settings {
     pub muted: bool,
     pub preferred_quality: String,
     pub demo: bool,
+    pub viewer_layout: ViewerLayout,
 }
 impl Default for Settings {
     fn default() -> Self {
         Self { schema: 1, favorites: vec![], limit: 3, rescan_minutes: 1, volume: 25,
-            muted: false, preferred_quality: "auto".into(), demo: true }
+            muted: false, preferred_quality: "auto".into(), demo: true,
+            viewer_layout: ViewerLayout::Standalone,
+        }
     }
 }
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
-        if !["auto","source","160p","180p","240p","360p","480p","720p","1080p","1440p","2160p"].contains(&self.preferred_quality.as_str()) {
+        if !["auto","source","160p","180p","240p","360p","480p","720p","1080p","1440p","2160p",
+        ].contains(&self.preferred_quality.as_str()) {
             return Err("Choose a supported preferred video quality.".into());
         }
         if self.schema != 1 { return Err("Unsupported settings version.".into()); }
@@ -44,9 +49,18 @@ impl Settings {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewerLayout {
+    #[default]
+    Standalone,
+    Grid,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Mode { Stopped, Running, Paused }
+pub enum Mode { Stopped, Running, Paused,
+}
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -56,6 +70,7 @@ pub enum Action {
     Move { login: String, position: usize },
     Enable { login: String, enabled: bool },
     SetLimit { limit: usize },
+    SetLayout { layout: ViewerLayout },
     SetRescan { minutes: u32 },
     SetTimer { login: String, minutes: Option<u32> },
     SetAudio { volume: u8, muted: bool },
@@ -79,7 +94,8 @@ pub enum Action {
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum Playback { Loading, Ready, Buffering, Playing, Paused, Blocked, Offline, Ended, Error }
+pub enum Playback { Loading, Ready, Buffering, Playing, Paused, Blocked, Offline, Ended, Error,
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -93,13 +109,16 @@ pub struct Report {
 
 /// Last observed audience size. A missing value is never represented as zero.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub struct ViewerCount { pub count: u32, pub stale: bool }
+pub struct ViewerCount { pub count: u32, pub stale: bool,
+}
 impl ViewerCount {
-    pub fn from_presence(presence: Option<&mpd_core::Presence>, enabled: bool, demo: bool) -> Option<Self> {
+    pub fn from_presence(presence: Option<&mpd_core::Presence>, enabled: bool, demo: bool,
+    ) -> Option<Self> {
         if !enabled || demo { return None; }
         let p = presence?;
         if p.broadcast_id.is_none() || p.missing_polls > 0 { return None; }
-        p.viewer_count.map(|count| Self { count, stale: !p.fresh })
+        p.viewer_count.map(|count| Self { count, stale: !p.fresh,
+        })
     }
     pub fn label(self) -> String {
         let digits = self.count.to_string();
@@ -161,11 +180,13 @@ impl ViewerCapabilities {
     pub fn twitch_page() -> Self {
         Self { backend: "twitch-page".into(), telemetry: false,
             media_controls: false, window_mute_controls: crate::window_audio::supported(),
-            twitch_channel_page: true }
+            twitch_channel_page: true,
+        }
     }
     pub fn wrapper(backend: &str) -> Self {
         Self { backend: backend.into(), telemetry: true,
-            media_controls: true, window_mute_controls: false, twitch_channel_page: false }
+            media_controls: true, window_mute_controls: false, twitch_channel_page: false,
+        }
     }
     pub fn selected() -> Self {
         match crate::viewer_mode::selected() {
@@ -178,6 +199,7 @@ impl ViewerCapabilities {
 #[derive(Clone, Serialize)]
 pub struct View {
     pub mode: Mode,
+    pub layout_pending: Option<ViewerLayout>,
     pub settings: Settings,
     pub favorites: Vec<FavoriteView>,
     pub players: Vec<PlayerView>,
@@ -194,10 +216,13 @@ pub struct View {
 }
 impl Default for View {
     fn default() -> Self {
-        Self { mode: Mode::Stopped, settings: Settings::default(), favorites: vec![], players: vec![],
+        Self { mode: Mode::Stopped,
+            layout_pending: None,
+            settings: Settings::default(), favorites: vec![], players: vec![],
             connected_as: None, auth_pending: false, user_code: None, last_check_seconds: None,
             polling: false, next_check_seconds: 0, viewer: ViewerCapabilities::selected(),
-            player_origin: String::new(), error: None, events: vec![] }
+            player_origin: String::new(), error: None, events: vec![],
+        }
     }
 }
 
@@ -208,7 +233,9 @@ mod action_tests {
     fn connect_rejects_application_id_overrides_and_unknown_fields() {
         assert!(serde_json::from_str::<Action>(r#"{"type":"connect"}"#).is_ok());
         assert!(serde_json::from_str::<Action>(r#"{"type":"connect","client_id":"other"}"#).is_err());
-        assert!(serde_json::from_str::<Action>(r#"{"type":"connect","url":"https://evil.example"}"#).is_err());
+        assert!(serde_json::from_str::<Action>(r#"{"type":"connect","url":"https://evil.example"}"#
+        )
+        .is_err());
     }
     #[test]
     fn rescan_rejects_malformed_or_extra_fields_at_the_manager_boundary() {
@@ -251,9 +278,35 @@ mod viewer_count_tests {
     #[test]
     fn title_labels_group_counts_and_mark_stale_without_rounding() {
         for (count, expected) in [(0,"0 viewers"), (1,"1 viewer"), (999,"999 viewers"),
-            (1000,"1,000 viewers"), (1234567,"1,234,567 viewers"), (u32::MAX,"4,294,967,295 viewers")] {
+            (1000,"1,000 viewers"), (1234567,"1,234,567 viewers"), (u32::MAX,"4,294,967,295 viewers"),
+        ] {
             assert_eq!(ViewerCount { count, stale: false }.label(), expected);
             assert_eq!(ViewerCount { count, stale: true }.label(), format!("{expected} (stale)"));
+        }
+    }
+}
+
+#[cfg(test)]
+mod layout_settings_tests {
+    use super::*;
+    #[test]
+    fn old_preferences_keep_standalone_and_new_layout_is_bounded() {
+        let old: Settings = serde_json::from_str(r#"{"schema":1,"limit":1000}"#).unwrap();
+        assert_eq!(old.viewer_layout, ViewerLayout::Standalone);
+        assert_eq!(old.limit, 1000);
+        let saved = Settings {
+            viewer_layout: ViewerLayout::Grid,
+            ..old
+        };
+        let restored: Settings =
+            serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+        assert_eq!(restored.viewer_layout, ViewerLayout::Grid);
+        assert!(serde_json::from_str::<Action>(r#"{"type":"set_layout","layout":"grid"}"#).is_ok());
+        for invalid in [
+            r#"{"type":"set_layout","layout":"embedded"}"#,
+            r#"{"type":"set_layout","layout":"grid","url":"x"}"#,
+        ] {
+            assert!(serde_json::from_str::<Action>(invalid).is_err());
         }
     }
 }

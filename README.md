@@ -13,6 +13,13 @@ embedded viewer with `--embedded-viewer`. The manager supports ranked drag
 ordering, live viewer counts, configurable status rescans, per-channel timers,
 system light/dark appearance, and saved Windows monitoring authorization.
 
+Session settings offer Standalone (the upgrade default) and Grid layouts. Grid
+places the selected native viewers in priority order within one window. Switching
+layouts retains their documents and assignment timers. Closing the grid stops
+monitoring; closing a standalone viewer skips its broadcast. If the selected
+viewers cannot fit the display, the manager reports the problem and stops viewers
+rather than reducing capacity. Resize or select Standalone, then press Start.
+
 Full-page mode relies on Twitch's own supported playback, appearance, volume,
 and quality controls. Windows and Linux also expose native whole-page mute;
 macOS reports that capability as unsupported. Embedded mode retains its separate

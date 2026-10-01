@@ -1,12 +1,17 @@
 //! Single-owner controller. Network results are generation-tagged; native window
 //! destruction is acknowledged before replacement windows consume capacity.
-use std::{collections::{HashMap, HashSet, VecDeque}, sync::Arc, time::{Duration, Instant}};
-use tauri::{AppHandle, Manager};
-use tokio::sync::{mpsc, oneshot, watch, Mutex};
-use crate::{model::*, player::{self, Host}, storage::Store};
+use crate::credential_store::{CredentialStore, ScopedStore};
+use crate::{
+    model::*,
+    player::{self, Host},
+    storage::Store,
+};
 use mpd_core::Presence;
 use mpd_twitch::{ApiError, Session, SessionStore, Stream, Twitch};
-use crate::credential_store::{CredentialStore, ScopedStore};
+use std::{collections::{HashMap, HashSet, VecDeque}, sync::Arc, time::{Duration, Instant},
+};
+use tauri::{AppHandle, Manager};
+use tokio::sync::{mpsc, oneshot, watch, Mutex};
 
 type Credentials = Arc<Mutex<Session>>;
 
@@ -16,11 +21,13 @@ fn monitored_poll_interval(minutes: u32) -> Duration {
 fn stale_after(minutes: u32) -> Duration {
     monitored_poll_interval(minutes).saturating_mul(3).max(Duration::from_secs(90))
 }
-fn scheduled_poll(now: Instant, last_check: Option<Instant>, not_before: Instant, minutes: u32) -> Instant {
+fn scheduled_poll(now: Instant, last_check: Option<Instant>, not_before: Instant, minutes: u32,
+) -> Instant {
     let due = last_check.map_or(now, |checked| checked + monitored_poll_interval(minutes));
     due.max(now).max(not_before)
 }
-fn rescheduled_poll(now: Instant, last_check: Option<Instant>, not_before: Instant, next_poll: Instant, minutes: u32) -> Instant {
+fn rescheduled_poll(now: Instant, last_check: Option<Instant>, not_before: Instant, next_poll: Instant, minutes: u32,
+) -> Instant {
     // A failed request or manual Check now can already be queued exactly at the
     // rate-limit boundary. Changing the normal cadence must not postpone it.
     if not_before > now && next_poll <= not_before { not_before }
@@ -29,34 +36,45 @@ fn rescheduled_poll(now: Instant, last_check: Option<Instant>, not_before: Insta
 
 // A small async seam keeps failed restoration's *same* in-memory refresh token
 // alive. No Tauri handle, UI state, logging, or credential serialization crosses it.
-pub(crate) struct RecoveryError { message: String, reconnect: bool, delay: Duration }
+pub(crate) struct RecoveryError { message: String, reconnect: bool, delay: Duration,
+}
 impl From<ApiError> for RecoveryError {
-    fn from(error: ApiError) -> Self { Self { message: error.message, reconnect: error.reconnect, delay: error.retry_after } }
+    fn from(error: ApiError) -> Self { Self { message: error.message, reconnect: error.reconnect, delay: error.retry_after,
+        } }
 }
 impl RecoveryError {
-    fn storage(message: String) -> Self { Self { message, reconnect: false, delay: Duration::from_secs(30) } }
+    fn storage(message: String) -> Self { Self { message, reconnect: false, delay: Duration::from_secs(30),
+        } }
 }
 trait RecoveryDriver {
     type Credentials;
     fn load(&self) -> Result<Option<Self::Credentials>, RecoveryError>;
-    fn recover(&self, credentials: &mut Self::Credentials, validate: bool) -> impl std::future::Future<Output=Result<String,RecoveryError>> + Send;
+    fn recover(&self, credentials: &mut Self::Credentials, validate: bool,
+    ) -> impl std::future::Future<Output=Result<String,RecoveryError>> + Send;
 }
-pub(crate) struct RecoveryOutcome<T> { credentials: Option<T>, result: Result<Option<String>, RecoveryError> }
-async fn recover_authorization<D: RecoveryDriver>(driver: &D, credentials: Option<D::Credentials>, validate: bool) -> RecoveryOutcome<D::Credentials> {
+pub(crate) struct RecoveryOutcome<T> { credentials: Option<T>, result: Result<Option<String>, RecoveryError>,
+}
+async fn recover_authorization<D: RecoveryDriver>(driver: &D, credentials: Option<D::Credentials>, validate: bool,
+) -> RecoveryOutcome<D::Credentials> {
     let mut credentials = match credentials {
         Some(value) => Some(value),
         None => match driver.load() {
             Ok(value) => value,
-            Err(error) => return RecoveryOutcome { credentials: None, result: Err(error) },
+            Err(error) => {
+                return RecoveryOutcome { credentials: None, result: Err(error),
+                }
+            }
         },
     };
     let result = match credentials.as_mut() {
         Some(value) => driver.recover(value, validate).await.map(Some),
         None => Ok(None),
     };
-    RecoveryOutcome { credentials, result }
+    RecoveryOutcome { credentials, result,
+    }
 }
-struct NativeRecovery { twitch: Twitch, scope: ScopedStore }
+struct NativeRecovery { twitch: Twitch, scope: ScopedStore,
+}
 impl RecoveryDriver for NativeRecovery {
     type Credentials = Credentials;
     fn load(&self) -> Result<Option<Credentials>, RecoveryError> {
@@ -64,7 +82,8 @@ impl RecoveryDriver for NativeRecovery {
             Session::from_stored(DEFAULT_CLIENT_ID, stored).map(|session| Arc::new(Mutex::new(session))).map_err(RecoveryError::from)
         }).transpose()
     }
-    async fn recover(&self, credentials: &mut Credentials, validate: bool) -> Result<String, RecoveryError> {
+    async fn recover(&self, credentials: &mut Credentials, validate: bool,
+    ) -> Result<String, RecoveryError> {
         let mut session = credentials.lock().await;
         if validate { self.twitch.restore_session(&mut session, &self.scope).await?; }
         else { self.scope.save(&session.stored()).map_err(RecoveryError::storage)?; }
@@ -74,21 +93,25 @@ impl RecoveryDriver for NativeRecovery {
 fn accept_recovery(current_epoch: u64, result_epoch: u64, pending: bool) -> bool {
     current_epoch == result_epoch && pending
 }
-struct PendingRecovery { credentials: Option<Credentials>, validate: bool, next_attempt: Instant, backoff: u64, inflight: bool }
+struct PendingRecovery { credentials: Option<Credentials>, validate: bool, next_attempt: Instant, backoff: u64, inflight: bool,
+}
 impl PendingRecovery {
     fn new(credentials: Option<Credentials>, validate: bool) -> Self {
-        Self { credentials, validate, next_attempt: Instant::now(), backoff: 30, inflight: false }
+        Self { credentials, validate, next_attempt: Instant::now(), backoff: 30, inflight: false,
+        }
     }
 }
 
-fn close_tracked_auth_window(tracked: &mut Option<u64>, close: impl FnOnce(u64) -> Result<(), String>) -> Result<(), String> {
+fn close_tracked_auth_window(tracked: &mut Option<u64>, close: impl FnOnce(u64) -> Result<(), String>,
+) -> Result<(), String> {
     if let Some(epoch) = *tracked {
         close(epoch)?;
         *tracked = None;
     }
     Ok(())
 }
-fn auth_completion_ready(epoch: u64, tracked: Option<u64>, returned: Option<u64>, pending: bool, connected: bool) -> bool {
+fn auth_completion_ready(epoch: u64, tracked: Option<u64>, returned: Option<u64>, pending: bool, connected: bool,
+) -> bool {
     !pending && connected && tracked == Some(epoch) && returned == Some(epoch)
 }
 
@@ -96,12 +119,24 @@ pub enum Message {
     Action(Action, oneshot::Sender<Result<(), String>>),
     Report(String, Report),
     Destroyed(String),
-    AuthCode { epoch: u64, code: String, url: String },
-    AuthReturnLoaded { epoch: u64 },
-    Authorized { epoch: u64, result: Result<Session, ApiError> },
-    Recovered { epoch: u64, outcome: RecoveryOutcome<Credentials> },
+    GridClosed(String),
+    SurfaceClosed(String, Result<(), String>),
+    LayoutFinished {
+        revision: u64,
+        target: ViewerLayout,
+        result: Result<crate::presentation::MoveOutcome, crate::presentation::MoveFailure>,
+    },
+    AuthCode { epoch: u64, code: String, url: String,
+    },
+    AuthReturnLoaded { epoch: u64,
+    },
+    Authorized { epoch: u64, result: Result<Session, ApiError>,
+    },
+    Recovered { epoch: u64, outcome: RecoveryOutcome<Credentials>,
+    },
     Polled { id: u64, generation: u64, epoch: u64, monitored: bool,
-        result: Result<HashMap<String, Stream>, ApiError> },
+        result: Result<HashMap<String, Stream>, ApiError>,
+    },
 }
 #[derive(Clone)]
 pub struct Handle {
@@ -109,7 +144,10 @@ pub struct Handle {
     pub view: watch::Receiver<View>,
 }
 struct PlayerSession {
-    id: u64, login: String, label: String, closing: bool,
+    id: u64, login: String, label: String,
+    container: String,
+    closing: bool,
+    cleanup_required: bool,
     report: Option<Report>, reported: Option<Instant>,
     rate_start: Instant, rate_count: u8, quality_dirty: bool,
     window_mute_override: bool, window_muted: Option<bool>,
@@ -123,10 +161,13 @@ impl PlayerSession {
 }
 
 #[derive(Clone, Debug)]
-struct MuteTarget { id: u64, label: String, before: bool, after: bool }
-struct MuteTransaction { confirmed: HashMap<u64, bool>, error: Option<String> }
+struct MuteTarget { id: u64, label: String, before: bool, after: bool,
+}
+struct MuteTransaction { confirmed: HashMap<u64, bool>, error: Option<String>,
+}
 
-fn apply_mute_transaction(targets: &[MuteTarget], mut apply: impl FnMut(&str, bool) -> Result<(), String>) -> MuteTransaction {
+fn apply_mute_transaction(targets: &[MuteTarget], mut apply: impl FnMut(&str, bool) -> Result<(), String>,
+) -> MuteTransaction {
     let mut confirmed: HashMap<_, _> = targets.iter().map(|target| (target.id, target.before)).collect();
     let mut changed = Vec::new();
     for target in targets {
@@ -145,11 +186,13 @@ fn apply_mute_transaction(targets: &[MuteTarget], mut apply: impl FnMut(&str, bo
                 let rollback = if rollback_failed.is_empty() { String::new() }
                     else { format!(" Rollback also failed for sessions {}.", rollback_failed.join(", ")) };
                 return MuteTransaction { confirmed,
-                    error: Some(format!("Could not change page-window mute for session {}: {error}.{rollback}", target.id)) };
+                    error: Some(format!("Could not change page-window mute for session {}: {error}.{rollback}", target.id)),
+                };
             }
         }
     }
-    MuteTransaction { confirmed, error: None }
+    MuteTransaction { confirmed, error: None,
+    }
 }
 
 fn apply_persisted_mute_transaction(
@@ -171,7 +214,8 @@ fn apply_persisted_mute_transaction(
         let rollback_error = if rollback_failed.is_empty() { String::new() }
             else { format!(" Rollback also failed for sessions {}.", rollback_failed.join(", ")) };
         return MuteTransaction { confirmed,
-            error: Some(format!("Could not save global page mute: {storage_error}.{rollback_error}")) };
+            error: Some(format!("Could not save global page mute: {storage_error}.{rollback_error}")),
+        };
     }
     applied
 }
@@ -196,11 +240,18 @@ pub struct Controller {
     polling: Option<u64>, poll_id: u64, next_poll: Instant, not_before: Instant,
     last_check: Option<Instant>, backoff: u64, error: Option<String>,
     events: VecDeque<String>, started: Instant,
+    retire_retry: HashMap<String, Instant>,
+    grid: Option<String>,
+    layout_revision: u64,
+    layout_cancel: Option<crate::presentation::Cancel>,
+    layout_pending: Option<ViewerLayout>,
+    layout_queued: Option<ViewerLayout>,
     rotation: mpd_core::timer::Rotation, timer_tick: Instant, close_retry: HashMap<u64,Instant>,
 }
 impl Controller {
     pub fn new(app: AppHandle, tx: mpsc::Sender<Message>, publish: watch::Sender<View>,
-        store: Store, host: Host, settings: Settings, twitch: Twitch) -> Self {
+        store: Store, host: Host, settings: Settings, twitch: Twitch,
+    ) -> Self {
         Self { app, tx, publish, store, host, twitch, settings, mode: Mode::Stopped,
             presence: HashMap::new(), skipped: HashMap::new(), demo_live: HashMap::new(),
             players: HashMap::new(), failed: HashMap::new(), next_id: 0, generation: 0,
@@ -208,7 +259,15 @@ impl Controller {
             credential_store: CredentialStore::new(), auth_recovery: None,
             auth_pending: false, user_code: None, auth_url: None, auth_window_epoch: None, auth_return_epoch: None, polling: None,
             poll_id: 0, next_poll: Instant::now(), not_before: Instant::now(),
-            last_check: None, backoff: 30, error: None, rotation: Default::default(), timer_tick: Instant::now(), close_retry: HashMap::new(), events: VecDeque::new(), started: Instant::now() }
+            last_check: None, backoff: 30, error: None,
+            retire_retry: HashMap::new(),
+            grid: None,
+            layout_revision: 0,
+            layout_cancel: None,
+            layout_pending: None,
+            layout_queued: None,
+            rotation: Default::default(), timer_tick: Instant::now(), close_retry: HashMap::new(), events: VecDeque::new(), started: Instant::now(),
+        }
     }
     fn log(&mut self, text: impl Into<String>) {
         self.events.push_front(format!("+{}s  {}", self.started.elapsed().as_secs(), text.into()));
@@ -228,7 +287,8 @@ impl Controller {
     fn set_window_mute(&mut self, session: Option<u64>, muted: bool) -> Result<(), String> {
         let capabilities = self.host.capabilities(self.settings.demo);
         if !capabilities.twitch_channel_page || !capabilities.window_mute_controls {
-            return Err("Native page-window mute is unavailable for the active viewer mode and platform.".into());
+            return Err("Native page-window mute is unavailable for the active viewer mode and platform.".into(),
+            );
         }
         if let Some(id) = session {
             if self.settings.muted { return Err("Turn off global page mute before changing one player.".into()); }
@@ -240,15 +300,18 @@ impl Controller {
             return Ok(());
         }
         let targets: Vec<_> = self.players.values().filter(|player| !player.closing)
-            .filter_map(|player| player.window_muted.map(|before| MuteTarget {
+            .filter_map(|player| {
+                player.window_muted.map(|before| MuteTarget {
                 id: player.id, label: player.label.clone(), before,
                 after: muted || player.window_mute_override,
-            })).collect();
+            })
+            }).collect();
         let mut proposed = self.settings.clone(); proposed.muted = muted;
         let app = self.app.clone();
         let applied = apply_persisted_mute_transaction(&targets,
             |label, target| player::window_mute(&app, label, target),
-            || self.store.save(&proposed));
+            || self.store.save(&proposed),
+        );
         self.record_confirmed_mutes(&applied.confirmed);
         if let Some(error) = applied.error { return Err(error); }
         self.settings = proposed;
@@ -271,7 +334,9 @@ impl Controller {
         }
     }
     fn disconnected(&mut self, forget: bool) -> Result<(), String> {
-        let close = close_tracked_auth_window(&mut self.auth_window_epoch, |epoch| crate::viewer_auth::close(&self.app, epoch));
+        let close = close_tracked_auth_window(&mut self.auth_window_epoch, |epoch| {
+            crate::viewer_auth::close(&self.app, epoch)
+        });
         self.auth_epoch += 1;
         let vault = if forget { self.credential_store.forget(self.auth_epoch) }
             else { self.credential_store.begin_epoch(self.auth_epoch).map(|_| ()) };
@@ -284,9 +349,11 @@ impl Controller {
     }
     fn close_completed_connection(&mut self) {
         if auth_completion_ready(self.auth_epoch, self.auth_window_epoch, self.auth_return_epoch,
-            self.auth_pending, self.credentials.is_some()) {
-            if close_tracked_auth_window(&mut self.auth_window_epoch, |epoch|
-                crate::viewer_auth::close(&self.app, epoch)).is_err() {
+            self.auth_pending, self.credentials.is_some(),
+        ) {
+            if close_tracked_auth_window(&mut self.auth_window_epoch, |epoch| {
+                crate::viewer_auth::close(&self.app, epoch)
+            }).is_err() {
                 self.error = Some("Twitch connected, but its window could not close automatically. You can close it manually.".into());
             }
         }
@@ -303,7 +370,8 @@ impl Controller {
                 if input.len() > 512 { return Err("Channel input is too long.".into()); }
                 let login = mpd_core::normalize_login(&input).map_err(str::to_owned)?;
                 if self.settings.favorites.iter().any(|f| f.login == login) { return Err("That channel is already a favorite.".into()); }
-                let mut s = self.settings.clone(); s.favorites.push(Favorite { login: login.clone(), enabled: true, watch_minutes: None });
+                let mut s = self.settings.clone(); s.favorites.push(Favorite { login: login.clone(), enabled: true, watch_minutes: None,
+                });
                 self.save(s)?; self.presence.insert(login.clone(), Presence::default());
                 self.changed(); self.log(format!("Added {login}."));
             }
@@ -328,6 +396,7 @@ impl Controller {
                 if let Some(p) = self.presence.get_mut(&login) { p.viewer_count = None; }
                 self.changed();
             }
+            Action::SetLayout { layout } => self.set_layout(layout)?,
             Action::SetLimit { limit } => { let mut s = self.settings.clone(); s.limit = limit; self.save(s)?; self.rotation.clear_round(); }
             Action::SetRescan { minutes } => {
                 let mut s = self.settings.clone(); s.rescan_minutes = minutes; self.save(s)?;
@@ -335,7 +404,8 @@ impl Controller {
                 // it completes. Otherwise apply the new interval immediately.
                 if !self.settings.demo && self.mode != Mode::Stopped && self.polling.is_none() {
                     self.next_poll = rescheduled_poll(Instant::now(), self.last_check, self.not_before,
-                        self.next_poll, self.settings.rescan_minutes);
+                        self.next_poll, self.settings.rescan_minutes,
+                    );
                 }
             }
             Action::SetTimer { login, minutes } => {
@@ -363,7 +433,8 @@ impl Controller {
                 // Idempotent updates must not restart recovery while a token is rotating.
                 if demo == self.settings.demo { return Ok(()); }
                 if self.mode != Mode::Stopped || !self.players.is_empty() {
-                    return Err("Stop and wait for all players to close before changing data sources.".into());
+                    return Err("Stop and wait for all players to close before changing data sources.".into(),
+                    );
                 }
                 if demo { self.disconnected(false)?; }
                 let mut s = self.settings.clone(); s.demo = demo; self.save(s)?;
@@ -382,13 +453,15 @@ impl Controller {
                 if !self.settings.demo { return Err("Switch to Demo mode first.".into()); }
                 let mut s = self.settings.clone();
                 for login in ["alpha_demo", "bravo_demo", "charlie_demo", "delta_demo"] {
-                    if !s.favorites.iter().any(|f| f.login == login) { s.favorites.push(Favorite { login: login.into(), enabled: true, watch_minutes: None }); }
+                    if !s.favorites.iter().any(|f| f.login == login) { s.favorites.push(Favorite { login: login.into(), enabled: true, watch_minutes: None,
+                        }); }
                 }
                 self.save(s)?;
                 for login in ["bravo_demo", "charlie_demo", "delta_demo"] {
                     self.next_id += 1; self.demo_live.insert(login.into(), format!("demo-{}", self.next_id));
                 }
-                self.update_demo(); self.log("Demo loaded: Bravo, Charlie, and Delta are simulated live; Alpha is offline.");
+                self.update_demo(); self.log("Demo loaded: Bravo, Charlie, and Delta are simulated live; Alpha is offline.",
+                );
             }
             Action::Start => {
                 if !self.settings.demo && (self.credentials.is_none() || self.auth_pending) { return Err("Connect Twitch first, or use Demo mode.".into()); }
@@ -404,6 +477,10 @@ impl Controller {
             }
             Action::Pause => { if self.mode == Mode::Running { self.mode = Mode::Paused; self.log("Automatic selection paused; existing players retained."); } }
             Action::Stop => {
+                if let Some(cancel) = &self.layout_cancel {
+                    cancel.store(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                self.layout_queued = None;
                 self.mode = Mode::Stopped; self.rotation=Default::default(); self.generation += 1; self.mark_stale();
                 self.next_poll = Instant::now() + Duration::from_secs(60);
                 self.log("Stopped; closing all managed players.");
@@ -426,7 +503,8 @@ impl Controller {
                 self.auth_task = Some(tokio::spawn(async move {
                     let result = async {
                         let code = twitch.device_code(DEFAULT_CLIENT_ID).await?;
-                        let _ = tx.send(Message::AuthCode { epoch, code: code.user_code.clone(), url: code.verification_uri.clone() }).await;
+                        let _ = tx.send(Message::AuthCode { epoch, code: code.user_code.clone(), url: code.verification_uri.clone(),
+                            }).await;
                         twitch.complete_device(DEFAULT_CLIENT_ID, code).await
                     }.await;
                     let _ = tx.send(Message::Authorized { epoch, result }).await;
@@ -435,7 +513,7 @@ impl Controller {
             Action::Disconnect => { self.disconnected(true)?; self.log("Monitoring disconnected. API tokens were cleared; Twitch website sign-in is unchanged."); }
             Action::Focus { login } => {
                 if let Some(p) = self.players.values().find(|p| p.login == login && !p.closing) {
-                    if let Some(w) = self.app.get_webview_window(&p.label) { let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus(); }
+                    crate::presentation::focus(&self.app, &p.label)?;
                 }
             }
             Action::Skip { login } => self.skip(&login),
@@ -443,38 +521,276 @@ impl Controller {
             Action::Retry { login } => {
                 self.failed.remove(&login);
                 let ids: Vec<_> = self.players.values().filter(|p| p.login == login && !p.closing).map(|p| p.id).collect();
-                for id in ids { self.close(id); }
+                for id in ids { self.close_retry.remove(&id);
+                    self.close(id); }
             }
             Action::ClearError => self.error = None,
         }
         Ok(())
     }
     fn close(&mut self, id: u64) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.cleanup_required = true;
+        }
         if self.close_retry.get(&id).is_some_and(|t| *t>Instant::now()) { return; }
         if let Some(p) = self.players.get_mut(&id) {
             if p.closing { return; }
             p.closing = true;
-            if let Some(w) = self.app.get_webview_window(&p.label) {
-                if let Err(error) = w.destroy() {
+            let label = p.label.clone();
+            let tx = self.tx.clone();
+            if let Err(error) =
+                crate::presentation::close(&self.app, label.clone(), move |result| {
+                    // Reliable completion is required to release a reservation.
+                    tauri::async_runtime::spawn(async move {
+                        let _ = tx.send(Message::SurfaceClosed(label, result)).await;
+                    });
+                }) {
                     p.closing = false; self.close_retry.insert(id,Instant::now()+Duration::from_secs(30)); self.error = Some(format!("Could not close {}: {error}", p.login));
                 }
             }
-            // Keep the capacity reservation until Destroyed or a registry sweep.
-        }
     }
     fn destroyed(&mut self, label: &str) {
-        let id = self.players.values().find(|p| p.label == label).map(|p| p.id);
-        if let Some(id) = id {
+        if self.layout_pending.is_some()
+            && self
+                .layout_cancel
+                .as_ref()
+                .is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst) == 1)
+            && self.players.values().any(|p| p.container == label)
+        {
+            let _ = self.action(Action::Stop);
+        }
+        // A retained move retires empty old windows. Their destruction is not
+        // destruction of the still-live child with the same original label.
+        let ids: Vec<_> = self.players.values().filter(|p| p.container == label && self.app.get_webview(&p.label).is_none()).map(|p| p.id)
+            .collect();
+        for id in ids {
+            self.release_surface(id);
+        }
+        if self.grid.as_deref() == Some(label) {
+            self.grid = None;
+        }
+    }
+    fn release_surface(&mut self, id: u64) {
             self.close_retry.remove(&id);
             if let Some(p) = self.players.remove(&id) {
-                if !p.closing && self.mode != Mode::Stopped { self.skip(&p.login); }
+                if !p.closing && !p.cleanup_required && self.mode != Mode::Stopped { self.skip(&p.login); }
                 self.log(format!("Closed {} (session {}).", p.login, p.id));
+        }
+    }
+    fn set_layout(&mut self, target: ViewerLayout) -> Result<(), String> {
+        if self.layout_pending.is_some() {
+            if let Some(cancel) = &self.layout_cancel {
+                if cancel.load(std::sync::atomic::Ordering::SeqCst) == 1 {
+                    return Err(
+                        "Wait for Stop to finish closing viewers before changing layout.".into(),
+                    );
+                }
+                let _ = cancel.compare_exchange(
+                    0,
+                    2,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
+            self.layout_queued = Some(target);
+            return Ok(());
+        }
+        if target == self.settings.viewer_layout {
+            return Ok(());
+        }
+        if self.players.values().any(|p| p.closing) || !self.close_retry.is_empty() {
+            return Err("Wait for viewer cleanup before changing layout.".into());
+        }
+        if target == ViewerLayout::Grid {
+            crate::presentation::preflight(
+                &self.app,
+                self.players.len(),
+                self.host.capabilities(self.settings.demo).media_controls,
+            )?;
+        }
+        if self.players.is_empty() {
+            if let Some(grid) = self.grid.take() {
+                if let Some(window) = self.app.get_window(&grid) {
+                    window.destroy().map_err(|e| e.to_string())?;
+                }
+            }
+            let mut settings = self.settings.clone();
+            settings.viewer_layout = target;
+            self.save(settings)?;
+            return Ok(());
+        }
+        self.advance_timers();
+        self.layout_revision += 1;
+        let revision = self.layout_revision;
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
+        self.layout_cancel = Some(cancel.clone());
+        self.layout_pending = Some(target);
+        let labels = self.ordered_labels();
+        let app = self.app.clone();
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = crate::presentation::switch(&app, target, revision, &labels, &cancel);
+            tauri::async_runtime::spawn(async move {
+                let _ = tx
+                    .send(Message::LayoutFinished {
+                        revision,
+                        target,
+                        result,
+                    })
+                    .await;
+            });
+        });
+        Ok(())
+    }
+    fn ordered_labels(&self) -> Vec<String> {
+        self.settings
+            .favorites
+            .iter()
+            .filter_map(|f| {
+                self.players
+                    .values()
+                    .find(|p| p.login == f.login && !p.closing && !p.cleanup_required)
+                    .map(|p| p.label.clone())
+            })
+            .collect()
+    }
+    fn grid_failure(&mut self, error: String) {
+        let _ = self.action(Action::Stop);
+        self.error=Some(format!("{error} Viewers and monitoring stopped. Resize or choose Standalone, then press Start."));
+    }
+    fn finish_layout(
+        &mut self,
+        revision: u64,
+        target: ViewerLayout,
+        result: Result<crate::presentation::MoveOutcome, crate::presentation::MoveFailure>,
+    ) {
+        if revision != self.layout_revision {
+            return;
+        }
+        self.advance_timers();
+        let cancelled = self
+            .layout_cancel
+            .as_ref()
+            .map_or(0, |c| c.load(std::sync::atomic::Ordering::SeqCst));
+        let result = match result {
+            Ok(outcome) if cancelled == 2 => {
+                let app = self.app.clone();
+                let tx = self.tx.clone();
+                let cancel = self.layout_cancel.as_ref().unwrap().clone();
+                std::thread::spawn(move || {
+                    let result = crate::presentation::restore(&app, outcome, cancel);
+                    tauri::async_runtime::spawn(async move {
+                        let _ = tx
+                            .send(Message::LayoutFinished {
+                                revision,
+                                target,
+                                result,
+                            })
+                            .await;
+                    });
+                });
+                return;
+            }
+            other => other,
+        };
+        self.layout_cancel = None;
+        self.layout_pending = None;
+        match result {
+            Ok(outcome) if cancelled == 0 => {
+                self.grid = outcome.grid;
+                for p in self.players.values_mut() {
+                    if let Some(view) = self.app.get_webview(&p.label) {
+                        p.container = view.window().label().into();
+                    }
+                }
+                let mut settings = self.settings.clone();
+                settings.viewer_layout = target;
+                if let Err(error) = self.save(settings) {
+                    self.grid_failure(format!("Could not save layout: {error}"));
+                } else {
+                    self.log(format!(
+                        "Viewer layout changed to {target:?}; native surfaces retained."
+                    ));
+                }
+                for (_, window, _) in outcome.sources {
+                    if window.webviews().is_empty() {
+                        let _ = window.destroy();
+                    }
+                }
+            }
+            Err(error) if error.source_intact => {
+                if cancelled == 0 {
+                    self.error = Some(error.message);
+                }
+            }
+            Err(error) => {
+                // Preflight/target creation failures can leave sources intact.
+                // A partial native failure destroys ownership candidates instead.
+                for p in self.players.values_mut() {
+                    if let Some(view) = self.app.get_webview(&p.label) {
+                        p.container = view.window().label().into();
+                    }
+                }
+                self.grid_failure(error.message);
+            }
+            Ok(outcome) => {
+                self.grid = outcome.grid;
+                for p in self.players.values_mut() {
+                    if let Some(view) = self.app.get_webview(&p.label) {
+                        p.container = view.window().label().into();
+                    }
+                }
+                for (_, window, _) in outcome.sources {
+                    if window.webviews().is_empty() {
+                        let _ = window.destroy();
+                    }
+                }
+                // Stop already owns the logical cleanup; no preference commit.
+                let _ = self.action(Action::Stop);
+            }
+        }
+        if let Some(next) = self.layout_queued.take() {
+            if cancelled != 1 {
+                if let Err(error) = self.set_layout(next) {
+                    self.error = Some(error);
+                }
+            }
+        }
+    }
+    fn cleanup_empty_containers(&mut self) {
+        if self.layout_pending.is_some() {
+            return;
+        }
+        self.retire_retry
+            .retain(|label, _| self.app.get_window(label).is_some());
+        for (label, window) in self.app.windows() {
+            if !(label.starts_with("player-")
+                || label.starts_with("twitch-page-")
+                || label.starts_with("viewer-standalone-")
+                || label.starts_with("viewer-grid-"))
+                || !window.webviews().is_empty()
+            {
+                continue;
+            }
+            if self
+                .retire_retry
+                .get(&label)
+                .is_some_and(|at| *at > Instant::now())
+            {
+                continue;
+            }
+            if let Err(error) = window.destroy() {
+                self.retire_retry
+                    .insert(label.clone(), Instant::now() + Duration::from_secs(30));
+                self.error = Some(format!(
+                    "Could not retire empty viewer window {label}: {error}"
+                ));
             }
         }
     }
     fn advance_timers(&mut self) {
         let now=Instant::now(); let elapsed=now.saturating_duration_since(self.timer_tick); self.timer_tick=now;
-        let assigned=self.players.values().filter(|p| !p.closing).map(|p| p.login.clone()).collect();
+        let assigned=self.players.values().filter(|p| !p.closing && !p.cleanup_required).map(|p| p.login.clone()).collect();
         let before: HashSet<_>=self.rotation.turns.iter().filter(|(_,t)| t.overdue()).map(|(l,_)| l.clone()).collect();
         self.rotation.advance(elapsed,self.mode==Mode::Running,&assigned);
         let reached: Vec<_>=self.rotation.turns.iter().filter(|(l,t)| t.overdue() && !before.contains(*l)).map(|(l,_)| l.clone()).collect();
@@ -482,7 +798,8 @@ impl Controller {
     }
     fn reconcile(&mut self) {
         self.advance_timers();
-        let ranked: Vec<_> = self.settings.favorites.iter().map(|f| mpd_core::Favorite { login: f.login.clone(), enabled: f.enabled }).collect();
+        let ranked: Vec<_> = self.settings.favorites.iter().map(|f| mpd_core::Favorite { login: f.login.clone(), enabled: f.enabled,
+            }).collect();
         // Presence freshness is deliberately not part of turn identity: one missed
         // poll and temporary API failures retain assignment time.
         let eligible: Vec<_> = ranked.iter().filter(|f| f.enabled).filter_map(|f| {
@@ -490,27 +807,61 @@ impl Controller {
             (self.skipped.get(&f.login)!=Some(id)).then(|| (f.login.clone(),id.clone()))
         }).collect();
         self.rotation.observe(eligible.clone());
-        self.rotation.turns.retain(|login,turn| eligible.iter().any(|(l,b)| l==login && b==&turn.broadcast));
-        for p in self.players.values().filter(|p| !p.closing && self.mode!=Mode::Stopped) {
+        self.rotation.turns.retain(|login,turn| {
+            eligible.iter().any(|(l,b)| l==login && b==&turn.broadcast)
+        });
+        for p in self.players.values().filter(|p| !p.closing && !p.cleanup_required && self.mode!=Mode::Stopped) {
             if let Some((_,broadcast))=eligible.iter().find(|(l,_)| l==&p.login) {
                 let minutes=self.settings.favorites.iter().find(|f| f.login==p.login).and_then(|f| f.watch_minutes);
                 self.rotation.opened(&p.login,broadcast,minutes);
             }
         }
-        let existing: HashSet<_> = self.players.values().filter(|p| !p.closing).map(|p| p.login.clone()).collect();
+        let existing: HashSet<_> = self.players.values().filter(|p| !p.closing && !p.cleanup_required).map(|p| p.login.clone()).collect();
         let before=self.rotation.clone();
         let desired = match self.mode {
             Mode::Stopped => vec![],
             Mode::Running => self.rotation.desired(&ranked,&self.presence,&existing,&self.skipped,
                 &self.failed.keys().cloned().collect(),self.settings.limit,
-                !self.players.values().any(|p| p.closing) && self.close_retry.values().all(|t| *t<=Instant::now())),
+                !self.players.values().any(|p| p.closing) && self.close_retry.values().all(|t| *t<=Instant::now()),
+            ),
             Mode::Paused => ranked.iter().filter(|f| f.enabled && existing.contains(&f.login))
                 .filter(|f| {
                     let broadcast = self.presence.get(&f.login).and_then(|p| p.broadcast_id.as_ref());
                     self.skipped.get(&f.login).is_none() || self.skipped.get(&f.login) != broadcast
                 }).take(self.settings.limit).map(|f| f.login.clone()).collect(),
         };
-        let closing: Vec<_> = self.players.values().filter(|p| !desired.contains(&p.login)).map(|p| p.id).collect();
+        if self.layout_pending.is_some() {
+            let active: HashSet<_> = self
+                .players
+                .values()
+                .filter(|p| !p.closing && !p.cleanup_required)
+                .map(|p| p.login.clone())
+                .collect();
+            let proposed: HashSet<_> = desired.iter().cloned().collect();
+            if active != proposed {
+                if let Some(cancel) = &self.layout_cancel {
+                    let _ = cancel.compare_exchange(
+                        0,
+                        2,
+                        std::sync::atomic::Ordering::SeqCst,
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
+                }
+            }
+            return;
+        }
+        if self.settings.viewer_layout == ViewerLayout::Grid && self.mode != Mode::Stopped {
+            if let Err(error) = crate::presentation::preflight(
+                &self.app,
+                desired.len(),
+                self.host.capabilities(self.settings.demo).media_controls,
+            ) {
+                self.grid_failure(error);
+                self.reconcile();
+                return;
+            }
+        }
+        let closing: Vec<_> = self.players.values().filter(|p| p.cleanup_required || !desired.contains(&p.login)).map(|p| p.id).collect();
         for id in closing { self.close(id); }
         if before.pending.is_none() {
             if let Some((source,target))=self.rotation.pending.clone() {
@@ -522,19 +873,87 @@ impl Controller {
         // Re-evaluate after each failed open, excluding it before truncation. Each
         // login is attempted at most once until explicit Retry; no tick retry storm.
         for _ in 0..=ranked.len() {
+            if self.players.values().any(|p| p.closing) {
+                break;
+            }
             let existing: HashSet<_>=self.players.values().map(|p| p.login.clone()).collect();
             let desired=self.rotation.desired(&ranked,&self.presence,&existing,&self.skipped,
-                &self.failed.keys().cloned().collect(),self.settings.limit,false);
+                &self.failed.keys().cloned().collect(),self.settings.limit,false,
+            );
             if self.players.len()>=self.settings.limit { break; }
             let Some(login)=desired.into_iter().find(|l| !existing.contains(l)) else { break; };
             self.next_id+=1; let id=self.next_id; let label=self.host.label(id,self.settings.demo);
-            match self.host.open(&self.app,&login,id,&self.settings) {
+            let container_result = (|| -> Result<(tauri::Window, tauri::Rect), String> {
+                if self.settings.viewer_layout == ViewerLayout::Grid {
+                    if self
+                        .grid
+                        .as_ref()
+                        .is_none_or(|label| self.app.get_window(label).is_none())
+                    {
+                        self.layout_revision += 1;
+                        let grid = format!("viewer-grid-{}", self.layout_revision);
+                        crate::presentation::container(
+                            &self.app,
+                            &grid,
+                            "MPD Viewer · Grid",
+                            true,
+                        )?;
+                        self.grid = Some(grid);
+                    }
+                    let grid = self.grid.as_ref().unwrap();
+                    let mut labels = self.ordered_labels();
+                    labels.push(label.clone());
+                    let bounds = crate::presentation::arrange(&self.app, grid, &labels)?;
+                    Ok((
+                        self.app.get_window(grid).ok_or("Grid disappeared.")?,
+                        *bounds.last().unwrap(),
+                    ))
+                } else {
+                    let window = crate::presentation::container(
+                        &self.app,
+                        &label,
+                        &player::window_title(&login, self.settings.demo, None),
+                        false,
+                    )?;
+                    let size = window
+                        .inner_size()
+                        .map_err(|e| e.to_string())?
+                        .to_logical::<f64>(window.scale_factor().map_err(|e| e.to_string())?);
+                    Ok((
+                        window,
+                        tauri::Rect {
+                            position: tauri::LogicalPosition::new(0.0, 0.0).into(),
+                            size: size.into(),
+                        },
+                    ))
+                }
+            })();
+            let container_label = container_result
+                .as_ref()
+                .ok()
+                .map(|(w, _)| w.label().to_owned())
+                .unwrap_or_default();
+            let opened = container_result.and_then(|(window, bounds)| {
+                let result = self.host.open(&window, bounds,&login,id,&self.settings);
+                if result.is_ok() {
+                    window.show().map_err(|e| e.to_string())?;
+                } else if window.webviews().is_empty() {
+                    let _ = window.destroy();
+                }
+                result
+            });
+            match opened {
                 Ok(_) => {
                     self.advance_timers();
-                    self.players.insert(id,PlayerSession {id,login:login.clone(),label,closing:false,
+                    self.players.insert(id,PlayerSession {id,login:login.clone(),label,
+                            container: container_label,
+                            closing: false,
+                            cleanup_required:false,
                         report:None,reported:None,rate_start:Instant::now(),rate_count:0,quality_dirty:true,
                         window_mute_override:false,
-                        window_muted:self.host.capabilities(self.settings.demo).window_mute_controls.then_some(self.settings.muted)});
+                        window_muted:self.host.capabilities(self.settings.demo).window_mute_controls.then_some(self.settings.muted),
+                        },
+                    );
                     if let Some(broadcast)=self.presence.get(&login).and_then(|p| p.broadcast_id.as_deref()) {
                         let minutes=self.settings.favorites.iter().find(|f| f.login==login).and_then(|f| f.watch_minutes);
                         self.rotation.opened(&login,broadcast,minutes);
@@ -542,12 +961,38 @@ impl Controller {
                     self.log(format!("Opened {login} (session {id}); assignment timer started or resumed."));
                 }
                 Err(error) => {
+                    // Native creation may fail after constructing a child. Track
+                    // it before cleanup so Stop and capacity still own it.
+                    if self.app.get_webview(&label).is_some() {
+                        self.players.insert(
+                            id,
+                            PlayerSession {
+                                id,
+                                login: login.clone(),
+                                label: label.clone(),
+                                container: container_label,
+                                closing: false,
+                                cleanup_required: false,
+                                report: None,
+                                reported: None,
+                                rate_start: Instant::now(),
+                                rate_count: 0,
+                                quality_dirty: true,
+                                window_mute_override: false,
+                                window_muted: None,
+                            },
+                        );
+                        self.close(id);
+                    }
                     self.failed.insert(login.clone(),error.clone()); self.error=Some(error);
                     self.log(format!("Could not open {login}; waiting for Retry."));
                     if self.rotation.pending.as_ref().is_some_and(|(_,target)| target==&login) {
                         let source=self.rotation.pending.as_ref().unwrap().0.clone();
-                        let candidates: HashSet<_>=mpd_core::select(&ranked,&self.presence,&HashSet::new(),&self.skipped,usize::MAX).into_iter()
-                            .filter(|l| !existing.contains(l) && !self.failed.contains_key(l) && !self.rotation.deferred(l)).collect();
+                        let candidates: HashSet<_>=mpd_core::select(&ranked,&self.presence,&HashSet::new(),&self.skipped,usize::MAX,
+                        ).into_iter()
+                            .filter(|l| {
+                            !existing.contains(l) && !self.failed.contains_key(l) && !self.rotation.deferred(l)
+                        }).collect();
                         let order: Vec<_>=ranked.iter().map(|f| f.login.clone()).collect();
                         if let Some(next)=mpd_core::timer::next_waiting(&order,&source,&candidates) { self.rotation.pending=Some((source,next)); }
                         else { self.rotation.failed_target(); }
@@ -569,7 +1014,8 @@ impl Controller {
         };
         pending.inflight = true;
         let credentials = pending.credentials.take(); let validate = pending.validate;
-        let driver = NativeRecovery { twitch: self.twitch.clone(), scope };
+        let driver = NativeRecovery { twitch: self.twitch.clone(), scope,
+        };
         let epoch = self.auth_epoch; let tx = self.tx.clone();
         self.auth_task = Some(tokio::spawn(async move {
             let outcome = recover_authorization(&driver, credentials, validate).await;
@@ -618,7 +1064,8 @@ impl Controller {
                 if cfg!(windows) { twitch.poll_with_store(&mut session, &logins, &scope).await }
                 else { twitch.poll(&mut session, &logins).await }
             };
-            let _ = tx.send(Message::Polled { id, generation, epoch, monitored, result }).await;
+            let _ = tx.send(Message::Polled { id, generation, epoch, monitored, result,
+                }).await;
         });
     }
     fn report(&mut self, label: String, report: Report) {
@@ -636,15 +1083,19 @@ impl Controller {
             // loading/ready report re-arms this after reload; read current settings.
             match player::quality(&self.app, &p.label, &self.settings) {
                 Ok(()) => p.quality_dirty = false,
-                Err(error) => self.error = Some(format!("Could not apply video quality to {}: {error}", p.login)),
+                Err(error) => {
+                    self.error = Some(format!("Could not apply video quality to {}: {error}", p.login))
+                }
             }
         }
     }
     fn sync_viewer_titles(&self) {
-        for p in self.players.values().filter(|p| !p.closing) {
+        for p in self.players.values().filter(|p| !p.closing && !p.cleanup_required) {
             let enabled = self.settings.favorites.iter().any(|f| f.login == p.login && f.enabled);
-            let count = ViewerCount::from_presence(self.presence.get(&p.login), enabled, self.settings.demo);
-            if let Some(window) = self.app.get_webview_window(&p.label) {
+            let count = ViewerCount::from_presence(self.presence.get(&p.login), enabled, self.settings.demo,
+            );
+            if let Some(window) = self.app.get_window(&p.container)
+                .filter(|w| !w.label().starts_with("viewer-grid-")) {
                 let title = player::window_title(&p.login, self.settings.demo, count);
                 // Hosted pages may change document.title after loading. Compare the
                 // actual native title on each controller tick, rather than caching it.
@@ -673,27 +1124,34 @@ impl Controller {
             window_muted: p.window_muted,
             window_mute_override: p.window_muted.map(|_| p.window_mute_override),
         }).collect();
-        players.sort_by_key(|p| self.settings.favorites.iter().position(|f| f.login == p.login).unwrap_or(usize::MAX));
-        View { mode: self.mode, settings: self.settings.clone(),
+        players.sort_by_key(|p| {
+            self.settings.favorites.iter().position(|f| f.login == p.login).unwrap_or(usize::MAX)
+        });
+        View { mode: self.mode,
+            layout_pending: self.layout_pending, settings: self.settings.clone(),
             favorites: self.settings.favorites.iter().map(|f| {
                 let p = self.presence.get(&f.login);
                 let presence = match p {
                     None => "unknown",
                     Some(p) if !p.fresh => "stale",
-                    Some(p) if p.broadcast_id.is_some() && p.missing_polls > 0 => "checking offline",
-                    Some(p) if p.broadcast_id.is_some() => "live",
+                    Some(p) if p.broadcast_id.is_some() && p.missing_polls > 0 => {
+                            "checking offline"
+                        }
+                        Some(p) if p.broadcast_id.is_some() => "live",
                     Some(_) => "offline",
                 };
                 FavoriteView { watch_minutes: f.watch_minutes, login: f.login.clone(), enabled: f.enabled, presence: presence.into(),
                     viewer_count: ViewerCount::from_presence(p, f.enabled, self.settings.demo),
                     skipped: self.skipped.get(&f.login).is_some_and(|id| p.and_then(|p| p.broadcast_id.as_ref()) == Some(id)),
-                    demo_live: self.demo_live.contains_key(&f.login), open_error: self.failed.get(&f.login).cloned() }
+                    demo_live: self.demo_live.contains_key(&f.login), open_error: self.failed.get(&f.login).cloned(),
+                    }
             }).collect(), players, connected_as: self.connected_as.clone(), auth_pending: self.auth_pending,
             user_code: self.user_code.clone(), last_check_seconds: self.last_check.map(|t| t.elapsed().as_secs()),
             polling: self.polling.is_some(), next_check_seconds: self.next_poll.saturating_duration_since(Instant::now()).as_secs(),
             viewer: self.host.capabilities(self.settings.demo),
             player_origin: self.host.diagnostic_origin(self.settings.demo),
-            error: self.error.clone(), events: self.events.iter().cloned().collect() }
+            error: self.error.clone(), events: self.events.iter().cloned().collect(),
+        }
     }
     pub async fn run(mut self, mut rx: mpsc::Receiver<Message>) {
         self.log("Ready. Playback starts only when you press Start.");
@@ -717,6 +1175,18 @@ impl Controller {
                     }
                     Some(Message::Report(label, report)) => self.report(label, report),
                     Some(Message::Destroyed(label)) => self.destroyed(&label),
+                    Some(Message::GridClosed(label)) => {
+                        if self.grid.as_deref()==Some(&label) || (self.layout_pending==Some(ViewerLayout::Grid) && label==format!("viewer-grid-{}",self.layout_revision)) { let _=self.action(Action::Stop); }
+                    }
+                    Some(Message::SurfaceClosed(label,result)) => {
+                        if let Some(id)=self.players.values().find(|p|p.label==label&&p.closing).map(|p|p.id) {
+                            match result {
+                                Ok(())=>self.release_surface(id),
+                                Err(error)=>{ self.players.get_mut(&id).unwrap().closing=false; self.close_retry.insert(id,Instant::now()+Duration::from_secs(30)); self.error=Some(error); }
+                            }
+                        }
+                    }
+                    Some(Message::LayoutFinished{revision,target,result})=>self.finish_layout(revision,target,result),
                     Some(Message::AuthCode { epoch, code, url }) => {
                         if epoch == self.auth_epoch && self.auth_pending {
                             self.auth_window_epoch = Some(epoch);
@@ -787,12 +1257,18 @@ impl Controller {
                 },
                 _ = tick.tick() => {
                     // Lost window events cannot leak capacity reservations indefinitely.
-                    let gone: Vec<_> = self.players.values().filter(|p| self.app.get_webview_window(&p.label).is_none()).map(|p| p.label.clone()).collect();
+                    let gone: Vec<_> = self.players.values().filter(|p| self.app.get_window(&p.container).is_none()).map(|p| p.container.clone()).collect();
                     for label in gone { self.destroyed(&label); }
                     if !self.settings.demo && self.last_check.is_some_and(|t| t.elapsed() > stale_after(self.settings.rescan_minutes)) { self.mark_stale(); }
                     // Native title work stays bounded to this timer, not player reports.
+                    self.cleanup_empty_containers();
                     self.sync_viewer_titles();
                     self.sync_quality();
+                    if self.layout_pending.is_none() && self.mode!=Mode::Stopped {
+                        if let Some(grid)=self.grid.clone() {
+                            if let Err(error)=crate::presentation::arrange(&self.app,&grid,&self.ordered_labels()) { self.grid_failure(error); }
+                        }
+                    }
                 }
             }
             self.reconcile(); self.maybe_recover(); self.maybe_poll(); self.publish.send_replace(self.snapshot());
@@ -837,7 +1313,7 @@ mod poll_schedule_tests {
 
 #[cfg(test)]
 mod auth_cleanup_tests {
-    use super::{close_tracked_auth_window, auth_completion_ready};
+    use super::{auth_completion_ready, close_tracked_auth_window};
     #[test]
     fn auto_close_requires_both_current_attempt_completions_in_either_order() {
         assert!(!auth_completion_ready(7, Some(7), None, true, false));
@@ -872,9 +1348,12 @@ mod quality_sync_tests {
     #[test]
     fn new_document_readiness_rearms_quality_sync_without_telemetry_flooding() {
         let mut p = PlayerSession { id: 1, login: "alpha".into(), label: "player-1".into(),
-            closing: false, report: None, reported: None, rate_start: Instant::now(), rate_count: 0, quality_dirty: true,
-            window_mute_override: false, window_muted: None };
-        let report = |state| Report { session: 1, state, visible: true, volume: None, muted: None };
+            container: "player-1".into(),
+            closing: false, cleanup_required: false, report: None, reported: None, rate_start: Instant::now(), rate_count: 0, quality_dirty: true,
+            window_mute_override: false, window_muted: None,
+        };
+        let report = |state| Report { session: 1, state, visible: true, volume: None, muted: None,
+        };
         // An early preference waits for a report from the initialized document.
         assert!(p.quality_dirty && p.report.is_none());
         p.accept_report(report(Playback::Ready));
@@ -894,7 +1373,8 @@ mod quality_sync_tests {
 mod window_mute_tests {
     use super::*;
     fn target(id: u64, before: bool, after: bool) -> MuteTarget {
-        MuteTarget { id, label: format!("twitch-page-{id}"), before, after }
+        MuteTarget { id, label: format!("twitch-page-{id}"), before, after,
+        }
     }
     #[test]
     fn global_change_confirms_every_target() {
@@ -907,7 +1387,8 @@ mod window_mute_tests {
     }
     #[test]
     fn one_failure_rolls_back_changed_windows_and_never_claims_target_state() {
-        let targets = [target(1, false, true), target(2, false, true), target(3, true, true)];
+        let targets = [target(1, false, true), target(2, false, true), target(3, true, true),
+        ];
         let mut calls = Vec::new();
         let result = apply_mute_transaction(&targets, |label, muted| {
             calls.push((label.to_owned(), muted));
@@ -935,7 +1416,8 @@ mod window_mute_tests {
         let mut calls = Vec::new();
         let result = apply_persisted_mute_transaction(&targets,
             |label, muted| { calls.push((label.to_owned(), muted)); Ok(()) },
-            || Err("simulated storage failure".into()));
+            || Err("simulated storage failure".into()),
+        );
         assert_eq!(result.confirmed, HashMap::from([(1, false), (2, false)]));
         assert!(result.error.as_deref().is_some_and(|error| error.contains("simulated storage failure")));
         assert_eq!(calls, [
@@ -952,15 +1434,19 @@ mod window_mute_tests {
                 if !muted && label == "twitch-page-2" { return Err("simulated restore failure".into()); }
                 applied = true; Ok(())
             },
-            || Err("simulated storage failure".into()));
+            || Err("simulated storage failure".into()),
+        );
         assert!(applied);
         assert_eq!(result.confirmed, HashMap::from([(1, false), (2, true)]));
         assert!(result.error.as_deref().is_some_and(|error| error.contains("Rollback also failed for sessions 2")));
     }
     fn session(id: u64, closing: bool, window_muted: Option<bool>) -> PlayerSession {
-        PlayerSession { id, login: "alpha".into(), label: format!("twitch-page-{id}"), closing,
+        PlayerSession { id, login: "alpha".into(), label: format!("twitch-page-{id}"),
+            container: format!("twitch-page-{id}"),
+            closing, cleanup_required: false,
             report: None, reported: None, rate_start: Instant::now(), rate_count: 0, quality_dirty: true,
-            window_mute_override: false, window_muted }
+            window_mute_override: false, window_muted,
+        }
     }
     #[test]
     fn session_validation_rejects_stale_closing_and_unsupported_targets() {
@@ -978,14 +1464,18 @@ mod window_mute_tests {
 #[cfg(test)]
 mod recovery_tests {
     use super::*;
-    use std::sync::{Mutex as StdMutex, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex as StdMutex,
+    };
     struct FakeRecovery {
         stored: bool, loads: AtomicUsize, calls: AtomicUsize,
         fail: StdMutex<Option<bool>>, phases: StdMutex<Vec<bool>>,
     }
     impl FakeRecovery {
         fn new(stored: bool, failure: Option<bool>) -> Self {
-            Self { stored, loads: AtomicUsize::new(0), calls: AtomicUsize::new(0), fail: StdMutex::new(failure), phases: StdMutex::new(vec![]) }
+            Self { stored, loads: AtomicUsize::new(0), calls: AtomicUsize::new(0), fail: StdMutex::new(failure), phases: StdMutex::new(vec![]),
+            }
         }
     }
     impl RecoveryDriver for FakeRecovery {
@@ -994,14 +1484,16 @@ mod recovery_tests {
             self.loads.fetch_add(1,Ordering::SeqCst);
             Ok(self.stored.then(|| Arc::new(AtomicUsize::new(0))))
         }
-        async fn recover(&self, credentials: &mut Self::Credentials, validate: bool) -> Result<String,RecoveryError> {
+        async fn recover(&self, credentials: &mut Self::Credentials, validate: bool,
+        ) -> Result<String,RecoveryError> {
             self.calls.fetch_add(1,Ordering::SeqCst);
             self.phases.lock().unwrap().push(validate);
             // Stand in for rotation: the caller must retain this exact allocation.
             credentials.fetch_add(1,Ordering::SeqCst);
             tokio::task::yield_now().await;
             if let Some(reconnect)=self.fail.lock().unwrap().take() {
-                Err(RecoveryError { message:"simulated authorization failure".into(),reconnect,delay:Duration::from_secs(30) })
+                Err(RecoveryError { message:"simulated authorization failure".into(),reconnect,delay:Duration::from_secs(30),
+                })
             } else { Ok("tester".into()) }
         }
     }
