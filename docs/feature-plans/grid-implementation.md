@@ -203,6 +203,27 @@ creation to verify responsive Stop, post-Stop preference completion, no stale
 playback, and target retirement. Existing slow-observation and expired-mutation
 probes remain in place, including their unchanged overall timeout limits.
 
+### macOS parent client geometry
+
+Bounded native diagnostics reproduced the same incorrect width on both Mac
+architectures: a 1024-wide full-page grid reported 511, and a 1920-wide embedded
+grid reported 959. The locked runtime-wry macOS `inner_size` fast path returns
+the first webview's NSView frame when its `has_children` flag is false. Retained
+reparenting into an empty container leaves that flag false. Maximization then
+made the smaller child dimensions authoritative for managed-window fit, causing
+an incorrect NoFit Stop despite adequate parent space.
+
+The macOS presenter now reads `NSWindow.contentRectForFrameRect(NSWindow.frame)`
+on the native event thread through typed, already-locked objc2/AppKit APIs.
+It validates positive finite logical dimensions and uses the parent rectangle
+for display observation and standalone transition targets. The native probe
+saves/restores that actual client size, asserts the maximized parent fits the
+selected cells, and logs cached-versus-native dimensions separately. Other
+platform geometry, cell minimums, selection, NoFit Stop behavior, and existing
+assertions/timeouts are unchanged. Direct macOS dependency edges use the exact
+previously locked versions; no package version changes are required. Changed-
+revision Mac fixture results remain a gate and must be recorded in the PR.
+
 Live Twitch pause/chat/profile/audio continuity, full-page sizing, DPI/monitor-loss
 acceptance, and platform-specific native results remain distinct gates. Keep the
 PR draft until the required evidence is available. No release or deployment is

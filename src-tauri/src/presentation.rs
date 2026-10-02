@@ -134,6 +134,40 @@ impl DisplayObservation {
         })
     }
 }
+/// Native parent client dimensions in logical pixels. Call only from a native
+/// event-thread callback. Locked runtime-wry keeps `has_children` false after
+/// reparenting into an empty macOS Window, so inner_size then reads the first
+/// retained child's NSView frame instead of the parent's content rectangle.
+pub(crate) fn client_size_on_main_thread(window: &Window) -> Result<LogicalSize<f64>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _main_thread = objc2::MainThreadMarker::new()
+            .ok_or("Native client geometry requires the main thread")?;
+        let pointer = window.ns_window().map_err(|e| e.to_string())?;
+        // SAFETY: Tauri supplies an NSWindow pointer owned by this live Window's
+        // runtime for the native callback. Borrow it only here on the main
+        // thread; no native pointer or ObjC reference escapes this function.
+        let native = unsafe { pointer.cast::<objc2_app_kit::NSWindow>().as_ref() }
+            .ok_or("Native parent window is unavailable")?;
+        let content = native.contentRectForFrameRect(native.frame());
+        checked_client_size(content.size.width, content.size.height)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let size = window.inner_size().map_err(|e| e.to_string())?;
+        let scale = window.scale_factor().map_err(|e| e.to_string())?;
+        Ok(size.to_logical::<f64>(scale))
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn checked_client_size(width: f64, height: f64) -> Result<LogicalSize<f64>, String> {
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return Err("Native parent client dimensions are unavailable or invalid".into());
+    }
+    Ok(LogicalSize::new(width, height))
+}
+
 fn observe(app: &AppHandle, grid: Option<&str>) -> Result<DisplayObservation, GridError> {
     #[cfg(feature = "e2e-tests")]
     {
@@ -201,10 +235,7 @@ fn observe(app: &AppHandle, grid: Option<&str>) -> Result<DisplayObservation, Gr
                     if !scale.is_finite() || scale <= 0.0 {
                         return Err("Invalid grid display scale.".into());
                     }
-                    let inner = w
-                        .inner_size()
-                        .map_err(|e| e.to_string())?
-                        .to_logical::<f64>(scale);
+                    let inner = client_size_on_main_thread(&w)?;
                     if inner.width <= 0.0 || inner.height <= 0.0 {
                         return Err("Grid client dimensions are unavailable.".into());
                     }
@@ -970,10 +1001,7 @@ pub fn switch(
                 let rect = if target == ViewerLayout::Grid {
                     bounds[index]
                 } else {
-                    let size = window
-                        .inner_size()
-                        .map_err(|e| e.to_string())?
-                        .to_logical::<f64>(window.scale_factor().map_err(|e| e.to_string())?);
+                    let size = client_size_on_main_thread(window)?;
                     Rect {
                         position: LogicalPosition::new(0.0, 0.0).into(),
                         size: size.into(),
@@ -1114,4 +1142,31 @@ pub fn restore(
         message: "Rollback completion unavailable".into(),
         source_intact: false,
     })?
+}
+
+#[cfg(test)]
+mod native_client_tests {
+    use super::checked_client_size;
+
+    #[test]
+    fn invalid_native_dimensions_are_errors_not_layout_capacity() {
+        for (width, height) in [
+            (0.0, 644.0),
+            (-1.0, 644.0),
+            (1024.0, 0.0),
+            (f64::NAN, 644.0),
+            (1024.0, f64::INFINITY),
+            (f64::NEG_INFINITY, 644.0),
+        ] {
+            assert!(checked_client_size(width, height).is_err());
+        }
+        let actual = checked_client_size(1024.0, 684.0).unwrap();
+        assert_eq!((actual.width, actual.height), (1024.0, 684.0));
+        // The observed macOS parent can fit two full-page cells even when the
+        // cached first child (511 wide) cannot. Never substitute that child.
+        assert!(
+            crate::layout::cells_with_min(2, actual.width, actual.height, 430.0, 480.0).is_ok()
+        );
+        assert!(crate::layout::cells_with_min(2, 511.0, 644.0, 430.0, 480.0).is_err());
+    }
 }

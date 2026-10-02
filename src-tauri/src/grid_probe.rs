@@ -42,6 +42,7 @@ fn sample_geometry(app: &AppHandle, grid: &tauri::Window, labels: &[String], sta
             let window=app_clone.get_window(&grid).ok_or("Grid container unavailable during observation")?;
             let scale=window.scale_factor().map_err(|e|e.to_string())?;
             let inner=window.inner_size().map_err(|e|e.to_string())?;
+            let client=crate::presentation::client_size_on_main_thread(&window)?;
             let outer=window.outer_size().map_err(|e|e.to_string())?;
             let position=window.outer_position().map_err(|e|e.to_string())?;
             let monitor=window.current_monitor().map_err(|e|e.to_string())?;
@@ -53,7 +54,7 @@ fn sample_geometry(app: &AppHandle, grid: &tauri::Window, labels: &[String], sta
                 serde_json::json!({"label":label,"native_bounds":bounds})
             }).collect::<Vec<_>>();
             Ok(serde_json::json!({"grid":grid,"expected_children":expected,"inner_physical":inner,
-                "inner_logical":inner.to_logical::<f64>(scale),"outer_physical":outer,"position_physical":position,
+                "inner_logical":inner.to_logical::<f64>(scale),"native_client_logical":client,"outer_physical":outer,"position_physical":position,
                 "scale":scale,"maximized":window.is_maximized().map_err(|e|e.to_string())?,
                 "fullscreen":window.is_fullscreen().map_err(|e|e.to_string())?,
                 "current_monitor":monitor.map(|m|serde_json::json!({"position":m.position(),"size":m.size(),"work_area":m.work_area(),"scale":m.scale_factor()})),
@@ -537,7 +538,6 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
     }
     sample_geometry(app, &grid, &labels, "grid-committed");
     let original_position = grid.outer_position().map_err(|e| e.to_string())?;
-    let original_size = grid.inner_size().map_err(|e| e.to_string())?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     let app_clone = app.clone();
     let grid_clone = grid.clone();
@@ -550,15 +550,18 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
             let monitors = app_clone.available_monitors().map_err(|e| e.to_string())?;
             // A shifted window is not a different monitor. Mirrored displays
             // with the same physical rectangle are not evidence of a move.
-            Ok(monitors
+            let original_size = crate::presentation::client_size_on_main_thread(&grid_clone)?
+                .to_physical::<u32>(grid_clone.scale_factor().map_err(|e| e.to_string())?);
+            let other = monitors
                 .into_iter()
                 .find(|m| m.position() != current.position() || m.size() != current.size())
-                .map(|m| (*m.position(), *m.size(), m.work_area().position)))
+                .map(|m| (*m.position(), *m.size(), m.work_area().position));
+            Ok((other, original_size))
         })();
         let _ = tx.send(result);
     })
     .map_err(|e| e.to_string())?;
-    let other = rx.await.map_err(|e| e.to_string())??;
+    let (other, original_size) = rx.await.map_err(|e| e.to_string())??;
     let target = other.as_ref().map_or(
         tauri::PhysicalPosition::new(original_position.x + 20, original_position.y + 20),
         |(_, _, p)| tauri::PhysicalPosition::new(p.x + 20, p.y + 20),
@@ -605,6 +608,29 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
     if !grid.is_maximized().map_err(|e| e.to_string())? {
         return Err("Native grid maximize was not observed".into());
     }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let grid_clone = grid.clone();
+    app.run_on_main_thread(move || {
+        let result =
+            crate::presentation::client_size_on_main_thread(&grid_clone).and_then(|client| {
+                let minimum = if demo {
+                    (800.0, 540.0)
+                } else {
+                    (crate::layout::MIN_WIDTH, crate::layout::MIN_HEIGHT)
+                };
+                crate::layout::cells_with_min(
+                    count,
+                    client.width,
+                    client.height,
+                    minimum.0,
+                    minimum.1,
+                )
+                .map(|_| ())
+            });
+        let _ = tx.send(result);
+    })
+    .map_err(|e| e.to_string())?;
+    rx.await.map_err(|e| e.to_string())??;
     tokio::time::sleep(Duration::from_millis(1800)).await;
     sample_geometry(app, &grid, &labels, "after-maximize-hold");
     if !grid.is_maximized().map_err(|e| e.to_string())? {
@@ -992,7 +1018,7 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         return Err("No-fit changed capacity/preference or hid its reason".into());
     }
     Ok(
-        serde_json::json!({"two_embedded_cells_fit": demo.then_some(count==2),"other_monitor_placement_retained":other.is_some(),"reachable_placement_retained":true,"maximized_grid_retained":true,"transient_display_failure_retains_viewers":true,"stop_during_display_work":true,"post_stop_layout_consumed":true,"stop_during_grid_open":true,"cancelled_new_grid_retired":true,"expired_mutation_fenced":true,"retained_document":true,"retained_fixture_state":true,"grid_children":count,"standalone_restored":true,"preparation_preserves_sources":true,"partial_open_cleanup":true,"partial_move_rollback":true,"configured_limit":1000,"ipc_isolation":true,"stop_during_move":true,"repeated_requests":true,"failed_close_reserves_capacity":true,"grid_close_stops":true,"timer_continuity":true,"no_fit_stops_without_truncation":true,"bounds":bounds,"live_twitch":false}),
+        serde_json::json!({"two_embedded_cells_fit": demo.then_some(count==2),"other_monitor_placement_retained":other.is_some(),"reachable_placement_retained":true,"maximized_grid_retained":true,"maximized_parent_client_fits_selection":true,"transient_display_failure_retains_viewers":true,"stop_during_display_work":true,"post_stop_layout_consumed":true,"stop_during_grid_open":true,"cancelled_new_grid_retired":true,"expired_mutation_fenced":true,"retained_document":true,"retained_fixture_state":true,"grid_children":count,"standalone_restored":true,"preparation_preserves_sources":true,"partial_open_cleanup":true,"partial_move_rollback":true,"configured_limit":1000,"ipc_isolation":true,"stop_during_move":true,"repeated_requests":true,"failed_close_reserves_capacity":true,"grid_close_stops":true,"timer_continuity":true,"no_fit_stops_without_truncation":true,"bounds":bounds,"live_twitch":false}),
     )
 }
 pub fn install(app: &AppHandle) {
