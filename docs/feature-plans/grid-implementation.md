@@ -82,8 +82,10 @@ transitions; settle cancelled native work before ordinary selection reconciliati
 Preflight actual selected count before Start/switch; reject no-fit without
 changing assignments or the committed preference. Test backend cell minimums
 (initial full-page floor 430 x 480; embedded must also fit video/chat/chrome).
-For later growth, resize, DPI change, or monitor loss, first enlarge/reposition
-within a valid work area. If no fit is possible, stop all viewers and monitoring
+For later growth, resize, DPI change, or monitor loss, preserve user placement
+on any monitor. Enlarge a normal undersized grid on its own monitor; reposition
+only a wholly unreachable window. Do not resize or reposition maximized or
+fullscreen windows. If a fresh observation confirms no fit, stop all viewers and monitoring
 with a reachable manager error. Do not silently lower capacity, hide playback,
 switch backend/layout, or restart. Retain favorites, capacity, and layout
 preference. Standard Stop semantics apply to timer state. Failed closes remain
@@ -145,6 +147,33 @@ container ownership, and reject failed mapping. The Windows API body compiled
 against the committed versions on the Windows MSVC target; this is compile
 proof, not runtime evidence. Independent review approved the failure handling.
 Hosted Windows geometry still has to pass on the corrected revision.
+
+### Display observation and placement follow-up
+
+CodeRabbit identified synchronous display checks on every reconciliation and
+grid recovery against the manager's monitor. Periodic grid work now uses one
+tagged, cancellable worker. It captures monitors and grid geometry on the native
+event thread, applies arrangement outside the controller, and caches observations
+for at most two seconds. Growth uses cached geometry; cached no-fit never stops
+viewers. A fresh no-fit completion must still match the desired count, container,
+and layout revision. Transient observation or mutation failures defer growth and
+retain current viewers. Stop and cleanup cancel work without waiting for it;
+layout moves and new opens wait for that work to settle.
+
+Mutation callbacks check cancellation before applying native changes. Worker
+completion retires mutation permission before sending its result, so a callback
+queued past a timeout cannot run after ownership is released. Stop remains
+dominant. Actual client dimensions govern fit in managed windows; the conservative
+decoration allowance applies only to normal-window recovery. Grid placement uses
+its own monitor, intersection with all work areas, and physical decoration
+tolerance. Creation still starts on the manager's monitor.
+
+The follow-up plan and code received independent adversarial review. Regression
+coverage includes managed client sizing, multi-monitor geometry, native placement
+and maximization, retained viewers during failed observations and deferred growth,
+Stop during delayed observation, and cancellation of a mutation after timeout.
+Record revision-bound native and hosted outcomes in the PR; this section does
+not establish live Twitch or physical-monitor DPI acceptance.
 
 Live Twitch pause/chat/profile/audio continuity, full-page sizing, DPI/monitor-loss
 acceptance, and platform-specific native results remain distinct gates. Keep the

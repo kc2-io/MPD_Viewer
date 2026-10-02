@@ -116,6 +116,7 @@ fn auth_completion_ready(epoch: u64, tracked: Option<u64>, returned: Option<u64>
 }
 
 pub enum Message {
+    GridWorkFinished {id: u64, result: Result<crate::presentation::DisplayObservation,crate::presentation::GridError>},
     Action(Action, oneshot::Sender<Result<(), String>>),
     Report(String, Report),
     Destroyed(String),
@@ -227,6 +228,11 @@ fn session_mute_label(players: &HashMap<u64, PlayerSession>, id: u64) -> Result<
     Ok(player.label.clone())
 }
 
+struct GridWork {
+    id: u64, grid: Option<String>, revision: u64, desired: usize,
+    // Separate from layout cancellation: 0 active, 1 cancelled, 2 finished.
+    cancel: crate::presentation::Cancel,
+}
 pub struct Controller {
     app: AppHandle, tx: mpsc::Sender<Message>, publish: watch::Sender<View>,
     store: Store, host: Host, twitch: Twitch, settings: Settings, mode: Mode,
@@ -242,6 +248,9 @@ pub struct Controller {
     events: VecDeque<String>, started: Instant,
     retire_retry: HashMap<String, Instant>,
     grid: Option<String>,
+    grid_work: Option<GridWork>, grid_work_id: u64, next_grid_work: Instant,
+    grid_display: Option<crate::presentation::DisplayObservation>,
+    grid_no_fit: Option<(usize,Option<String>,u64,Instant,String)>,
     layout_revision: u64,
     layout_cancel: Option<crate::presentation::Cancel>,
     layout_pending: Option<ViewerLayout>,
@@ -262,6 +271,8 @@ impl Controller {
             last_check: None, backoff: 30, error: None,
             retire_retry: HashMap::new(),
             grid: None,
+            grid_work: None, grid_work_id: 0, next_grid_work: Instant::now(),
+            grid_display: None, grid_no_fit: None,
             layout_revision: 0,
             layout_cancel: None,
             layout_pending: None,
@@ -477,6 +488,7 @@ impl Controller {
             }
             Action::Pause => { if self.mode == Mode::Running { self.mode = Mode::Paused; self.log("Automatic selection paused; existing players retained."); } }
             Action::Stop => {
+                self.cancel_grid_work();
                 if let Some(cancel) = &self.layout_cancel {
                     cancel.store(1, std::sync::atomic::Ordering::SeqCst);
                 }
@@ -529,6 +541,7 @@ impl Controller {
         Ok(())
     }
     fn close(&mut self, id: u64) {
+        self.cancel_grid_work();
         if let Some(p) = self.players.get_mut(&id) {
             p.cleanup_required = true;
         }
@@ -578,6 +591,12 @@ impl Controller {
         }
     }
     fn set_layout(&mut self, target: ViewerLayout) -> Result<(), String> {
+        if self.grid_work.is_some() {
+            self.cancel_grid_work();
+            self.layout_queued=Some(target);
+            return Ok(());
+        }
+        self.grid_display=None;
         if self.layout_pending.is_some() {
             if let Some(cancel) = &self.layout_cancel {
                 if cancel.load(std::sync::atomic::Ordering::SeqCst) == 1 {
@@ -653,6 +672,72 @@ impl Controller {
                     .map(|p| p.label.clone())
             })
             .collect()
+    }
+    fn cancel_grid_work(&mut self) {
+        if let Some(work)=&self.grid_work {
+            work.cancel.store(1,std::sync::atomic::Ordering::SeqCst);
+        }
+        self.grid_display=None;
+        self.grid_no_fit=None;
+    }
+    fn request_grid_work(&mut self, desired: usize) {
+        if self.grid_work.is_some() || self.layout_pending.is_some() || Instant::now()<self.next_grid_work
+            || self.players.values().any(|p|p.closing || p.cleanup_required) {return;}
+        self.grid_work_id+=1;
+        let id=self.grid_work_id;
+        let grid=self.grid.clone();
+        let revision=self.layout_revision;
+        let cancel=std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
+        self.grid_work=Some(GridWork{id,grid:grid.clone(),revision,desired,cancel:cancel.clone()});
+        self.next_grid_work=Instant::now()+Duration::from_secs(1);
+        let app=self.app.clone();
+        let labels=self.ordered_labels();
+        #[cfg(feature="e2e-tests")]
+        eprintln!("Grid work {id}: desired={desired}, active={}, container={}",labels.len(),grid.is_some());
+        let embedded=self.host.capabilities(self.settings.demo).media_controls;
+        let tx=self.tx.clone();
+        std::thread::spawn(move || {
+            let result=crate::presentation::grid_work(&app,grid.as_deref(),&labels,desired,embedded,&cancel);
+            // Fence late native callbacks at worker completion, before actor
+            // delivery. External Stop remains dominant over terminal state.
+            let _=cancel.compare_exchange(0,2,std::sync::atomic::Ordering::SeqCst,std::sync::atomic::Ordering::SeqCst);
+            tauri::async_runtime::spawn(async move {let _=tx.send(Message::GridWorkFinished{id,result}).await;});
+        });
+    }
+    fn finish_grid_work(&mut self, id: u64, result: Result<crate::presentation::DisplayObservation,crate::presentation::GridError>) {
+        if self.grid_work.as_ref().is_none_or(|work|work.id!=id) {return;}
+        let work=self.grid_work.take().unwrap();
+        #[cfg(feature="e2e-tests")]
+        eprintln!("Grid work {id} finished: {}",match &result {Ok(_)=>"observed",Err(crate::presentation::GridError::NoFit(..))=>"no-fit",Err(_)=>"observation-error"});
+        let cancelled=work.cancel.load(std::sync::atomic::Ordering::SeqCst)==1;
+        // A timed-out callback may still be queued. Fence it before releasing
+        // ownership, even when Stop arrives after this completion is handled.
+        work.cancel.store(1,std::sync::atomic::Ordering::SeqCst);
+        self.next_grid_work=Instant::now()+Duration::from_secs(1);
+        if self.mode!=Mode::Stopped && !cancelled
+            && work.grid==self.grid && work.revision==self.layout_revision {
+            match result {
+                Ok(snapshot) if snapshot.fresh_for(self.grid.as_deref()) => {
+                    self.grid_display=Some(snapshot);
+                    if self.error.as_deref().is_some_and(|e|e.starts_with("Grid display update deferred:")) {self.error=None;}
+                }
+                Err(crate::presentation::GridError::NoFit(error,observed)) => {
+                    // Consumed once by reconcile after re-evaluating desired count.
+                    self.grid_no_fit=Some((work.desired,work.grid,work.revision,observed,error));
+                    self.grid_display=None;
+                }
+                Err(error) => {
+                    self.grid_display=None;
+                    self.error=Some(format!("Grid display update deferred: {error}"));
+                }
+                _=>{self.grid_display=None;}
+            }
+        }
+        if self.mode!=Mode::Stopped {
+            if let Some(target)=self.layout_queued.take() {
+                if let Err(error)=self.set_layout(target) {self.error=Some(error);}
+            }
+        }
     }
     fn grid_failure(&mut self, error: String) {
         let _ = self.action(Action::Stop);
@@ -856,12 +941,10 @@ impl Controller {
             }
             return;
         }
-        if self.settings.viewer_layout == ViewerLayout::Grid && self.mode != Mode::Stopped {
-            if let Err(error) = crate::presentation::preflight(
-                &self.app,
-                desired.len(),
-                self.host.capabilities(self.settings.demo).media_controls,
-            ) {
+        if let Some((count,grid,revision,observed,error))=self.grid_no_fit.take() {
+            if self.settings.viewer_layout==ViewerLayout::Grid && self.mode!=Mode::Stopped
+                && count==desired.len() && grid==self.grid && revision==self.layout_revision
+                && observed.elapsed()<=Duration::from_secs(2) {
                 self.grid_failure(error);
                 self.reconcile();
                 return;
@@ -874,6 +957,18 @@ impl Controller {
                 if self.players.values().any(|p| p.login==source && !p.closing) { self.rotation=before; }
                 else { self.log(format!("Timer reached: rotating {source} to {target}.")); }
             }
+        }
+        if self.settings.viewer_layout==ViewerLayout::Grid && self.mode!=Mode::Stopped {
+            let active=self.players.values().filter(|p|!p.closing && !p.cleanup_required).count();
+            let growth=desired.len()>active;
+            let admitted=!growth || self.grid_display.as_ref()
+                .filter(|s|s.fresh_for(self.grid.as_deref()))
+                .is_some_and(|s|s.preflight(desired.len(),self.host.capabilities(self.settings.demo).media_controls).is_ok());
+            // One asynchronous job supplies cached geometry and periodic layout.
+            // A cached no-fit is never destructive; its fresh job completion must
+            // still match the current selection before Stop is considered.
+            self.request_grid_work(desired.len());
+            if !admitted || self.grid_work.is_some() {return;}
         }
         if self.mode != Mode::Running || self.players.values().any(|p| p.closing) { return; }
         // Re-evaluate after each failed open, excluding it before truncation. Each
@@ -889,7 +984,7 @@ impl Controller {
             if self.players.len()>=self.settings.limit { break; }
             let Some(login)=desired.into_iter().find(|l| !existing.contains(l)) else { break; };
             self.next_id+=1; let id=self.next_id; let label=self.host.label(id,self.settings.demo);
-            let container_result = (|| -> Result<(tauri::Window, tauri::Rect), String> {
+            let container_result = (|| -> Result<(tauri::Window, tauri::Rect), crate::presentation::GridError> {
                 if self.settings.viewer_layout == ViewerLayout::Grid {
                     if self
                         .grid
@@ -911,7 +1006,7 @@ impl Controller {
                     labels.push(label.clone());
                     let bounds = crate::presentation::arrange(&self.app, grid, &labels)?;
                     Ok((
-                        self.app.get_window(grid).ok_or("Grid disappeared.")?,
+                        self.app.get_window(grid).ok_or_else(||"Grid disappeared.".to_owned())?,
                         *bounds.last().unwrap(),
                     ))
                 } else {
@@ -934,6 +1029,22 @@ impl Controller {
                     ))
                 }
             })();
+            if self.settings.viewer_layout==ViewerLayout::Grid {
+                match &container_result {
+                    Err(crate::presentation::GridError::NoFit(error,observed)) if observed.elapsed()<=Duration::from_secs(2) => {
+                        self.grid_failure(error.clone());
+                        self.reconcile();
+                        return;
+                    }
+                    Err(error) => {
+                        self.grid_display=None;
+                        self.error=Some(format!("Grid display update deferred: {error}"));
+                        return;
+                    }
+                    _=>{}
+                }
+            }
+            let container_result=container_result.map_err(String::from);
             let container_label = container_result
                 .as_ref()
                 .ok()
@@ -1179,6 +1290,7 @@ impl Controller {
                         if let Err(error) = &result { self.error = Some(error.clone()); }
                         let _ = reply.send(result);
                     }
+                    Some(Message::GridWorkFinished{id,result})=>self.finish_grid_work(id,result),
                     Some(Message::Report(label, report)) => self.report(label, report),
                     Some(Message::Destroyed(label)) => self.destroyed(&label),
                     Some(Message::GridClosed(label)) => {
@@ -1270,11 +1382,7 @@ impl Controller {
                     self.cleanup_empty_containers();
                     self.sync_viewer_titles();
                     self.sync_quality();
-                    if self.layout_pending.is_none() && self.mode!=Mode::Stopped {
-                        if let Some(grid)=self.grid.clone() {
-                            if let Err(error)=crate::presentation::arrange(&self.app,&grid,&self.ordered_labels()) { self.grid_failure(error); }
-                        }
-                    }
+
                 }
             }
             self.reconcile(); self.maybe_recover(); self.maybe_poll(); self.publish.send_replace(self.snapshot());

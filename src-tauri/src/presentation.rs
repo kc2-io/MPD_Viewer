@@ -33,49 +33,236 @@ pub struct MoveOutcome {
     pub sources: Vec<(String, Window, Rect)>,
 }
 
-fn screen(app: &AppHandle) -> Result<(f64, f64, tauri::PhysicalPosition<i32>, f64), String> {
-    // The locked runtime converts Tao monitor handles after returning its getter.
-    // That conversion calls GTK/AppKit and must also run on the event thread.
+#[derive(Debug)]
+pub enum GridError {
+    NoFit(String, std::time::Instant),
+    Observation(String),
+}
+impl std::fmt::Display for GridError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoFit(s, _) | Self::Observation(s) => f.write_str(s),
+        }
+    }
+}
+impl From<String> for GridError {
+    fn from(s: String) -> Self {
+        Self::Observation(s)
+    }
+}
+impl From<GridError> for String {
+    fn from(e: GridError) -> Self {
+        e.to_string()
+    }
+}
+impl From<GridError> for MoveFailure {
+    fn from(e: GridError) -> Self {
+        e.to_string().into()
+    }
+}
+#[derive(Clone, Debug)]
+struct WorkArea {
+    rect: layout::PhysicalRect,
+    scale: f64,
+}
+impl WorkArea {
+    fn size(&self) -> (f64, f64) {
+        (
+            self.rect.width / self.scale,
+            (self.rect.height / self.scale - 40.0).max(1.0),
+        )
+    }
+}
+#[derive(Clone, Debug)]
+struct GridWindow {
+    label: String,
+    outer: layout::PhysicalRect,
+    inner: LogicalSize<f64>,
+    managed: bool,
+    area: usize,
+}
+#[derive(Clone, Debug)]
+pub struct DisplayObservation {
+    pub observed: std::time::Instant,
+    areas: Vec<WorkArea>,
+    preferred: usize,
+    grid: Option<GridWindow>,
+}
+impl DisplayObservation {
+    pub fn fresh_for(&self, grid: Option<&str>) -> bool {
+        self.observed.elapsed() <= std::time::Duration::from_secs(2)
+            && self.grid.as_ref().map(|g| g.label.as_str()) == grid
+    }
+    pub fn preflight(&self, count: usize, embedded: bool) -> Result<(), GridError> {
+        let area = &self.areas[self.grid.as_ref().map_or(self.preferred, |g| g.area)];
+        let (w, h) = area.size();
+        let minimum = if embedded {
+            (800.0, 540.0)
+        } else {
+            (layout::MIN_WIDTH, layout::MIN_HEIGHT)
+        };
+        let (client, managed) = self.grid.as_ref().map_or(((w, h), false), |g| {
+            ((g.inner.width, g.inner.height), g.managed)
+        });
+        layout::grid_fits(count, client, (w, h), managed, minimum)
+            .map_err(|e| GridError::NoFit(e, self.observed))
+    }
+}
+fn observe(app: &AppHandle, grid: Option<&str>) -> Result<DisplayObservation, GridError> {
+    #[cfg(feature = "e2e-tests")]
+    {
+        if crate::e2e::fault("slow_display_observation") {
+            let _ = std::fs::write(
+                crate::e2e::root().join("display-observation-started"),
+                b"fixture",
+            );
+            std::thread::sleep(std::time::Duration::from_secs(6));
+        }
+        if crate::e2e::fault("fail_display_observation") {
+            return Err(GridError::Observation(
+                "Injected display observation failure".into(),
+            ));
+        }
+    }
     let app_clone = app.clone();
+    let grid = grid.map(str::to_owned);
     let (tx, rx) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
-        let _ = tx.send(screen_on_main(&app_clone));
+        let result = (|| -> Result<DisplayObservation, String> {
+            // Locked runtime monitor conversion calls GTK/AppKit. Capture all
+            // native geometry on this event thread, never on the controller.
+            let monitors = app_clone.available_monitors().map_err(|e| e.to_string())?;
+            let areas: Vec<_> = monitors
+                .iter()
+                .map(|m| {
+                    let a = m.work_area();
+                    WorkArea {
+                        rect: layout::PhysicalRect {
+                            x: a.position.x as f64,
+                            y: a.position.y as f64,
+                            width: a.size.width as f64,
+                            height: a.size.height as f64,
+                        },
+                        scale: m.scale_factor(),
+                    }
+                })
+                .collect();
+            if areas.is_empty()
+                || areas.iter().any(|a| {
+                    !a.scale.is_finite()
+                        || a.scale <= 0.0
+                        || a.rect.width <= 0.0
+                        || a.rect.height <= 0.0
+                })
+            {
+                return Err("Display work areas are unavailable or invalid.".into());
+            }
+            let preferred_monitor = app_clone
+                .get_window("main")
+                .and_then(|w| w.current_monitor().ok().flatten())
+                .or_else(|| app_clone.primary_monitor().ok().flatten());
+            let preferred = preferred_monitor
+                .and_then(|m| monitors.iter().position(|a| a.position() == m.position()))
+                .unwrap_or(0);
+            let grid = grid
+                .map(|label| -> Result<GridWindow, String> {
+                    let w = app_clone
+                        .get_window(&label)
+                        .ok_or("Grid window disappeared during observation.")?;
+                    let pos = w.outer_position().map_err(|e| e.to_string())?;
+                    let outer_size = w.outer_size().map_err(|e| e.to_string())?;
+                    let scale = w.scale_factor().map_err(|e| e.to_string())?;
+                    if !scale.is_finite() || scale <= 0.0 {
+                        return Err("Invalid grid display scale.".into());
+                    }
+                    let inner = w
+                        .inner_size()
+                        .map_err(|e| e.to_string())?
+                        .to_logical::<f64>(scale);
+                    if inner.width <= 0.0 || inner.height <= 0.0 {
+                        return Err("Grid client dimensions are unavailable.".into());
+                    }
+                    let outer = layout::PhysicalRect {
+                        x: pos.x as f64,
+                        y: pos.y as f64,
+                        width: outer_size.width as f64,
+                        height: outer_size.height as f64,
+                    };
+                    let area = w
+                        .current_monitor()
+                        .map_err(|e| e.to_string())?
+                        .and_then(|m| monitors.iter().position(|a| a.position() == m.position()))
+                        .unwrap_or_else(|| {
+                            layout::best_work_area(
+                                outer,
+                                &areas.iter().map(|a| a.rect).collect::<Vec<_>>(),
+                            )
+                            .unwrap_or(preferred)
+                        });
+                    let managed = w.is_maximized().map_err(|e| e.to_string())?
+                        || w.is_fullscreen().map_err(|e| e.to_string())?;
+                    Ok(GridWindow {
+                        label,
+                        outer,
+                        inner,
+                        managed,
+                        area,
+                    })
+                })
+                .transpose()?;
+            Ok(DisplayObservation {
+                observed: std::time::Instant::now(),
+                areas,
+                preferred,
+                grid,
+            })
+        })();
+        let _ = tx.send(result);
     })
     .map_err(|e| e.to_string())?;
     rx.recv_timeout(std::time::Duration::from_secs(5))
-        .map_err(|_| "Display observation timed out".to_owned())?
+        .map_err(|_| GridError::Observation("Display observation timed out".into()))?
+        .map_err(GridError::Observation)
 }
-fn screen_on_main(
-    app: &AppHandle,
-) -> Result<(f64, f64, tauri::PhysicalPosition<i32>, f64), String> {
-    let monitor = app
-        .get_window("main")
-        .and_then(|w| w.current_monitor().ok().flatten())
-        .or_else(|| app.primary_monitor().ok().flatten())
-        .ok_or("No display is available for Grid.")?;
-    let area = monitor.work_area();
-    let scale = monitor.scale_factor();
-    if !scale.is_finite() || scale <= 0.0 {
-        return Err("Invalid display scale.".into());
-    }
+fn screen(app: &AppHandle) -> Result<(f64, f64, tauri::PhysicalPosition<i32>, f64), String> {
+    let snapshot = observe(app, None)?;
+    let area = &snapshot.areas[snapshot.preferred];
+    let (w, h) = area.size();
     Ok((
-        area.size.width as f64 / scale,
-        (area.size.height as f64 / scale - 40.0).max(1.0),
-        area.position,
-        scale,
-    ))
-}
-
-pub fn preflight(app: &AppHandle, count: usize, embedded: bool) -> Result<(), String> {
-    let (w, h, _, _) = screen(app)?;
-    layout::cells_with_min(
-        count,
         w,
         h,
-        if embedded { 800.0 } else { layout::MIN_WIDTH },
-        if embedded { 540.0 } else { layout::MIN_HEIGHT },
-    )
-    .map(|_| ())
+        tauri::PhysicalPosition::new(area.rect.x as i32, area.rect.y as i32),
+        area.scale,
+    ))
+}
+pub fn preflight(app: &AppHandle, count: usize, embedded: bool) -> Result<(), GridError> {
+    if count == 0 {
+        return Ok(());
+    }
+    observe(app, None)?.preflight(count, embedded)
+}
+
+pub fn grid_work(
+    app: &AppHandle,
+    grid: Option<&str>,
+    labels: &[String],
+    desired: usize,
+    embedded: bool,
+    cancel: &Cancel,
+) -> Result<DisplayObservation, GridError> {
+    let snapshot = observe(app, grid)?;
+    if cancel.load(Ordering::SeqCst) != 0 {
+        return Err(GridError::Observation("Grid observation cancelled".into()));
+    }
+    if desired > labels.len() || grid.is_none() {
+        snapshot.preflight(desired, embedded)?;
+    }
+    if let Some(grid) = grid {
+        if !labels.is_empty() {
+            arrange_observed(app, grid, labels, &snapshot, cancel)?;
+        }
+    }
+    Ok(snapshot)
 }
 
 // Matches ui/style.css --panel-line in the manager's light/dark themes.
@@ -124,7 +311,7 @@ pub fn container(app: &AppHandle, label: &str, title: &str, grid: bool) -> Resul
     if crate::e2e::fault("fail_layout_prepare") {
         return Err("Injected fixture container creation failure".into());
     }
-    let (w, h, pos, scale) = screen(app)?;
+    let (w, h, pos, _scale) = screen(app)?;
     let mut builder = tauri::window::WindowBuilder::new(app, label);
     if grid {
         let theme = app
@@ -153,12 +340,7 @@ pub fn container(app: &AppHandle, label: &str, title: &str, grid: bool) -> Resul
                 if grid { h.min(960.0) } else { h.min(720.0) },
             ))
             .map_err(|e| e.to_string())?;
-        window
-            .set_position(LogicalPosition::new(
-                pos.x as f64 / scale,
-                pos.y as f64 / scale,
-            ))
-            .map_err(|e| e.to_string())?;
+        window.set_position(pos).map_err(|e| e.to_string())?;
         Ok(())
     })();
     if let Err(error) = configured {
@@ -168,35 +350,110 @@ pub fn container(app: &AppHandle, label: &str, title: &str, grid: bool) -> Resul
     Ok(window)
 }
 
-pub fn arrange(app: &AppHandle, grid: &str, labels: &[String]) -> Result<Vec<Rect>, String> {
+pub fn arrange(app: &AppHandle, grid: &str, labels: &[String]) -> Result<Vec<Rect>, GridError> {
+    let snapshot = observe(app, Some(grid))?;
+    let cancel = Arc::new(AtomicU8::new(0));
+    let result = arrange_observed(app, grid, labels, &snapshot, &cancel);
+    cancel.store(1, Ordering::SeqCst);
+    result
+}
+fn mutate_window(
+    window: &Window,
+    cancel: &Cancel,
+    mutation: impl FnOnce(&Window) -> Result<(), String> + Send + 'static,
+) -> Result<(), GridError> {
+    let app = window.app_handle().clone();
+    let label = window.label().to_owned();
+    let cancel = cancel.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let dispatch = window.app_handle().clone();
+    let callback = move || {
+        let result = if cancel.load(Ordering::SeqCst) != 0 {
+            #[cfg(feature = "e2e-tests")]
+            if crate::e2e::fault("delay_grid_mutation")
+                || crate::e2e::root().join("grid-mutation-delayed").exists()
+            {
+                let _ =
+                    std::fs::write(crate::e2e::root().join("grid-mutation-skipped"), b"fixture");
+            }
+            Err("Grid arrangement cancelled".into())
+        } else if let Some(window) = app.get_window(&label) {
+            mutation(&window)
+        } else {
+            Err("Grid window is no longer available".into())
+        };
+        let _ = tx.send(result);
+    };
+    #[cfg(feature = "e2e-tests")]
+    let delayed = crate::e2e::fault("delay_grid_mutation");
+    #[cfg(not(feature = "e2e-tests"))]
+    let delayed = false;
+    if delayed {
+        #[cfg(feature = "e2e-tests")]
+        let _ = std::fs::write(crate::e2e::root().join("grid-mutation-delayed"), b"fixture");
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(6));
+            let _ = dispatch.run_on_main_thread(callback);
+        });
+    } else {
+        dispatch
+            .run_on_main_thread(callback)
+            .map_err(|e| e.to_string())?;
+    }
+    rx.recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|_| GridError::Observation("Grid mutation timed out".into()))?
+        .map_err(GridError::Observation)
+}
+fn arrange_observed(
+    app: &AppHandle,
+    grid: &str,
+    labels: &[String],
+    snapshot: &DisplayObservation,
+    cancel: &Cancel,
+) -> Result<Vec<Rect>, GridError> {
+    if !snapshot.fresh_for(Some(grid)) {
+        return Err(GridError::Observation(
+            "Grid observation expired or changed container".into(),
+        ));
+    }
     let window = app
         .get_window(grid)
-        .ok_or("Grid window is no longer available.")?;
-    let mut size = window
-        .inner_size()
-        .map_err(|e| e.to_string())?
-        .to_logical::<f64>(window.scale_factor().map_err(|e| e.to_string())?);
-    let (available_w, available_h, work_pos, work_scale) = screen(app)?;
-    let position = window.outer_position().map_err(|e| e.to_string())?;
-    let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    let offscreen = position.x < work_pos.x
-        || position.y < work_pos.y
-        || position.x as f64 + size.width * scale
-            > work_pos.x as f64 + available_w * work_scale + 1.0
-        || position.y as f64 + size.height * scale
-            > work_pos.y as f64 + (available_h + 40.0) * work_scale + 1.0;
-    if offscreen || size.width > available_w || size.height > available_h {
-        window
-            .set_min_size(None::<LogicalSize<f64>>)
-            .map_err(|e| e.to_string())?;
+        .ok_or_else(|| GridError::Observation("Grid window is no longer available".into()))?;
+    let observed = snapshot.grid.as_ref().unwrap();
+    let mut size = observed.inner;
+    let area = &snapshot.areas[observed.area];
+    let (available_w, available_h) = area.size();
+    // Partial overlap, edge-snapping and placement on another monitor are user
+    // choices. Recover only a wholly unreachable normal window.
+    let recover = !observed.managed
+        && !layout::reachable(
+            observed.outer,
+            &snapshot.areas.iter().map(|a| a.rect).collect::<Vec<_>>(),
+        );
+    if recover {
         size = LogicalSize::new(size.width.min(available_w), size.height.min(available_h));
-        window
-            .set_position(LogicalPosition::new(
-                work_pos.x as f64 / work_scale,
-                work_pos.y as f64 / work_scale,
-            ))
-            .map_err(|e| e.to_string())?;
-        window.set_size(size).map_err(|e| e.to_string())?;
+        let pos = tauri::PhysicalPosition::new(area.rect.x as i32, area.rect.y as i32);
+        let areas = snapshot.areas.iter().map(|a| a.rect).collect::<Vec<_>>();
+        mutate_window(&window, cancel, move |w| {
+            ensure_normal(w)?;
+            let current = w.outer_position().map_err(|e| e.to_string())?;
+            let outer = w.outer_size().map_err(|e| e.to_string())?;
+            if layout::reachable(
+                layout::PhysicalRect {
+                    x: current.x as f64,
+                    y: current.y as f64,
+                    width: outer.width as f64,
+                    height: outer.height as f64,
+                },
+                &areas,
+            ) {
+                return Err("Grid placement changed during recovery".into());
+            }
+            w.set_min_size(None::<LogicalSize<f64>>)
+                .map_err(|e| e.to_string())?;
+            w.set_position(pos).map_err(|e| e.to_string())?;
+            w.set_size(size).map_err(|e| e.to_string())
+        })?;
     }
     let embedded = labels.iter().any(|label| label.starts_with("player-"));
     let (min_width, min_height) = if embedded {
@@ -212,52 +469,90 @@ pub fn arrange(app: &AppHandle, grid: &str, labels: &[String]) -> Result<Vec<Rec
         min_height,
     ) {
         Ok(bounds) => bounds,
+        Err(error) if observed.managed => return Err(GridError::NoFit(error, snapshot.observed)),
         Err(_) => {
-            let (w, h, pos, scale) = screen(app)?;
-            let bounds = layout::cells_with_min(labels.len(), w, h, min_width, min_height)?;
-            window
-                .set_position(LogicalPosition::new(
-                    pos.x as f64 / scale,
-                    pos.y as f64 / scale,
-                ))
-                .map_err(|e| e.to_string())?;
-            window
-                .set_size(LogicalSize::new(w, h))
-                .map_err(|e| e.to_string())?;
-            size = LogicalSize::new(w, h);
+            let bounds = layout::cells_with_min(
+                labels.len(),
+                available_w,
+                available_h,
+                min_width,
+                min_height,
+            )
+            .map_err(|e| GridError::NoFit(e, snapshot.observed))?;
+            size = LogicalSize::new(available_w, available_h);
+            // Grow on the grid's own monitor without moving a reachable window.
+            mutate_window(&window, cancel, move |w| {
+                ensure_normal(w)?;
+                w.set_size(size).map_err(|e| e.to_string())
+            })?;
             bounds
         }
     };
-    // Use the current row/column minimum to prevent ordinary undersizing.
-    if let Some(first) = bounds.first() {
+    if let Some(first) = bounds.first().filter(|_| !observed.managed) {
         let cell = first.size.to_logical::<f64>(1.0);
         let columns = ((size.width + layout::DIVIDER) / (cell.width + layout::DIVIDER)).round();
         let rows = ((size.height + layout::DIVIDER) / (cell.height + layout::DIVIDER)).round();
-        window
-            .set_min_size(Some(LogicalSize::new(
+        mutate_window(&window, cancel, move |w| {
+            ensure_normal(w)?;
+            w.set_min_size(Some(LogicalSize::new(
                 columns * min_width + (columns - 1.0) * layout::DIVIDER,
                 rows * min_height + (rows - 1.0) * layout::DIVIDER,
             )))
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())
+        })?;
     }
     for (label, bounds) in labels.iter().zip(&bounds) {
-        if let Some(webview) = app.get_webview(label) {
-            if webview.window().label() == grid {
-                set_bounds(&webview, *bounds)?;
-            }
+        if cancel.load(Ordering::SeqCst) != 0 {
+            return Err(GridError::Observation("Grid arrangement cancelled".into()));
+        }
+        if let Some(webview) = app
+            .get_webview(label)
+            .filter(|v| v.window().label() == grid)
+        {
+            set_bounds_checked(&webview, *bounds, Some(cancel.clone()))?;
         }
     }
-    window
-        .set_title(&format!("MPD Viewer · {} viewers", labels.len()))
-        .map_err(|e| e.to_string())?;
+    let title = format!("MPD Viewer · {} viewers", labels.len());
+    mutate_window(&window, cancel, move |w| {
+        w.set_title(&title).map_err(|e| e.to_string())
+    })?;
     Ok(bounds)
+}
+
+fn ensure_normal(window: &Window) -> Result<(), String> {
+    if window.is_maximized().map_err(|e| e.to_string())?
+        || window.is_fullscreen().map_err(|e| e.to_string())?
+    {
+        Err("Grid management state changed during observation".into())
+    } else {
+        Ok(())
+    }
 }
 
 /// Locked Linux Wry uses a GtkBox and ignores cell coordinates there. Keep
 /// Tauri's native ownership, but place grid widgets in a native GtkFixed.
 /// This changes neither browser security nor document content.
 pub fn set_bounds(view: &tauri::Webview, bounds: Rect) -> Result<(), String> {
-    view.set_bounds(bounds).map_err(|e| e.to_string())?;
+    set_bounds_checked(view, bounds, None)
+}
+fn set_bounds_checked(
+    view: &tauri::Webview,
+    bounds: Rect,
+    cancel: Option<Cancel>,
+) -> Result<(), String> {
+    if let Some(cancel) = &cancel {
+        let view = view.clone();
+        let window = view.window();
+        let parent = window.label().to_owned();
+        mutate_window(&window, cancel, move |_| {
+            if view.window().label() != parent {
+                return Err("Grid child changed parent".into());
+            }
+            view.set_bounds(bounds).map_err(|e| e.to_string())
+        })?;
+    } else {
+        view.set_bounds(bounds).map_err(|e| e.to_string())?;
+    }
     #[cfg(target_os = "linux")]
     {
         let window = view.window();
@@ -265,6 +560,12 @@ pub fn set_bounds(view: &tauri::Webview, bounds: Rect) -> Result<(), String> {
         view.with_webview(move |platform| {
             use gtk::prelude::*;
             let result = (|| -> Result<(), String> {
+                if cancel
+                    .as_ref()
+                    .is_some_and(|c| c.load(Ordering::SeqCst) != 0)
+                {
+                    return Err("Grid bounds cancelled".into());
+                }
                 let widget = platform.inner();
                 if window.label().starts_with("viewer-grid-") {
                     let vbox = window.default_vbox().map_err(|e| e.to_string())?;

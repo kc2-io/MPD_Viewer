@@ -6,6 +6,56 @@ pub const DIVIDER: f64 = 2.0;
 pub const MIN_WIDTH: f64 = 430.0;
 pub const MIN_HEIGHT: f64 = 480.0;
 
+#[derive(Clone, Copy, Debug)]
+pub struct PhysicalRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+pub fn best_work_area(window: PhysicalRect, areas: &[PhysicalRect]) -> Option<usize> {
+    areas
+        .iter()
+        .enumerate()
+        .filter_map(|(i, area)| {
+            let width = (window.x + window.width).min(area.x + area.width) - window.x.max(area.x);
+            let height =
+                (window.y + window.height).min(area.y + area.height) - window.y.max(area.y);
+            (width > 0.0 && height > 0.0).then_some((i, width * height))
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
+pub fn reachable(window: PhysicalRect, areas: &[PhysicalRect]) -> bool {
+    let tolerance = 16.0; // Physical pixels: Windows invisible resize borders.
+    let expanded: Vec<_> = areas
+        .iter()
+        .map(|a| PhysicalRect {
+            x: a.x - tolerance,
+            y: a.y - tolerance,
+            width: a.width + tolerance * 2.0,
+            height: a.height + tolerance * 2.0,
+        })
+        .collect();
+    best_work_area(window, &expanded).is_some()
+}
+
+pub fn grid_fits(
+    count: usize,
+    client: (f64, f64),
+    available: (f64, f64),
+    managed: bool,
+    minimum: (f64, f64),
+) -> Result<(), String> {
+    match cells_with_min(count, client.0, client.1, minimum.0, minimum.1) {
+        Ok(_) => Ok(()),
+        Err(error) if managed => Err(error),
+        Err(_) => cells_with_min(count, available.0, available.1, minimum.0, minimum.1).map(|_| ()),
+    }
+}
+
 #[cfg(test)]
 pub fn cells(count: usize, width: f64, height: f64) -> Result<Vec<Rect>, String> {
     cells_with_min(count, width, height, MIN_WIDTH, MIN_HEIGHT)
@@ -58,6 +108,44 @@ pub fn cells_with_min(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn managed_client_is_authority_even_with_shorter_decorations() {
+        assert!(grid_fits(2, (862.0, 480.0), (862.0, 450.0), true, (430.0, 480.0)).is_ok());
+        assert!(grid_fits(2, (862.0, 450.0), (862.0, 480.0), true, (430.0, 480.0)).is_err());
+        assert!(grid_fits(2, (862.0, 450.0), (862.0, 480.0), false, (430.0, 480.0)).is_ok());
+    }
+    #[test]
+    fn placement_respects_other_monitors_partial_overlap_and_decorations() {
+        let areas = [
+            PhysicalRect {
+                x: 0.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1080.0,
+            },
+            PhysicalRect {
+                x: 1920.0,
+                y: -200.0,
+                width: 2560.0,
+                height: 1440.0,
+            },
+        ];
+        let mut grid = PhysicalRect {
+            x: 2100.0,
+            y: -8.0,
+            width: 1400.0,
+            height: 900.0,
+        };
+        assert_eq!(best_work_area(grid, &areas), Some(1));
+        assert!(reachable(grid, &areas));
+        grid.x = -900.0;
+        assert!(reachable(grid, &areas));
+        grid.x = -1410.0; // Ten pixels outside: decoration tolerance.
+        assert!(reachable(grid, &areas));
+        grid.x = 5000.0;
+        assert!(!reachable(grid, &areas));
+        assert!(!reachable(grid, &[]));
+    }
     #[test]
     fn geometry_preserves_count_minimum_and_bounds() {
         for count in [1, 2, 3, 4, 6, 12] {

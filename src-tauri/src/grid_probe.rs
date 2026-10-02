@@ -50,7 +50,16 @@ async fn wait(
             return Ok(view);
         }
         if Instant::now() >= deadline {
-            return Err(format!("Timed out: {description}; error={:?}", view.error));
+            return Err(format!(
+                "Timed out: {description}; mode={}, players={}, error={:?}",
+                match view.mode {
+                    Mode::Stopped => "Stopped",
+                    Mode::Running => "Running",
+                    Mode::Paused => "Paused",
+                },
+                view.players.len(),
+                view.error
+            ));
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -140,8 +149,10 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
 
     let geometry = crate::presentation::preflight(app, 2, demo);
     if let Err(error) = &geometry {
-        if !demo || !error.starts_with("Grid cannot fit 2 selected viewers") {
-            return Err(error.clone());
+        if !matches!(error, crate::presentation::GridError::NoFit(message, _)
+            if demo && message.starts_with("Grid cannot fit 2 selected viewers"))
+        {
+            return Err(error.to_string());
         }
     }
     let count = if demo && geometry.is_err() {
@@ -376,6 +387,65 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
             return Err(format!("Native child cells overlap: {bounds:?}"));
         }
     }
+    let original_position = grid.outer_position().map_err(|e| e.to_string())?;
+    let original_size = grid.inner_size().map_err(|e| e.to_string())?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let app_clone = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(
+            app_clone
+                .available_monitors()
+                .map(|monitors| {
+                    monitors
+                        .iter()
+                        .map(|m| m.work_area().position)
+                        .collect::<Vec<_>>()
+                })
+                .map_err(|e| e.to_string()),
+        );
+    })
+    .map_err(|e| e.to_string())?;
+    let monitors = rx.await.map_err(|e| e.to_string())??;
+    let other = monitors.iter().find(|p| {
+        (p.x - original_position.x).abs() > 100 || (p.y - original_position.y).abs() > 100
+    });
+    let target = other.map_or(
+        tauri::PhysicalPosition::new(original_position.x + 20, original_position.y + 20),
+        |p| tauri::PhysicalPosition::new(p.x + 20, p.y + 20),
+    );
+    grid.set_position(target).map_err(|e| e.to_string())?;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let moved = grid.outer_position().map_err(|e| e.to_string())?;
+    if other.is_some() && ((moved.x - target.x).abs() > 2 || (moved.y - target.y).abs() > 2) {
+        return Err("Native grid did not reach the selected other monitor".into());
+    }
+    tokio::time::sleep(Duration::from_millis(1800)).await;
+    if grid.outer_position().map_err(|e| e.to_string())? != moved {
+        return Err("Periodic layout moved a reachable grid back to the manager origin".into());
+    }
+    if other.is_some() {
+        std::fs::write(
+            crate::e2e::root().join("grid-other-monitor-ready"),
+            b"fixture",
+        )
+        .map_err(|e| e.to_string())?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    grid.maximize().map_err(|e| e.to_string())?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    if !grid.is_maximized().map_err(|e| e.to_string())? {
+        return Err("Native grid maximize was not observed".into());
+    }
+    tokio::time::sleep(Duration::from_millis(1800)).await;
+    if !grid.is_maximized().map_err(|e| e.to_string())? {
+        return Err("Periodic grid layout undid native maximization".into());
+    }
+    grid.unmaximize().map_err(|e| e.to_string())?;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    grid.set_size(original_size).map_err(|e| e.to_string())?;
+    grid.set_position(original_position)
+        .map_err(|e| e.to_string())?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
     crate::presentation::focus(app, &labels[0])?;
     let manager = app.get_window("main").ok_or("Missing theme manager")?;
     for (theme, marker) in [
@@ -589,6 +659,119 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         v.players.len() == count
     })
     .await?;
+    // A failed display observation must retain active viewers, even when a new
+    // eligible favorite increases the desired count beyond cached admission.
+    action(
+        app,
+        SetTimer {
+            login: timed.into(),
+            minutes: None,
+        },
+    )
+    .await?;
+    let retained: Vec<_> = state(app).players.iter().map(|p| p.session).collect();
+    std::fs::write(
+        crate::e2e::root().join("fixture-state.json"),
+        b"{\"fail_display_observation\":true}",
+    )
+    .map_err(|e| e.to_string())?;
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    let extra = "grid_observation_fixture";
+    action(
+        app,
+        Add {
+            input: extra.into(),
+        },
+    )
+    .await?;
+    if demo {
+        action(
+            app,
+            DemoLive {
+                login: extra.into(),
+                live: true,
+            },
+        )
+        .await?;
+    }
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    let after = state(app);
+    if after.mode != Mode::Running
+        || after.players.iter().map(|p| p.session).collect::<Vec<_>>() != retained
+    {
+        return Err("Transient display failure stopped or replaced active viewers".into());
+    }
+    action(
+        app,
+        Remove {
+            login: extra.into(),
+        },
+    )
+    .await?;
+    // Let a mutation time out without Stop, then prove its already-retired
+    // token prevents the delayed native callback from running after Stop.
+    std::fs::write(
+        crate::e2e::root().join("fixture-state.json"),
+        b"{\"delay_grid_mutation\":true}",
+    )
+    .map_err(|e| e.to_string())?;
+    wait(app, "native mutation worker times out", |v| {
+        v.error
+            .as_deref()
+            .is_some_and(|e| e.contains("Grid mutation timed out"))
+    })
+    .await?;
+    std::fs::write(crate::e2e::root().join("fixture-state.json"), b"{}")
+        .map_err(|e| e.to_string())?;
+    action(app, Stop).await?;
+    wait(app, "Stop after expired mutation", |v| {
+        v.mode == Mode::Stopped && v.players.is_empty()
+    })
+    .await?;
+    let skipped = crate::e2e::root().join("grid-mutation-skipped");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !skipped.exists() {
+        if Instant::now() > deadline {
+            return Err("Timed-out native mutation remained unfenced".into());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    action(app, ClearError).await?;
+    action(app, Start).await?;
+    wait(app, "restart after expired mutation", |v| {
+        v.mode == Mode::Running && v.players.len() == count
+    })
+    .await?;
+    std::fs::write(
+        crate::e2e::root().join("fixture-state.json"),
+        b"{\"slow_display_observation\":true}",
+    )
+    .map_err(|e| e.to_string())?;
+    let marker = crate::e2e::root().join("display-observation-started");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !marker.exists() {
+        if Instant::now() > deadline {
+            return Err("Delayed display worker was not observed".into());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let stop_started = Instant::now();
+    action(app, Stop).await?;
+    if stop_started.elapsed() > Duration::from_secs(2) {
+        return Err("Display worker blocked the controller's Stop acknowledgement".into());
+    }
+    wait(app, "Stop during delayed display work", |v| {
+        v.mode == Mode::Stopped && v.players.is_empty()
+    })
+    .await?;
+    std::fs::write(crate::e2e::root().join("fixture-state.json"), b"{}")
+        .map_err(|e| e.to_string())?;
+    action(app, ClearError).await?;
+    action(app, Start).await?;
+    wait(app, "restart after cancelled display work", |v| {
+        v.mode == Mode::Running && v.players.len() == count
+    })
+    .await?;
     // Growth beyond available geometry must stop rather than truncate selection.
     for index in 0..20 {
         let login = format!("grid_fixture_{index}");
@@ -619,7 +802,7 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         return Err("No-fit changed capacity/preference or hid its reason".into());
     }
     Ok(
-        serde_json::json!({"two_embedded_cells_fit": demo.then_some(count==2),"retained_document":true,"retained_fixture_state":true,"grid_children":count,"standalone_restored":true,"preparation_preserves_sources":true,"partial_open_cleanup":true,"partial_move_rollback":true,"configured_limit":1000,"ipc_isolation":true,"stop_during_move":true,"repeated_requests":true,"failed_close_reserves_capacity":true,"grid_close_stops":true,"timer_continuity":true,"no_fit_stops_without_truncation":true,"bounds":bounds,"live_twitch":false}),
+        serde_json::json!({"two_embedded_cells_fit": demo.then_some(count==2),"other_monitor_placement_retained":other.is_some(),"reachable_placement_retained":true,"maximized_grid_retained":true,"transient_display_failure_retains_viewers":true,"stop_during_display_work":true,"expired_mutation_fenced":true,"retained_document":true,"retained_fixture_state":true,"grid_children":count,"standalone_restored":true,"preparation_preserves_sources":true,"partial_open_cleanup":true,"partial_move_rollback":true,"configured_limit":1000,"ipc_isolation":true,"stop_during_move":true,"repeated_requests":true,"failed_close_reserves_capacity":true,"grid_close_stops":true,"timer_continuity":true,"no_fit_stops_without_truncation":true,"bounds":bounds,"live_twitch":false}),
     )
 }
 pub fn install(app: &AppHandle) {
