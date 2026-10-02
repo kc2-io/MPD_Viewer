@@ -259,6 +259,34 @@ export class Desktop {
     if (!count) evidence.skipped++;
     if (evidence.cases.length < 128) evidence.cases.push({ sequence: evidence.attempted, name: testName, captured: count || 0, skipped: !count });
   }
+  async gridProbe(scenario) {
+    if (this.cancelled) throw new Error(this.cancelled);
+    if (this.child) throw new Error('Stop the owned GUI before a native grid probe');
+    const port = await freePort();
+    const logFile = path.join(this.output, `app-${this.launches.length + 1}.log`);
+    await writeFile(logFile, '');
+    const child = spawn(this.binary, [], { shell: false, windowsHide: false, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
+      env: environment({ MPD_E2E_ROOT: this.root, MPD_E2E_RUN_ID: this.runId, MPD_E2E_SCENARIO: scenario, MPD_E2E_GRID_PROBE: '1', TAURI_WEBDRIVER_PORT: String(port) }) });
+    this.child = child;
+    this.logClosed = new Promise(resolve => child.once('close', resolve));
+    this.launches.push({ pid: child.pid, scenario, gridProbe: true, port });
+    let bytes = 0;
+    for (const stream of [child.stdout, child.stderr]) stream.on('data', data => {
+      const chunk = Buffer.from(sanitize(data.toString())).subarray(0, Math.max(0, 64 * 1024 - bytes));
+      bytes += chunk.length;
+      if (chunk.length) this.logWrites = this.logWrites.then(() => appendFile(logFile, chunk)).catch(error => {
+        if (this.logErrors.length < 4) this.logErrors.push(sanitize(error.message).slice(0, 512));
+      });
+    });
+    let spawnError; child.on('error', error => { spawnError = error; });
+    await until(() => { if (spawnError) throw spawnError; return exited(child); }, 'Native grid probe did not exit', 105000);
+    await this.flushLogs();
+    const report = JSON.parse(await readFile(path.join(this.root, 'grid-probe.json'), 'utf8'));
+    await writeFile(path.join(this.output, `grid-${scenario}.json`), sanitize(JSON.stringify(report, null, 2)));
+    if (child.exitCode !== 0 || report.passed !== true || report.origin !== 'isolated-local-fixtures' || report.result?.retained_document !== true || report.result?.ipc_isolation !== true || report.result?.live_twitch !== false) {
+      throw new Error(`Native grid probe failed; see grid-${scenario}.json and ${path.basename(logFile)}`);
+    }
+  }
   async policyProbe(scenario) {
     if (this.cancelled) throw new Error(this.cancelled);
     if (this.child) throw new Error('Stop the owned GUI before a driverless policy probe');

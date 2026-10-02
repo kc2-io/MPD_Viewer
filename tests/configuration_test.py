@@ -28,9 +28,9 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_top_level_twitch_pages_receive_no_native_capability(self):
         capability=json.loads((ROOT/'src-tauri/capabilities/players.json').read_text())
-        self.assertEqual(capability['windows'],['player-*'])
+        self.assertEqual(capability['webviews'],['player-*'])
         self.assertNotIn('https://www.twitch.tv/*',capability['remote']['urls'])
-        self.assertNotIn('twitch-page-*',capability['windows'])
+        self.assertNotIn('twitch-page-*',capability['webviews'])
 
     def test_manager_allows_html_ranking_drags(self):
         config=json.loads((ROOT/'src-tauri/tauri.conf.json').read_text(encoding='utf-8'))
@@ -116,7 +116,8 @@ class ConfigurationTests(unittest.TestCase):
     def test_remote_player_only_gets_advisory_reporting(self):
         value=json.loads((ROOT/'src-tauri/capabilities/players.json').read_text())
         self.assertEqual(value['permissions'],['report-playback'])
-        self.assertEqual(value['windows'],['player-*'])
+        self.assertEqual(value['webviews'],['player-*'])
+        self.assertNotIn('windows',value)
         self.assertFalse(value['local'])
     def test_manager_has_no_remote_origins(self):
         value=json.loads((ROOT/'src-tauri/capabilities/manager.json').read_text())

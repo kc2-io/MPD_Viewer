@@ -1,0 +1,230 @@
+# Native grid implementation plan
+
+Date: 2026-10-01. Base: `f2dc03cc2e7ca11271c946ebf98d39f51b840495`.
+Author: Astra, with independent review amendments. This is an implementation
+plan, not a claim of native or live Twitch acceptance.
+
+## Scope and competitive context
+
+Add a genuine single-window Grid presentation alongside Standalone. Preserve
+full Twitch pages as the default backend and retain explicit embedded mode.
+Rust continues to select favorites, own assignments, and enforce capacity and
+timers. Retained live switching is in scope; stopped-only selection is an
+intermediate milestone. No framework rewrite, DOM multi-player protocol,
+website deployment, arbitrary docking, or automatic playback on relaunch.
+
+[Viewington](https://viewington.com/watch) supplies comparison questions about
+adaptive multiview, ordering, offline changes, and control discoverability.
+It does not prescribe MPD's framework, embed backend, layout, or selection
+policy. Profiles/sharing are outside this change. Its controls do not establish
+full-page controls, login, rewards, or performance.
+
+## Implementation sequence and gates
+
+1. Disposable native spike: use the locked Tauri 2.11.6/runtime-wry 2.11.4 and
+   deliberately enable `unstable`. Prove child creation, bidirectional retained
+   reparent, bounds/focus, and event-thread close completion locally. Extend
+   native fixtures to document/state/profile retention and counts 1/2/3/4/6.
+   Record missing Windows/macOS/live Twitch evidence; never infer portability.
+2. Add a small presenter and pure geometry module. Separate logical session
+   identity from surface identity and owning container. Use WindowBuilder and
+   WebviewBuilder for viewers, with the same production profile defaults,
+   navigation/download/popup restrictions, and embedded bootstrap. E2E children
+   use the existing isolated profile. Preserve standalone behavior first.
+3. Add defaulted `Settings.viewer_layout` (Standalone upgrade default), bounded
+   `set_layout` action, capability/pending state, and manager layout control.
+   Geometry uses actual desired selected count, logical units, backend minimums,
+   deterministic priority order, and monitor work area. Never alter the limit
+   or mark a channel failed merely because it cannot fit.
+4. Implement retained live transitions as controller-owned transactions:
+   revision/cancellation token, source and target placements, tagged completion,
+   deferred reply, and successful preference commit. Create target containers
+   outside synchronous UI callbacks. Execute mutations on the event thread,
+   checking cancellation immediately before mutation. Keep the controller able
+   to process Stop/exit, capacity reduction, and replacement. Latest layout
+   request supersedes older requests; stale completions cannot resurrect media.
+5. Integrate per-child closure/focus/mute, geometry recovery, close semantics,
+   tests, adversarial implementation review, native fixture evidence, and a PR.
+
+## Lifecycle and authority
+
+Manager commands bind to the actual calling manager webview, not a shared
+window. Only wrapper child labels may report their own session; full pages have
+no report/manage capabilities. Reports bind to the active surface incarnation.
+Retained movement preserves that identity; any future recreation needs a new
+surface identity. No recreation fallback is included in this change.
+
+Tauri worker-thread Webview::close removes its registry entry before native
+destruction. Close on the event thread and emit a tagged closure completion
+after synchronous native removal; preserve capacity on dispatch failure or
+uncertain completion. Registry absence alone is not closure evidence.
+
+Tauri reparent updates its window accessor before dispatcher success; runtime
+failure may drop the old native handle. Maintain explicit placements. Known
+pre-mutation failures preserve sources. Uncertain reparent/rollback failures
+trigger Stop-all cleanup, including both source and target containers, rather
+than speculative recreation. Close failures retain reservations and retry with
+bounded backoff. Source container cleanup must be empty and cannot imply Skip.
+
+Standalone user close means Skip; grid close means Stop viewers and monitoring;
+manager exit closes all. Focus neither pauses neighbors nor resumes paused
+media. Native child mute must be retested; macOS keeps its unsupported result.
+Grid titles describe the group; standalone titles retain channel/viewer counts.
+
+## Timer and overflow policies
+
+Moving surfaces remain logically assigned. Running assignment time, including
+transition downtime, continues; automation Pause freezes time. Account monotonic
+elapsed time exactly once, preserve broadcast turn state, and do not call
+rotation.opened for a presentation move. Stop/exit and reductions supersede
+transitions; settle cancelled native work before ordinary selection reconciliation.
+
+Preflight actual selected count before Start/switch; reject no-fit without
+changing assignments or the committed preference. Test backend cell minimums
+(initial full-page floor 430 x 480; embedded must also fit video/chat/chrome).
+For later growth, resize, DPI change, or monitor loss, preserve user placement
+on any monitor. Enlarge a normal undersized grid on its own monitor; reposition
+only a wholly unreachable window. Do not resize or reposition maximized or
+fullscreen windows. If a fresh observation confirms no fit, stop all viewers and monitoring
+with a reachable manager error. Do not silently lower capacity, hide playback,
+switch backend/layout, or restart. Retain favorites, capacity, and layout
+preference. Standard Stop semantics apply to timer state. Failed closes remain
+reserved. This bounded policy is explicitly part of the proposed implementation;
+arbitrary-count scrolling requires separate proof.
+
+## Validation and delivery
+
+Unit/fake tests cover settings migration, geometry/no-fit, retained identity,
+unchanged selection and turn time, target creation/partial move/rollback failure,
+Stop/capacity reduction/repeated toggles/stale callbacks, close-failure capacity,
+close semantics, and no-fit recovery.
+
+Native fixture tests establish one grid container and N children, actual bounds,
+retained document state/profile, focus, resize, IPC denial, confirmed close before
+replacement, and no orphan surfaces. Live Twitch pause/chat/profile/audio
+continuity remains separate. Sanitize revision-bound screenshot/video evidence.
+
+Run `just verify`, `just verify-native`, `just verify-e2e`; `just verify-core` if
+core changes. Build/run isolated native E2E and monitor hosted checks to terminal
+outcomes. Obtain independent adversarial review of the actual diff and re-review
+blocking corrections. Commit task files, push the assigned branch, open a draft
+PR if any required platform/live gate is unavailable. No merge/deploy/release.
+
+## Execution record
+
+The locked-runtime Linux spike proved native child creation, retained movement in
+both directions, and event-thread close. Production now uses separate container
+and child identities, presentation transactions, defaulted layout preferences,
+manager controls, and controller-owned Stop/cleanup. Embedded cells use 800 x 540;
+full-page cells currently use the proposed 430 x 480 floor. Linux needs a native
+GtkFixed adapter because the locked Wry GtkBox host ignores child coordinates.
+This does not manipulate production page DOM.
+
+Independent review identified and corrected preparation mutation, orphaned partial
+opens, uncertain move cleanup, late supersession, Stop dominance, and cleanup retry
+intent. Final re-review and changed-revision checks are recorded in the PR.
+Native local-fixture evidence covers two retained surfaces where they fit, state/turn retention,
+IPC isolation, cancellation, injected failure cleanup, and no-fit Stop. Geometry
+unit tests additionally cover counts 1/2/3/4/6/12; this is not native acceptance
+for all those counts.
+
+Hosted Linux exposed off-thread monitor conversion in the locked runtime: the
+complete monitor observation now runs on the native event thread. Hosted small
+macOS desktops correctly reject two embedded cells; fixture evidence explicitly
+checks that rejection and reports one retained embedded child there, while the
+full-page probe still requires two. This is not two-child embedded acceptance
+on a small desktop. Exact Linux Openbox and small-display fixtures verify these
+corrections. A subsequent small-display run exposed last-child replacement
+retiring the active grid too soon. Running/paused grids now retain their empty
+parent through replacement; successful Stopped retirement clears the cached
+handle immediately. Fixtures check exact-parent reuse and normal retirement/
+restart; they do not deterministically delay Destroyed event delivery.
+
+Windows hosted geometry exposed another locked-runtime quirk: child reparent
+leaves Wry's coordinate parent cached. Bounds/rollback snapshots now inspect the
+native HWND's actual parent and client rectangle on the event thread, validate
+container ownership, and reject failed mapping. The Windows API body compiled
+against the committed versions on the Windows MSVC target; this is compile
+proof, not runtime evidence. Independent review approved the failure handling.
+Hosted Windows geometry still has to pass on the corrected revision.
+
+### Display observation and placement follow-up
+
+CodeRabbit identified synchronous display checks on every reconciliation and
+grid recovery against the manager's monitor. Periodic grid work now uses one
+tagged, cancellable worker. It captures monitors and grid geometry on the native
+event thread, applies arrangement outside the controller, and caches observations
+for at most two seconds. Growth uses cached geometry; cached no-fit never stops
+viewers. A fresh no-fit completion must still match the desired count, container,
+and layout revision. Transient observation or mutation failures defer growth and
+retain current viewers. Stop and cleanup cancel work without waiting for it;
+layout moves and new opens wait for that work to settle.
+
+Mutation callbacks check cancellation before applying native changes. Worker
+completion retires mutation permission before sending its result, so a callback
+queued past a timeout cannot run after ownership is released. Stop remains
+dominant. Actual client dimensions govern fit in managed windows; the conservative
+decoration allowance applies only to normal-window recovery. Grid placement uses
+its own monitor, intersection with all work areas, and physical decoration
+tolerance. Creation still starts on the manager's monitor.
+
+The follow-up plan and code received independent adversarial review. Regression
+coverage includes managed client sizing, multi-monitor geometry, native placement
+and maximization, retained viewers during failed observations and deferred growth,
+Stop during delayed observation, and cancellation of a mutation after timeout.
+Record revision-bound native and hosted outcomes in the PR; this section does
+not establish live Twitch or physical-monitor DPI acceptance.
+
+### Grid-open preparation and stopped preference follow-up
+
+Grid viewer admission now uses the same serialized worker ownership as periodic
+display work. New-container creation, native display observation, and cell
+arrangement run outside the controller; `Host::open` remains actor-side native
+work. Preparation carries the session, candidate channel and broadcast, complete
+desired selection, current child labels, and layout revision. Completion retires
+mutation permission; the actor revalidates those identities, Running mode, Grid
+layout, capacity, and cleanup state immediately before opening a child.
+
+The controller owns a prospective new grid label before its hidden native window
+can materialize. Stop and selection changes cancel preparation. A builder that
+returns after cancellation cannot open playback: its new empty container is
+retired, with bounded cleanup retry on failure. Preparation cleanup never retires
+an existing shared grid. Native configuration and arrangement callbacks check
+the cancellation token; queued callbacks cannot mutate after worker completion.
+Initial admission and preparation both consider the entire desired selected set.
+Fresh no-fit retains the existing Stop-all policy without truncating selection.
+
+Stop clears earlier queued layout requests. A preference request accepted after
+Stop while cancelled display/preparation work is settling is consumed once at
+completion, even in Stopped mode; a validation failure is reported immediately
+instead of leaving a latent request to affect a later Start. Native fixture
+probes use bounded release barriers before grid creation and after hidden-target
+creation to verify responsive Stop, post-Stop preference completion, no stale
+playback, and target retirement. Existing slow-observation and expired-mutation
+probes remain in place, including their unchanged overall timeout limits.
+
+### macOS parent client geometry
+
+Bounded native diagnostics reproduced the same incorrect width on both Mac
+architectures: a 1024-wide full-page grid reported 511, and a 1920-wide embedded
+grid reported 959. The locked runtime-wry macOS `inner_size` fast path returns
+the first webview's NSView frame when its `has_children` flag is false. Retained
+reparenting into an empty container leaves that flag false. Maximization then
+made the smaller child dimensions authoritative for managed-window fit, causing
+an incorrect NoFit Stop despite adequate parent space.
+
+The macOS presenter now reads `NSWindow.contentRectForFrameRect(NSWindow.frame)`
+on the native event thread through typed, already-locked objc2/AppKit APIs.
+It validates positive finite logical dimensions and uses the parent rectangle
+for display observation and standalone transition targets. The native probe
+saves/restores that actual client size, asserts the maximized parent fits the
+selected cells, and logs cached-versus-native dimensions separately. Other
+platform geometry, cell minimums, selection, NoFit Stop behavior, and existing
+assertions/timeouts are unchanged. Direct macOS dependency edges use the exact
+previously locked versions; no package version changes are required. Changed-
+revision Mac fixture results remain a gate and must be recorded in the PR.
+
+Live Twitch pause/chat/profile/audio continuity, full-page sizing, DPI/monitor-loss
+acceptance, and platform-specific native results remain distinct gates. Keep the
+PR draft until the required evidence is available. No release or deployment is
+part of this task.

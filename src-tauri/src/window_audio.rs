@@ -1,7 +1,7 @@
 #[cfg(any(windows, target_os = "linux", test))]
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
-use tauri::WebviewWindow;
+use tauri::Webview;
 
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -63,7 +63,7 @@ pub const fn supported() -> bool {
 
 /// Apply whole-webview mute through the native browser engine. A successfully
 /// queued callback is not success: the caller waits for platform confirmation.
-pub fn set_muted(window: &WebviewWindow, muted: bool) -> Result<(), String> {
+pub fn set_muted(window: &Webview, muted: bool) -> Result<(), String> {
     #[cfg(any(windows, target_os = "linux"))]
     {
         let completion = new_completion();

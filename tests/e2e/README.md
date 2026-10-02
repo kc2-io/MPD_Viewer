@@ -153,3 +153,31 @@ sizing can subtract the titlebar from the requested height. This verifies native
 horizontal resizing plus a bounded usable viewport, not exact height parity.
 Requested, prior and observed dimensions, width change, available area and scale
 are recorded even on failure; non-finite or out-of-bounds geometry is rejected.
+
+
+### Native grid fixture probes
+
+The ordinary suite also runs fresh driverless `grid-demo` and `grid-web` processes
+with the existing isolated E2E root/profile. Their JSON reports verify the selected actual
+native children in one container, non-overlapping native allocations, retained
+fixture document IDs and mutable state through both layout directions, timer
+continuity, manager/report IPC denial, cancellation by Stop, failed preparation
+and rollback, failed-close capacity reservations, automatic cleanup after partial
+open plus failed close, exact-parent reuse during last-child replacement, normal retirement/restart,
+grid-close Stop, and overflow without capacity reduction.
+These actions use the native controller test bridge; the manager layout control
+is exercised separately through the ordinary GUI suite. Driverless processes
+register no WebDriver listener. Fault hooks and document inspection are excluded
+from production builds. A close retry takes the production 30-second backoff;
+there is no passing-test retry of a failed grid probe.
+
+Reports and captured desktop video are local-fixture evidence. They do not prove
+Twitch playback, chat, rewards, login/profile continuity, full-page minimum size,
+or whole-page audio after reparent. On small desktops that cannot fit two embedded cells, the demo probe first
+asserts production no-fit Stop, then tests one retained cell and reports
+`two_embedded_cells_fit: false`. The full-page probe still requires two children.
+This does not establish two embedded cells on those small desktops. Linux explicitly adapts Wry's GtkBox hosting
+to native GtkFixed allocations; Windows bounds inspection uses the HWND's actual current parent, because locked
+Wry retains the original coordinate parent after child reparent. It checks native
+container ownership and rejects failed coordinate mapping. Windows/macOS need
+their own hosted GUI results.

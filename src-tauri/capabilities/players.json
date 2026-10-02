@@ -1,7 +1,7 @@
 {
   "identifier": "players",
   "description": "Player wrappers may only report advisory telemetry for themselves.",
-  "windows": [
+  "webviews": [
     "player-*"
   ],
   "local": false,

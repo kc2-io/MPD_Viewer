@@ -1,33 +1,37 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-#[cfg(test)]
-mod http_pool_regression;
 mod controller;
 mod credential_store;
-mod viewer_mode;
-mod model;
-mod player;
-mod window_audio;
-mod storage;
-mod viewer_auth;
 #[cfg(feature = "e2e-tests")]
 mod e2e;
 #[cfg(feature = "e2e-tests")]
 mod e2e_probe;
+#[cfg(feature = "e2e-tests")]
+mod grid_probe;
+#[cfg(test)]
+mod http_pool_regression;
+mod layout;
+mod model;
+mod player;
+mod presentation;
+mod storage;
+mod viewer_auth;
+mod viewer_mode;
+mod window_audio;
 
 use controller::{Controller, Handle, Message};
 use model::{Action, Report, View};
-use tauri::{Manager, State, WebviewWindow, WindowEvent};
+use tauri::{Manager, State, Webview, WindowEvent};
 use tokio::sync::{mpsc, oneshot, watch};
 
 #[tauri::command]
-fn get_state(window: WebviewWindow, state: State<'_, Handle>) -> Result<View, String> {
+fn get_state(window: Webview, state: State<'_, Handle>) -> Result<View, String> {
     if window.label() != "main" { return Err("Manager command denied.".into()); }
     let view = state.view.borrow().clone();
     Ok(view)
 }
 
 #[tauri::command]
-async fn dispatch(window: WebviewWindow, state: State<'_, Handle>, action: Action) -> Result<(), String> {
+async fn dispatch(window: Webview, state: State<'_, Handle>, action: Action) -> Result<(), String> {
     if window.label() != "main" { return Err("Manager command denied.".into()); }
     let (tx, rx) = oneshot::channel();
     state.tx.send(Message::Action(action, tx)).await.map_err(|_| "Application is shutting down.")?;
@@ -35,7 +39,7 @@ async fn dispatch(window: WebviewWindow, state: State<'_, Handle>, action: Actio
 }
 
 #[tauri::command]
-fn player_report(window: WebviewWindow, state: State<'_, Handle>, report: Report) -> Result<(), String> {
+fn player_report(window: Webview, state: State<'_, Handle>, report: Report) -> Result<(), String> {
     if !window.label().starts_with("player-") || window.label() != format!("player-{}", report.session) {
         return Err("Session does not belong to this window.".into());
     }
@@ -80,19 +84,52 @@ fn main() {
             let twitch = e2e::twitch()?;
             let (tx, rx) = mpsc::channel(256);
             let (publish, view) = watch::channel(View::default());
-            app.manage(Handle { tx: tx.clone(), view });
-            let controller = Controller::new(app.handle().clone(), tx, publish, store, host, settings, twitch);
+            app.manage(Handle { tx: tx.clone(), view,
+            });
+            let controller = Controller::new(app.handle().clone(), tx, publish, store, host, settings, twitch,
+            );
             tauri::async_runtime::spawn(controller.run(rx));
             #[cfg(feature = "e2e-tests")]
             e2e::create_manager(app.handle())?;
+            #[cfg(target_os = "linux")]
+            presentation::watch_divider_theme(app.handle());
             #[cfg(feature = "e2e-tests")]
-            e2e_probe::install(app.handle());
+            if grid_probe::enabled() {
+                grid_probe::install(app.handle());
+            } else {
+                e2e_probe::install(app.handle());
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
+            if let WindowEvent::ThemeChanged(theme)=event {
+                if window.label()=="main" {
+                    for (label,grid) in window.app_handle().windows() {
+                        if label.starts_with("viewer-grid-") {
+                            if let Err(error)=presentation::update_divider_theme(&grid,*theme) {eprintln!("Grid theme update failed: {error}");}
+                        }
+                    }
+                } else if window.label().starts_with("viewer-grid-") {
+                    let manager_theme=window.app_handle().get_window("main").and_then(|main|main.theme().ok()).unwrap_or(*theme);
+                    if let Err(error)=presentation::update_divider_theme(window,manager_theme) {eprintln!("Grid theme update failed: {error}");}
+                }
+            }
             if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
                 // Never leave invisible background player windows after manager exit.
                 window.app_handle().exit(0);
+            } else if matches!(event, WindowEvent::CloseRequested { .. })
+                && window.label().starts_with("viewer-grid-")
+            {
+                if let Some(handle) = window.app_handle().try_state::<Handle>() {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                    }
+                    let tx = handle.tx.clone();
+                    let label = window.label().to_owned();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = tx.send(Message::GridClosed(label)).await;
+                    });
+                }
             } else if matches!(event, WindowEvent::Destroyed) {
                 if let Some(handle) = window.app_handle().try_state::<Handle>() {
                     let _ = handle.tx.try_send(Message::Destroyed(window.label().into()));

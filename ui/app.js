@@ -196,6 +196,10 @@ function players(s) {
 }
 function render(s) {
   state=s;
+  if(document.activeElement!==$('layout'))$('layout').value=s.layout_pending??s.settings.viewer_layout??'standalone';
+  $('layout').disabled=s.players.some(p=>p.closing)||Boolean(s.layout_pending&&s.mode==='stopped');
+  $('layout-description').textContent=s.settings.viewer_layout==='grid'?'One grid window in priority order. Focus a player to interact with it.':'Separate native viewer windows. Focus a player to watch or interact with it.';
+  $('layout-status').textContent=s.layout_pending?'Changing layout… Stop remains available.':'Layout changes retain viewers. If selected viewers cannot fit, resize or use Standalone. Closing the grid stops monitoring.';
   $('run-status').textContent=s.mode==='running'?'Running':s.mode==='paused'?'Automation paused':'Stopped';
   $('run-status').className=`pill ${s.mode}`;
   $('start').textContent=s.mode==='paused'?'Resume':'Start'; $('start').disabled=s.mode==='running';
@@ -265,6 +269,7 @@ $('refresh').addEventListener('click',()=>act({type:'refresh'}));
 $('load-demo').addEventListener('click',()=>act({type:'load_demo'}));
 $('source').addEventListener('change',()=>act({type:'set_demo',demo:$('source').value==='demo'}));
 $('quality').addEventListener('change',()=>act({type:'set_quality',quality:$('quality').value}));
+$('layout').addEventListener('change',()=>act({type:'set_layout',layout:$('layout').value}));
 $('limit').addEventListener('change',()=>{const limit=Number($('limit').value);if(Number.isSafeInteger(limit)&&limit>=1&&limit<=1000)act({type:'set_limit',limit});else showError('Set a whole-number limit between 1 and 1000.');});
 $('rescan').addEventListener('change',()=>{const minutes=Number($('rescan').value);if(Number.isSafeInteger(minutes)&&minutes>=1&&minutes<=60)act({type:'set_rescan',minutes});else{showError('Set a live-status rescan interval between 1 and 60 whole minutes.');$('rescan').focus();}});
 $('rescan').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('rescan').blur();}});

@@ -2141,8 +2141,11 @@ version = "0.1.0-alpha.8"
 name = "mpd-tabber"
 version = "0.1.0-alpha.8"
 dependencies = [
+ "gtk",
  "mpd-core",
  "mpd-twitch",
+ "objc2",
+ "objc2-app-kit",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2155,6 +2158,7 @@ dependencies = [
  "webbrowser",
  "webkit2gtk",
  "webview2-com",
+ "windows",
  "windows-core 0.61.2",
 ]
 

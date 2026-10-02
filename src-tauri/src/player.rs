@@ -1,7 +1,7 @@
-use std::net::TcpListener;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
-use url::Url;
 use crate::model::{Settings, ViewerCapabilities, ViewerCount};
+use std::net::TcpListener;
+use tauri::{webview::WebviewBuilder, AppHandle, Manager, WebviewUrl};
+use url::Url;
 
 use crate::viewer_mode::{self, ViewerMode};
 
@@ -87,10 +87,12 @@ impl Host {
             let production = config.get("url").and_then(|v| v.as_str()).map(Url::parse).transpose()?;
             if let Some(url) = &production {
                 if url.scheme() != "https" || url.host_str().is_none() || !url.username().is_empty() || url.password().is_some() {
-                    return Err(std::io::Error::other("Production player URL must be HTTPS with no credentials.").into());
+                    return Err(std::io::Error::other("Production player URL must be HTTPS with no credentials.",
+                    ).into());
                 }
             }
-            Ok(Self { local: Url::parse(&format!("http://localhost:{port}/index.html"))?, production, mode: viewer_mode::selected() })
+            Ok(Self { local: Url::parse(&format!("http://localhost:{port}/index.html"))?, production, mode: viewer_mode::selected(),
+            })
         }
     }
 
@@ -153,7 +155,9 @@ impl Host {
             // volume BEFORE unmuting. It never selects another channel.
             url.set_fragment(None);
             let retained: Vec<(String, String)> = url.query_pairs()
-                .filter(|(key, _)| !matches!(key.as_ref(), "channel" | "active" | "volume" | "pauseInactive"))
+                .filter(|(key, _)| {
+                        !matches!(key.as_ref(), "channel" | "active" | "volume" | "pauseInactive")
+                    })
                 .map(|(key, value)| (key.into_owned(), value.into_owned())).collect();
             url.query_pairs_mut().clear().extend_pairs(retained)
                 .append_pair("channel", login).append_pair("active", "__mpd-native-pending__")
@@ -169,7 +173,10 @@ impl Host {
             url
         }
     }
-    pub fn open(&self, app: &AppHandle, login: &str, id: u64, settings: &Settings) -> Result<String, String> {
+    pub fn open(&self,
+        container: &tauri::Window,
+        bounds: tauri::Rect, login: &str, id: u64, settings: &Settings,
+    ) -> Result<String, String> {
         #[cfg(feature = "e2e-tests")]
         if crate::e2e::fail_open(login) { return Err("Simulated native viewer-open failure".into()); }
         let url = self.player_url(login, id, settings);
@@ -187,15 +194,18 @@ impl Host {
         let demo = settings.demo;
         #[cfg(not(feature = "e2e-tests"))]
         let mode = self.mode;
-        let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(initial_url))
-            .title(window_title(login, settings.demo, None))
-            .inner_size(1180.0, 720.0).min_inner_size(430.0, 480.0)
-            .focused(false).visible(!native_mute);
+        let builder = WebviewBuilder::new(&label, WebviewUrl::External(initial_url));
         #[cfg(feature = "e2e-tests")]
-        let builder = crate::e2e::isolate(builder);
+        let builder = crate::e2e::isolate_webview(builder);
         #[cfg(feature = "e2e-tests")]
         let builder = if crate::e2e_probe::enabled() {
             builder.initialization_script(crate::e2e_probe::script(&label, id))
+        } else {
+            builder
+        };
+        #[cfg(feature = "e2e-tests")]
+        let builder = if crate::grid_probe::enabled() {
+            builder.initialization_script(crate::grid_probe::script())
         } else { builder };
         #[cfg(not(feature = "e2e-tests"))]
         let builder = if self.mode == ViewerMode::Embedded && !settings.demo && self.production.is_some() {
@@ -211,7 +221,7 @@ impl Host {
             })));
             builder.initialization_script(adapter)
         } else { builder };
-        let window = builder
+        let builder = builder
             .on_navigation(move |target| {
                 if native_mute && target.as_str() == "about:blank" { return true; }
                 #[cfg(feature = "e2e-tests")]
@@ -220,14 +230,24 @@ impl Host {
                 allowed_navigation(target, &origin, demo, mode, &chat_channel, &chat_parent)
             })
             .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-            .on_download(|_, _| false)
-            .build().map_err(|e| format!("Could not create player: {e}"))?;
+            .on_download(|_, _| false);
+        let window = container
+            .add_child(builder, bounds.position, bounds.size).map_err(|e| format!("Could not create player: {e}"))?;
+        #[cfg(feature = "e2e-tests")]
+        if crate::e2e::fault("fail_after_child") {
+            return Err("Injected fixture initialization failure after child creation".into());
+        }
+        crate::presentation::set_bounds(&window, bounds)?;
+        window
+            .set_auto_resize(!container.label().starts_with("viewer-grid-"))
+            .map_err(|e| e.to_string())?;
         if native_mute {
             initialize_native_page(settings.muted,
                 |muted| crate::window_audio::set_muted(&window, muted),
                 || window.navigate(url).map_err(|error| error.to_string()),
                 || window.show().map_err(|error| error.to_string()),
-                || { let _ = window.destroy(); })?;
+                || { /* Controller owns cleanup and keeps the native capacity reservation. */ },
+            )?;
         }
         Ok(label)
     }
@@ -238,7 +258,8 @@ fn official_twitch_navigation(url: &Url) -> bool {
         && url.username().is_empty() && url.password().is_none() && url.port().is_none()
 }
 
-fn allowed_navigation(target: &Url, origin: &url::Origin, demo: bool, mode: ViewerMode, channel: &str, parent: &str) -> bool {
+fn allowed_navigation(target: &Url, origin: &url::Origin, demo: bool, mode: ViewerMode, channel: &str, parent: &str,
+) -> bool {
     if demo {
         return target.origin() == origin.clone()
             || (target.scheme() == "https" && target.host_str() == Some("player.twitch.tv"));
@@ -264,7 +285,8 @@ fn allowed_chat_url(url: &Url, channel: &str, parent: &str) -> bool {
         || url.path() != format!("/embed/{channel}/chat") || url.fragment().is_some() {
         return false;
     }
-    let Some(query) = url.query() else { return false };
+    let Some(query) = url.query() else { return false;
+    };
     query == format!("parent={parent}") || query == format!("parent={parent}&darkpopout")
 }
 
@@ -277,7 +299,7 @@ pub fn window_title(login: &str, demo: bool, count: Option<ViewerCount>) -> Stri
 
 pub fn quality(app: &AppHandle, label: &str, settings: &Settings) -> Result<(), String> {
     if !label.starts_with("player-") { return Ok(()); }
-    if let Some(window) = app.get_webview_window(label) {
+    if let Some(window) = app.get_webview(label) {
         let value = serde_json::to_string(&settings.preferred_quality).map_err(|e| e.to_string())?;
         window.eval(format!("window.mpdSetQuality && window.mpdSetQuality({value});")).map_err(|e| e.to_string())?;
     }
@@ -286,7 +308,7 @@ pub fn quality(app: &AppHandle, label: &str, settings: &Settings) -> Result<(), 
 
 pub fn audio(app: &AppHandle, label: &str, settings: &Settings) -> Result<(), String> {
     if !label.starts_with("player-") { return Ok(()); }
-    if let Some(window) = app.get_webview_window(label) {
+    if let Some(window) = app.get_webview(label) {
         let script = format!("window.mpdSetAudio && window.mpdSetAudio({}, {});", settings.volume, settings.muted);
         window.eval(&script).map_err(|e| e.to_string())?;
     }
@@ -295,7 +317,7 @@ pub fn audio(app: &AppHandle, label: &str, settings: &Settings) -> Result<(), St
 
 pub fn window_mute(app: &AppHandle, label: &str, muted: bool) -> Result<(), String> {
     if !label.starts_with("twitch-page-") { return Err("Window mute requires a full-page Twitch session.".into()); }
-    let window = app.get_webview_window(label).ok_or("Player window is no longer available.")?;
+    let window = app.get_webview(label).ok_or("Player window is no longer available.")?;
     crate::window_audio::set_muted(&window, muted)
 }
 
@@ -339,7 +361,8 @@ mod tests {
     fn host(production: Option<&str>) -> Host {
         Host { local: Url::parse("http://localhost:4321/index.html").unwrap(),
             mode: ViewerMode::Embedded,
-            production: production.map(|url| Url::parse(url).unwrap()) }
+            production: production.map(|url| Url::parse(url).unwrap()),
+        }
     }
     #[test]
     fn hosted_bootstrap_replaces_old_assignments_and_converts_volume() {
@@ -349,7 +372,8 @@ mod tests {
         let pairs: Vec<_> = url.query_pairs().collect();
         assert_eq!(pairs.iter().filter(|(k, _)| k == "channel").count(), 1);
         for (key, value) in [("channel", "alpha"), ("active", "__mpd-native-pending__"),
-            ("volume", "0.25"), ("pauseInactive", "false"), ("keep", "yes")] {
+            ("volume", "0.25"), ("pauseInactive", "false"), ("keep", "yes"),
+        ] {
             assert!(pairs.iter().any(|(k, v)| k == key && v == value));
         }
         assert!(url.fragment().is_none());
@@ -385,7 +409,8 @@ mod tests {
             |_| Err("simulated setter failure".into()),
             || { navigated.set(true); Ok(()) },
             || { shown.set(true); Ok(()) },
-            || destroyed.set(true)).unwrap_err();
+            || destroyed.set(true),
+        ).unwrap_err();
         assert!(error.contains("simulated setter failure"));
         assert!(destroyed.get());
         assert!(!navigated.get());
@@ -426,14 +451,16 @@ mod tests {
     #[test]
     fn channel_page_navigation_stays_on_credential_free_first_party_https() {
         for valid in ["https://www.twitch.tv/alpha", "https://www.twitch.tv/login",
-            "https://www.twitch.tv/directory/category/science-and-technology?sort=VIEWER_COUNT"] {
+            "https://www.twitch.tv/directory/category/science-and-technology?sort=VIEWER_COUNT",
+        ] {
             assert!(official_twitch_navigation(&Url::parse(valid).unwrap()), "{valid}");
         }
         assert!(official_twitch_navigation(&Url::parse("https://player.twitch.tv/?channel=alpha&parent=www.twitch.tv").unwrap()));
         for invalid in ["http://www.twitch.tv/alpha", "https://evil.example/alpha",
             "https://www.twitch.tv.evil.example/alpha", "https://user@www.twitch.tv/alpha",
             "https://www.twitch.tv:444/alpha", "https://id.twitch.tv/oauth2/authorize",
-            "file:///C:/alpha", "about:blank"] {
+            "file:///C:/alpha", "about:blank",
+        ] {
             assert!(!official_twitch_navigation(&Url::parse(invalid).unwrap()), "{invalid}");
         }
     }
