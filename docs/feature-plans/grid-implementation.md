@@ -175,6 +175,34 @@ Stop during delayed observation, and cancellation of a mutation after timeout.
 Record revision-bound native and hosted outcomes in the PR; this section does
 not establish live Twitch or physical-monitor DPI acceptance.
 
+### Grid-open preparation and stopped preference follow-up
+
+Grid viewer admission now uses the same serialized worker ownership as periodic
+display work. New-container creation, native display observation, and cell
+arrangement run outside the controller; `Host::open` remains actor-side native
+work. Preparation carries the session, candidate channel and broadcast, complete
+desired selection, current child labels, and layout revision. Completion retires
+mutation permission; the actor revalidates those identities, Running mode, Grid
+layout, capacity, and cleanup state immediately before opening a child.
+
+The controller owns a prospective new grid label before its hidden native window
+can materialize. Stop and selection changes cancel preparation. A builder that
+returns after cancellation cannot open playback: its new empty container is
+retired, with bounded cleanup retry on failure. Preparation cleanup never retires
+an existing shared grid. Native configuration and arrangement callbacks check
+the cancellation token; queued callbacks cannot mutate after worker completion.
+Initial admission and preparation both consider the entire desired selected set.
+Fresh no-fit retains the existing Stop-all policy without truncating selection.
+
+Stop clears earlier queued layout requests. A preference request accepted after
+Stop while cancelled display/preparation work is settling is consumed once at
+completion, even in Stopped mode; a validation failure is reported immediately
+instead of leaving a latent request to affect a later Start. Native fixture
+probes use bounded release barriers before grid creation and after hidden-target
+creation to verify responsive Stop, post-Stop preference completion, no stale
+playback, and target retirement. Existing slow-observation and expired-mutation
+probes remain in place, including their unchanged overall timeout limits.
+
 Live Twitch pause/chat/profile/audio continuity, full-page sizing, DPI/monitor-loss
 acceptance, and platform-specific native results remain distinct gates. Keep the
 PR draft until the required evidence is available. No release or deployment is

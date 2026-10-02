@@ -117,6 +117,7 @@ fn auth_completion_ready(epoch: u64, tracked: Option<u64>, returned: Option<u64>
 
 pub enum Message {
     GridWorkFinished {id: u64, result: Result<crate::presentation::DisplayObservation,crate::presentation::GridError>},
+    GridOpenFinished {id: u64, result: Result<crate::presentation::PreparedGridOpen,crate::presentation::GridError>},
     Action(Action, oneshot::Sender<Result<(), String>>),
     Report(String, Report),
     Destroyed(String),
@@ -228,10 +229,19 @@ fn session_mute_label(players: &HashMap<u64, PlayerSession>, id: u64) -> Result<
     Ok(player.label.clone())
 }
 
+struct GridOpenRequest {
+    session: u64, login: String, label: String, grid: String, new_grid: bool,
+    revision: u64, selection: Vec<(String, Option<String>)>, labels: Vec<String>, demo: bool,
+}
+struct GridNoFit {
+    count: usize, grid: Option<String>, revision: u64, observed: Instant, error: String,
+    opening: Option<GridOpenRequest>,
+}
 struct GridWork {
     id: u64, grid: Option<String>, revision: u64, desired: usize,
     // Separate from layout cancellation: 0 active, 1 cancelled, 2 finished.
     cancel: crate::presentation::Cancel,
+    opening: Option<GridOpenRequest>,
 }
 pub struct Controller {
     app: AppHandle, tx: mpsc::Sender<Message>, publish: watch::Sender<View>,
@@ -250,7 +260,8 @@ pub struct Controller {
     grid: Option<String>,
     grid_work: Option<GridWork>, grid_work_id: u64, next_grid_work: Instant,
     grid_display: Option<crate::presentation::DisplayObservation>,
-    grid_no_fit: Option<(usize,Option<String>,u64,Instant,String)>,
+    grid_open_ready: Option<(GridOpenRequest, crate::presentation::PreparedGridOpen)>,
+    grid_no_fit: Option<GridNoFit>,
     layout_revision: u64,
     layout_cancel: Option<crate::presentation::Cancel>,
     layout_pending: Option<ViewerLayout>,
@@ -272,7 +283,7 @@ impl Controller {
             retire_retry: HashMap::new(),
             grid: None,
             grid_work: None, grid_work_id: 0, next_grid_work: Instant::now(),
-            grid_display: None, grid_no_fit: None,
+            grid_display: None, grid_open_ready: None, grid_no_fit: None,
             layout_revision: 0,
             layout_cancel: None,
             layout_pending: None,
@@ -597,6 +608,7 @@ impl Controller {
             return Ok(());
         }
         self.grid_display=None;
+        if let Some((opening, _))=self.grid_open_ready.take() {self.retire_grid_open(&opening);}
         if self.layout_pending.is_some() {
             if let Some(cancel) = &self.layout_cancel {
                 if cancel.load(std::sync::atomic::Ordering::SeqCst) == 1 {
@@ -679,16 +691,17 @@ impl Controller {
         }
         self.grid_display=None;
         self.grid_no_fit=None;
+        if let Some((opening, _))=self.grid_open_ready.take() {self.retire_grid_open(&opening);}
     }
     fn request_grid_work(&mut self, desired: usize) {
-        if self.grid_work.is_some() || self.layout_pending.is_some() || Instant::now()<self.next_grid_work
+        if self.grid_work.is_some() || self.grid_open_ready.is_some() || self.layout_pending.is_some() || Instant::now()<self.next_grid_work
             || self.players.values().any(|p|p.closing || p.cleanup_required) {return;}
         self.grid_work_id+=1;
         let id=self.grid_work_id;
         let grid=self.grid.clone();
         let revision=self.layout_revision;
         let cancel=std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
-        self.grid_work=Some(GridWork{id,grid:grid.clone(),revision,desired,cancel:cancel.clone()});
+        self.grid_work=Some(GridWork{id,grid:grid.clone(),revision,desired,cancel:cancel.clone(),opening:None});
         self.next_grid_work=Instant::now()+Duration::from_secs(1);
         let app=self.app.clone();
         let labels=self.ordered_labels();
@@ -723,7 +736,7 @@ impl Controller {
                 }
                 Err(crate::presentation::GridError::NoFit(error,observed)) => {
                     // Consumed once by reconcile after re-evaluating desired count.
-                    self.grid_no_fit=Some((work.desired,work.grid,work.revision,observed,error));
+                    self.grid_no_fit=Some(GridNoFit{count:work.desired,grid:work.grid,revision:work.revision,observed,error,opening:None});
                     self.grid_display=None;
                 }
                 Err(error) => {
@@ -733,11 +746,98 @@ impl Controller {
                 _=>{self.grid_display=None;}
             }
         }
-        if self.mode!=Mode::Stopped {
-            if let Some(target)=self.layout_queued.take() {
-                if let Err(error)=self.set_layout(target) {self.error=Some(error);}
+        self.finish_queued_layout();
+    }
+    fn finish_queued_layout(&mut self) {
+        // Stop clears requests that preceded it. A request accepted after Stop
+        // must be consumed now, not left latent until a later Start.
+        if let Some(target)=self.layout_queued.take() {
+            if let Err(error)=self.set_layout(target) {self.error=Some(error);}
+        }
+    }
+    fn selection_identity(&self, desired: &[String]) -> Vec<(String, Option<String>)> {
+        desired.iter().map(|login| (login.clone(),self.presence.get(login).and_then(|p|p.broadcast_id.clone()))).collect()
+    }
+    fn grid_open_current(&self, opening: &GridOpenRequest, desired: &[String]) -> bool {
+        self.mode==Mode::Running && self.settings.viewer_layout==ViewerLayout::Grid
+            && self.settings.demo==opening.demo && self.layout_pending.is_none()
+            && self.layout_revision==opening.revision && self.grid.as_deref()==Some(opening.grid.as_str())
+            && self.selection_identity(desired)==opening.selection && self.ordered_labels()==opening.labels
+            && self.players.len()<self.settings.limit
+            && !self.players.values().any(|p|p.closing || p.cleanup_required || p.login==opening.login)
+    }
+    fn retire_grid_open(&mut self, opening: &GridOpenRequest) {
+        // Existing shared grids belong to their selected viewers. Only a new,
+        // still-empty preparation target may be retired here.
+        if !opening.new_grid {return;}
+        if let Some(window)=self.app.get_window(&opening.grid) {
+            if !window.webviews().is_empty() {return;}
+            if let Err(error)=window.destroy() {
+                self.retire_retry.insert(opening.grid.clone(),Instant::now()+Duration::from_secs(30));
+                self.error=Some(format!("Could not retire prepared grid: {error}"));
+                // The cleanup supervisor owns this orphan and its bounded retry;
+                // it must not be protected as the active Running grid anymore.
+                if self.grid.as_deref()==Some(opening.grid.as_str()) {self.grid=None;}
+                return;
             }
         }
+        if self.grid.as_deref()==Some(opening.grid.as_str()) {self.grid=None;}
+    }
+    fn request_grid_open(&mut self, login: String, desired: &[String]) {
+        self.next_id+=1;
+        let session=self.next_id;
+        let label=self.host.label(session,self.settings.demo);
+        let new_grid=self.grid.as_ref().is_none_or(|label|self.app.get_window(label).is_none());
+        if new_grid {
+            self.layout_revision+=1;
+            // Own this label before the worker can materialize a hidden window.
+            self.grid=Some(format!("viewer-grid-{}",self.layout_revision));
+        }
+        let grid=self.grid.clone().unwrap();
+        let revision=self.layout_revision;
+        let labels=self.ordered_labels();
+        let opening=GridOpenRequest {session,login,label:label.clone(),grid:grid.clone(),new_grid,
+            revision,selection:self.selection_identity(desired),labels:labels.clone(),demo:self.settings.demo};
+        self.grid_work_id+=1;
+        let id=self.grid_work_id;
+        let cancel=std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
+        self.grid_work=Some(GridWork{id,grid:Some(grid.clone()),revision,desired:desired.len(),cancel:cancel.clone(),opening:Some(opening)});
+        self.grid_display=None;
+        let mut labels=labels;
+        labels.push(label);
+        let app=self.app.clone();
+        let tx=self.tx.clone();
+        let count=desired.len();
+        let embedded=self.host.capabilities(self.settings.demo).media_controls;
+        std::thread::spawn(move || {
+            let result=crate::presentation::prepare_grid_open(&app,&grid,new_grid,&labels,count,embedded,&cancel);
+            let _=cancel.compare_exchange(0,2,std::sync::atomic::Ordering::SeqCst,std::sync::atomic::Ordering::SeqCst);
+            tauri::async_runtime::spawn(async move {let _=tx.send(Message::GridOpenFinished{id,result}).await;});
+        });
+    }
+    fn finish_grid_open(&mut self, id: u64, result: Result<crate::presentation::PreparedGridOpen,crate::presentation::GridError>) {
+        if self.grid_work.as_ref().is_none_or(|work|work.id!=id || work.opening.is_none()) {return;}
+        let work=self.grid_work.take().unwrap();
+        let opening=work.opening.unwrap();
+        let cancelled=work.cancel.swap(1,std::sync::atomic::Ordering::SeqCst)==1;
+        self.next_grid_work=Instant::now()+Duration::from_secs(1);
+        if !cancelled && self.mode==Mode::Running && self.settings.viewer_layout==ViewerLayout::Grid
+            && self.layout_revision==opening.revision && self.grid.as_deref()==Some(opening.grid.as_str()) {
+            match result {
+                Ok(prepared)=> {self.grid_open_ready=Some((opening,prepared));}
+                Err(crate::presentation::GridError::NoFit(error,observed))=> {
+                    // Reconcile revalidates the complete current selection before
+                    // acting on this fresh no-fit result.
+                    self.retire_grid_open(&opening);
+                    self.grid_no_fit=Some(GridNoFit{count:work.desired,grid:self.grid.clone(),revision:work.revision,observed,error,opening:Some(opening)});
+                }
+                Err(error)=> {
+                    self.error=Some(format!("Grid display update deferred: {error}"));
+                    self.retire_grid_open(&opening);
+                }
+            }
+        } else {self.retire_grid_open(&opening);}
+        self.finish_queued_layout();
     }
     fn grid_failure(&mut self, error: String) {
         let _ = self.action(Action::Stop);
@@ -851,6 +951,7 @@ impl Controller {
         for (label, window) in self.app.windows() {
             // A running/paused grid owns its empty container through replacement.
             // Retiring it between close acknowledgement and open races the runtime.
+            if self.grid_work.as_ref().and_then(|w|w.opening.as_ref()).is_some_and(|o|o.grid==label) {continue;}
             if self.grid.as_deref()==Some(&label) && self.mode!=Mode::Stopped {continue;}
             if !(label.starts_with("player-")
                 || label.starts_with("twitch-page-")
@@ -921,6 +1022,13 @@ impl Controller {
                     self.skipped.get(&f.login).is_none() || self.skipped.get(&f.login) != broadcast
                 }).take(self.settings.limit).map(|f| f.login.clone()).collect(),
         };
+        if self.grid_work.as_ref().and_then(|w|w.opening.as_ref()).is_some_and(|o|!self.grid_open_current(o,&desired)) {
+            self.cancel_grid_work();
+        }
+        if self.grid_open_ready.as_ref().is_some_and(|(o,p)|!self.grid_open_current(o,&desired) || p.observed.elapsed()>Duration::from_secs(2)) {
+            let (opening,_)=self.grid_open_ready.take().unwrap();
+            self.retire_grid_open(&opening);
+        }
         if self.layout_pending.is_some() {
             let active: HashSet<_> = self
                 .players
@@ -941,11 +1049,16 @@ impl Controller {
             }
             return;
         }
-        if let Some((count,grid,revision,observed,error))=self.grid_no_fit.take() {
+        if let Some(no_fit)=self.grid_no_fit.take() {
+            // New-grid retirement can change the container label, so retain
+            // logical preparation identity separately from native ownership.
+            let selection_current=no_fit.opening.as_ref().is_none_or(|opening|
+                self.mode==Mode::Running && self.settings.demo==opening.demo
+                    && self.selection_identity(&desired)==opening.selection && self.ordered_labels()==opening.labels);
             if self.settings.viewer_layout==ViewerLayout::Grid && self.mode!=Mode::Stopped
-                && count==desired.len() && grid==self.grid && revision==self.layout_revision
-                && observed.elapsed()<=Duration::from_secs(2) {
-                self.grid_failure(error);
+                && no_fit.count==desired.len() && no_fit.grid==self.grid && no_fit.revision==self.layout_revision
+                && no_fit.observed.elapsed()<=Duration::from_secs(2) && selection_current {
+                self.grid_failure(no_fit.error);
                 self.reconcile();
                 return;
             }
@@ -958,7 +1071,7 @@ impl Controller {
                 else { self.log(format!("Timer reached: rotating {source} to {target}.")); }
             }
         }
-        if self.settings.viewer_layout==ViewerLayout::Grid && self.mode!=Mode::Stopped {
+        if self.settings.viewer_layout==ViewerLayout::Grid && self.mode!=Mode::Stopped && self.grid_open_ready.is_none() {
             let active=self.players.values().filter(|p|!p.closing && !p.cleanup_required).count();
             let growth=desired.len()>active;
             let admitted=!growth || self.grid_display.as_ref()
@@ -970,7 +1083,7 @@ impl Controller {
             self.request_grid_work(desired.len());
             if !admitted || self.grid_work.is_some() {return;}
         }
-        if self.mode != Mode::Running || self.players.values().any(|p| p.closing) { return; }
+        if self.mode != Mode::Running || self.grid_work.is_some() || self.players.values().any(|p| p.closing) { return; }
         // Re-evaluate after each failed open, excluding it before truncation. Each
         // login is attempted at most once until explicit Retry; no tick retry storm.
         for _ in 0..=ranked.len() {
@@ -982,69 +1095,31 @@ impl Controller {
                 &self.failed.keys().cloned().collect(),self.settings.limit,false,
             );
             if self.players.len()>=self.settings.limit { break; }
-            let Some(login)=desired.into_iter().find(|l| !existing.contains(l)) else { break; };
-            self.next_id+=1; let id=self.next_id; let label=self.host.label(id,self.settings.demo);
-            let container_result = (|| -> Result<(tauri::Window, tauri::Rect), crate::presentation::GridError> {
-                if self.settings.viewer_layout == ViewerLayout::Grid {
-                    if self
-                        .grid
-                        .as_ref()
-                        .is_none_or(|label| self.app.get_window(label).is_none())
-                    {
-                        self.layout_revision += 1;
-                        let grid = format!("viewer-grid-{}", self.layout_revision);
-                        crate::presentation::container(
-                            &self.app,
-                            &grid,
-                            "MPD Viewer · Grid",
-                            true,
-                        )?;
-                        self.grid = Some(grid);
+            let Some(login)=desired.iter().find(|l| !existing.contains(*l)).cloned() else { break; };
+            let (id,label,container_result) = if self.settings.viewer_layout==ViewerLayout::Grid {
+                if let Some((opening,prepared))=self.grid_open_ready.take() {
+                    // Final actor-side fence immediately before Host::open.
+                    if opening.login!=login || !self.grid_open_current(&opening,&desired) {
+                        self.retire_grid_open(&opening);
+                        return;
                     }
-                    let grid = self.grid.as_ref().unwrap();
-                    let mut labels = self.ordered_labels();
-                    labels.push(label.clone());
-                    let bounds = crate::presentation::arrange(&self.app, grid, &labels)?;
-                    Ok((
-                        self.app.get_window(grid).ok_or_else(||"Grid disappeared.".to_owned())?,
-                        *bounds.last().unwrap(),
-                    ))
+                    (opening.session,opening.label,Ok((prepared.window,prepared.bounds)))
                 } else {
-                    let window = crate::presentation::container(
-                        &self.app,
-                        &label,
-                        &player::window_title(&login, self.settings.demo, None),
-                        false,
-                    )?;
-                    let size = window
-                        .inner_size()
-                        .map_err(|e| e.to_string())?
-                        .to_logical::<f64>(window.scale_factor().map_err(|e| e.to_string())?);
-                    Ok((
-                        window,
-                        tauri::Rect {
-                            position: tauri::LogicalPosition::new(0.0, 0.0).into(),
-                            size: size.into(),
-                        },
-                    ))
+                    self.request_grid_open(login,&desired);
+                    return;
                 }
-            })();
-            if self.settings.viewer_layout==ViewerLayout::Grid {
-                match &container_result {
-                    Err(crate::presentation::GridError::NoFit(error,observed)) if observed.elapsed()<=Duration::from_secs(2) => {
-                        self.grid_failure(error.clone());
-                        self.reconcile();
-                        return;
-                    }
-                    Err(error) => {
-                        self.grid_display=None;
-                        self.error=Some(format!("Grid display update deferred: {error}"));
-                        return;
-                    }
-                    _=>{}
-                }
-            }
-            let container_result=container_result.map_err(String::from);
+            } else {
+                self.next_id+=1;
+                let id=self.next_id;
+                let label=self.host.label(id,self.settings.demo);
+                let result=(|| -> Result<(tauri::Window,tauri::Rect),String> {
+                    let window=crate::presentation::container(&self.app,&label,&player::window_title(&login,self.settings.demo,None),false)?;
+                    let size=window.inner_size().map_err(|e|e.to_string())?
+                        .to_logical::<f64>(window.scale_factor().map_err(|e|e.to_string())?);
+                    Ok((window,tauri::Rect {position:tauri::LogicalPosition::new(0.0,0.0).into(),size:size.into()}))
+                })();
+                (id,label,result)
+            };
             let container_label = container_result
                 .as_ref()
                 .ok()
@@ -1291,6 +1366,7 @@ impl Controller {
                         let _ = reply.send(result);
                     }
                     Some(Message::GridWorkFinished{id,result})=>self.finish_grid_work(id,result),
+                    Some(Message::GridOpenFinished{id,result})=>self.finish_grid_open(id,result),
                     Some(Message::Report(label, report)) => self.report(label, report),
                     Some(Message::Destroyed(label)) => self.destroyed(&label),
                     Some(Message::GridClosed(label)) => {

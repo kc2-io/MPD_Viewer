@@ -122,6 +122,101 @@ fn assert_retained(
     }
     Ok(())
 }
+// A bounded release barrier keeps native preparation pending while actions
+// must still be handled by the real controller. No extra fixed sleep or retry.
+async fn cancelled_grid_open(app: &AppHandle, after_creation: bool) -> Result<(), String> {
+    use Action::*;
+    let root = crate::e2e::root();
+    let release = root.join("grid-open-release");
+    let _ = std::fs::remove_file(&release);
+    let (fault, marker) = if after_creation {
+        ("delay_grid_open_created", "grid-open-created-waiting")
+    } else {
+        ("delay_grid_open", "grid-open-waiting")
+    };
+    let marker = root.join(marker);
+    let _ = std::fs::remove_file(&marker);
+    action(
+        app,
+        SetLayout {
+            layout: ViewerLayout::Grid,
+        },
+    )
+    .await?;
+    std::fs::write(
+        root.join("fixture-state.json"),
+        serde_json::json!({(fault):true}).to_string(),
+    )
+    .map_err(|e| e.to_string())?;
+    action(app, Start).await?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !marker.exists() {
+        if Instant::now() >= deadline {
+            return Err("Grid-open preparation barrier was not reached".into());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let before = app
+        .windows()
+        .keys()
+        .filter(|l| l.starts_with("viewer-grid-"))
+        .cloned()
+        .collect::<Vec<_>>();
+    if after_creation && before.len() != 1 {
+        return Err("Late-creation fixture did not own exactly one empty grid".into());
+    }
+    let stop_started = Instant::now();
+    action(app, Stop).await?;
+    if stop_started.elapsed() > Duration::from_secs(2) {
+        return Err("Grid-open preparation blocked Stop acknowledgement".into());
+    }
+    // This preference is accepted after Stop while the cancelled job still owns
+    // its target. Completion must consume it once even though mode is Stopped.
+    action(
+        app,
+        SetLayout {
+            layout: ViewerLayout::Standalone,
+        },
+    )
+    .await?;
+    std::fs::write(root.join("fixture-state.json"), b"{}").map_err(|e| e.to_string())?;
+    std::fs::write(&release, b"fixture").map_err(|e| e.to_string())?;
+    wait(app, "post-Stop grid-open preference settles", |v| {
+        v.mode == Mode::Stopped
+            && v.players.is_empty()
+            && v.settings.viewer_layout == ViewerLayout::Standalone
+            && v.layout_pending.is_none()
+    })
+    .await?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if !app.windows().keys().any(|l| l.starts_with("viewer-grid-")) {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err("Cancelled grid-open left an orphan target".into());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    if app
+        .webviews()
+        .keys()
+        .any(|l| l.starts_with("player-") || l.starts_with("twitch-page-"))
+    {
+        return Err("Cancelled grid preparation opened stale playback".into());
+    }
+    // Deliberately choose Grid again: a latent old Standalone request must not
+    // unexpectedly win when a later Start performs new work.
+    action(
+        app,
+        SetLayout {
+            layout: ViewerLayout::Grid,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
 async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
     use Action::*;
     let demo = crate::e2e::scenario() == "demo";
@@ -764,12 +859,29 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         v.mode == Mode::Stopped && v.players.is_empty()
     })
     .await?;
+    action(
+        app,
+        SetLayout {
+            layout: ViewerLayout::Standalone,
+        },
+    )
+    .await?;
     std::fs::write(crate::e2e::root().join("fixture-state.json"), b"{}")
         .map_err(|e| e.to_string())?;
+    wait(app, "post-Stop display-work preference settles", |v| {
+        v.mode == Mode::Stopped
+            && v.settings.viewer_layout == ViewerLayout::Standalone
+            && v.layout_pending.is_none()
+    })
+    .await?;
     action(app, ClearError).await?;
+    cancelled_grid_open(app, false).await?;
+    cancelled_grid_open(app, true).await?;
     action(app, Start).await?;
-    wait(app, "restart after cancelled display work", |v| {
-        v.mode == Mode::Running && v.players.len() == count
+    wait(app, "restart after cancelled display and open work", |v| {
+        v.mode == Mode::Running
+            && v.players.len() == count
+            && v.settings.viewer_layout == ViewerLayout::Grid
     })
     .await?;
     // Growth beyond available geometry must stop rather than truncate selection.
@@ -802,7 +914,7 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         return Err("No-fit changed capacity/preference or hid its reason".into());
     }
     Ok(
-        serde_json::json!({"two_embedded_cells_fit": demo.then_some(count==2),"other_monitor_placement_retained":other.is_some(),"reachable_placement_retained":true,"maximized_grid_retained":true,"transient_display_failure_retains_viewers":true,"stop_during_display_work":true,"expired_mutation_fenced":true,"retained_document":true,"retained_fixture_state":true,"grid_children":count,"standalone_restored":true,"preparation_preserves_sources":true,"partial_open_cleanup":true,"partial_move_rollback":true,"configured_limit":1000,"ipc_isolation":true,"stop_during_move":true,"repeated_requests":true,"failed_close_reserves_capacity":true,"grid_close_stops":true,"timer_continuity":true,"no_fit_stops_without_truncation":true,"bounds":bounds,"live_twitch":false}),
+        serde_json::json!({"two_embedded_cells_fit": demo.then_some(count==2),"other_monitor_placement_retained":other.is_some(),"reachable_placement_retained":true,"maximized_grid_retained":true,"transient_display_failure_retains_viewers":true,"stop_during_display_work":true,"post_stop_layout_consumed":true,"stop_during_grid_open":true,"cancelled_new_grid_retired":true,"expired_mutation_fenced":true,"retained_document":true,"retained_fixture_state":true,"grid_children":count,"standalone_restored":true,"preparation_preserves_sources":true,"partial_open_cleanup":true,"partial_move_rollback":true,"configured_limit":1000,"ipc_isolation":true,"stop_during_move":true,"repeated_requests":true,"failed_close_reserves_capacity":true,"grid_close_stops":true,"timer_continuity":true,"no_fit_stops_without_truncation":true,"bounds":bounds,"live_twitch":false}),
     )
 }
 pub fn install(app: &AppHandle) {

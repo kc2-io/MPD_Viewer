@@ -1,8 +1,8 @@
 //! Native containers and retained surfaces, independent of selection policy.
 use crate::{layout, model::ViewerLayout};
 use std::sync::{
-    atomic::{AtomicU8, Ordering},
     Arc,
+    atomic::{AtomicU8, Ordering},
 };
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Rect, Window};
 
@@ -307,11 +307,29 @@ pub fn watch_divider_theme(app: &AppHandle) {
 }
 
 pub fn container(app: &AppHandle, label: &str, title: &str, grid: bool) -> Result<Window, String> {
+    create_container(app, label, title, grid, None)
+}
+fn create_container(
+    app: &AppHandle,
+    label: &str,
+    title: &str,
+    grid: bool,
+    cancel: Option<&Cancel>,
+) -> Result<Window, String> {
+    let active = || {
+        if cancel.is_some_and(|c| c.load(Ordering::SeqCst) != 0) {
+            Err("Grid preparation cancelled".to_owned())
+        } else {
+            Ok(())
+        }
+    };
+    active()?;
     #[cfg(feature = "e2e-tests")]
     if crate::e2e::fault("fail_layout_prepare") {
         return Err("Injected fixture container creation failure".into());
     }
     let (w, h, pos, _scale) = screen(app)?;
+    active()?;
     let mut builder = tauri::window::WindowBuilder::new(app, label);
     if grid {
         let theme = app
@@ -321,6 +339,7 @@ pub fn container(app: &AppHandle, label: &str, title: &str, grid: bool) -> Resul
             .map_err(|e| e.to_string())?;
         builder = builder.background_color(divider_color(theme));
     }
+    active()?;
     let window = builder
         .title(title)
         .inner_size(
@@ -332,22 +351,99 @@ pub fn container(app: &AppHandle, label: &str, title: &str, grid: bool) -> Resul
         .focused(false)
         .build()
         .map_err(|e| e.to_string())?;
-    // Fit new windows to the available monitor without changing selection.
-    let configured = (|| -> Result<(), String> {
-        window
-            .set_size(LogicalSize::new(
-                if grid { w.min(1440.0) } else { w.min(1180.0) },
-                if grid { h.min(960.0) } else { h.min(720.0) },
-            ))
-            .map_err(|e| e.to_string())?;
-        window.set_position(pos).map_err(|e| e.to_string())?;
-        Ok(())
-    })();
+    // Builder creation is not cancellable inside Tauri. A hidden container
+    // returned after cancellation is still owned and retired before any child.
+    let configured = active()
+        .and_then(|()| {
+            let configure = move |window: &Window| -> Result<(), String> {
+                window
+                    .set_size(LogicalSize::new(
+                        if grid { w.min(1440.0) } else { w.min(1180.0) },
+                        if grid { h.min(960.0) } else { h.min(720.0) },
+                    ))
+                    .map_err(|e| e.to_string())?;
+                window.set_position(pos).map_err(|e| e.to_string())?;
+                Ok(())
+            };
+            if let Some(cancel) = cancel {
+                mutate_window(&window, cancel, configure).map_err(String::from)
+            } else {
+                configure(&window)
+            }
+        })
+        .and_then(|()| active());
     if let Err(error) = configured {
         let _ = window.destroy();
         return Err(error);
     }
     Ok(window)
+}
+
+pub struct PreparedGridOpen {
+    pub window: Window,
+    pub bounds: Rect,
+    pub observed: std::time::Instant,
+}
+
+/// Prepare a cell without starting playback. The controller owns `grid` before
+/// dispatch, including hidden containers that materialize after cancellation.
+pub fn prepare_grid_open(
+    app: &AppHandle,
+    grid: &str,
+    new_grid: bool,
+    labels: &[String],
+    desired: usize,
+    embedded: bool,
+    cancel: &Cancel,
+) -> Result<PreparedGridOpen, GridError> {
+    #[cfg(feature = "e2e-tests")]
+    grid_open_barrier("delay_grid_open", "grid-open-waiting")?;
+    if cancel.load(Ordering::SeqCst) != 0 {
+        return Err(GridError::Observation("Grid preparation cancelled".into()));
+    }
+    if new_grid {
+        create_container(app, grid, "MPD Viewer · Grid", true, Some(cancel))?;
+    }
+    #[cfg(feature = "e2e-tests")]
+    grid_open_barrier("delay_grid_open_created", "grid-open-created-waiting")?;
+    if cancel.load(Ordering::SeqCst) != 0 {
+        return Err(GridError::Observation("Grid preparation cancelled".into()));
+    }
+    let snapshot = observe(app, Some(grid))?;
+    if cancel.load(Ordering::SeqCst) != 0 {
+        return Err(GridError::Observation("Grid preparation cancelled".into()));
+    }
+    // Admission remains for the entire Rust-selected set, not just the next cell.
+    snapshot.preflight(desired, embedded)?;
+    let bounds = arrange_observed(app, grid, labels, &snapshot, cancel)?;
+    let window = app
+        .get_window(grid)
+        .ok_or_else(|| "Grid disappeared.".to_owned())?;
+    Ok(PreparedGridOpen {
+        window,
+        bounds: *bounds
+            .last()
+            .ok_or_else(|| "Grid preparation needs a viewer.".to_owned())?,
+        observed: snapshot.observed,
+    })
+}
+
+#[cfg(feature = "e2e-tests")]
+fn grid_open_barrier(fault: &str, marker: &str) -> Result<(), GridError> {
+    if crate::e2e::fault(fault) {
+        let root = crate::e2e::root();
+        std::fs::write(root.join(marker), b"fixture").map_err(|e| e.to_string())?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !root.join("grid-open-release").exists() {
+            if std::time::Instant::now() >= deadline {
+                return Err(GridError::Observation(
+                    "Grid preparation fixture barrier timed out".into(),
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    Ok(())
 }
 
 pub fn arrange(app: &AppHandle, grid: &str, labels: &[String]) -> Result<Vec<Rect>, GridError> {
@@ -635,7 +731,7 @@ pub fn bounds(view: &tauri::Webview) -> Result<Rect, String> {
         let (tx, rx) = std::sync::mpsc::channel();
         view.with_webview(move |platform| {
             use windows::Win32::{
-                Foundation::{GetLastError, SetLastError, ERROR_SUCCESS, HWND, POINT, RECT},
+                Foundation::{ERROR_SUCCESS, GetLastError, HWND, POINT, RECT, SetLastError},
                 Graphics::Gdi::MapWindowPoints,
                 UI::WindowsAndMessaging::{GetClientRect, GetParent},
             };
