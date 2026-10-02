@@ -93,6 +93,29 @@ impl DisplayObservation {
         self.observed.elapsed() <= std::time::Duration::from_secs(2)
             && self.grid.as_ref().map(|g| g.label.as_str()) == grid
     }
+    #[cfg(feature = "e2e-tests")]
+    fn diagnose_no_fit(
+        &self,
+        phase: &'static str,
+        count: usize,
+        labels: &[String],
+        minimum: (f64, f64),
+        error: &str,
+    ) {
+        let area = self.grid.as_ref().map_or(self.preferred, |g| g.area);
+        let areas=self.areas.iter().take(8).map(|a|serde_json::json!({
+            "physical_work_area":{"x":a.rect.x,"y":a.rect.y,"width":a.rect.width,"height":a.rect.height},
+            "scale":a.scale,"usable_logical":a.size()})).collect::<Vec<_>>();
+        let grid=self.grid.as_ref().map(|g|serde_json::json!({"label":g.label,"logical_inner":g.inner,
+            "physical_outer":{"x":g.outer.x,"y":g.outer.y,"width":g.outer.width,"height":g.outer.height},"managed":g.managed}));
+        crate::grid_probe::diagnostic(
+            crate::grid_probe::diagnostic_stage(),
+            serde_json::json!({
+            "no_fit_phase":phase,"error":error,"count":count,"labels":labels.iter().take(8).collect::<Vec<_>>(),
+            "labels_total":labels.len(),"minimum_logical":minimum,"snapshot_age_ms":self.observed.elapsed().as_millis(),
+            "grid":grid,"area_index":area,"preferred_area_index":self.preferred,"areas":areas,"areas_total":self.areas.len()}),
+        );
+    }
     pub fn preflight(&self, count: usize, embedded: bool) -> Result<(), GridError> {
         let area = &self.areas[self.grid.as_ref().map_or(self.preferred, |g| g.area)];
         let (w, h) = area.size();
@@ -104,8 +127,11 @@ impl DisplayObservation {
         let (client, managed) = self.grid.as_ref().map_or(((w, h), false), |g| {
             ((g.inner.width, g.inner.height), g.managed)
         });
-        layout::grid_fits(count, client, (w, h), managed, minimum)
-            .map_err(|e| GridError::NoFit(e, self.observed))
+        layout::grid_fits(count, client, (w, h), managed, minimum).map_err(|e| {
+            #[cfg(feature = "e2e-tests")]
+            self.diagnose_no_fit("preflight", count, &[], minimum, &e);
+            GridError::NoFit(e, self.observed)
+        })
     }
 }
 fn observe(app: &AppHandle, grid: Option<&str>) -> Result<DisplayObservation, GridError> {
@@ -565,7 +591,17 @@ fn arrange_observed(
         min_height,
     ) {
         Ok(bounds) => bounds,
-        Err(error) if observed.managed => return Err(GridError::NoFit(error, snapshot.observed)),
+        Err(error) if observed.managed => {
+            #[cfg(feature = "e2e-tests")]
+            snapshot.diagnose_no_fit(
+                "managed-arrangement",
+                labels.len(),
+                labels,
+                (min_width, min_height),
+                &error,
+            );
+            return Err(GridError::NoFit(error, snapshot.observed));
+        }
         Err(_) => {
             let bounds = layout::cells_with_min(
                 labels.len(),
@@ -574,7 +610,17 @@ fn arrange_observed(
                 min_width,
                 min_height,
             )
-            .map_err(|e| GridError::NoFit(e, snapshot.observed))?;
+            .map_err(|e| {
+                #[cfg(feature = "e2e-tests")]
+                snapshot.diagnose_no_fit(
+                    "normal-growth",
+                    labels.len(),
+                    labels,
+                    (min_width, min_height),
+                    &e,
+                );
+                GridError::NoFit(e, snapshot.observed)
+            })?;
             size = LogicalSize::new(available_w, available_h);
             // Grow on the grid's own monitor without moving a reachable window.
             mutate_window(&window, cancel, move |w| {

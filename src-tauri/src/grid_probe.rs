@@ -10,6 +10,59 @@ pub fn enabled() -> bool {
     std::env::var("MPD_E2E_GRID_PROBE").as_deref() == Ok("1")
 }
 
+static DIAGNOSTIC_STAGE: std::sync::Mutex<&'static str> = std::sync::Mutex::new("startup");
+static DIAGNOSTIC_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn diagnostic_stage() -> &'static str {
+    DIAGNOSTIC_STAGE
+        .lock()
+        .map(|stage| *stage)
+        .unwrap_or("stage-unavailable")
+}
+pub fn diagnostic(stage: &'static str, data: serde_json::Value) {
+    if enabled() && DIAGNOSTIC_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 32 {
+        eprintln!(
+            "E2E grid geometry {}",
+            serde_json::json!({"stage":stage,"data":data})
+        );
+    }
+}
+fn sample_geometry(app: &AppHandle, grid: &tauri::Window, labels: &[String], stage: &'static str) {
+    if let Ok(mut current) = DIAGNOSTIC_STAGE.lock() {
+        *current = stage;
+    }
+    let app_clone = app.clone();
+    let grid = grid.label().to_owned();
+    let expected = labels.len();
+    let labels = labels.iter().take(8).cloned().collect::<Vec<_>>();
+    // Advisory fire-and-forget observation: no sleeps or extra probe timeout,
+    // and every AppKit/GTK conversion remains on the native event thread.
+    if let Err(error)=app.run_on_main_thread(move || {
+        let observed=(|| -> Result<serde_json::Value,String> {
+            let window=app_clone.get_window(&grid).ok_or("Grid container unavailable during observation")?;
+            let scale=window.scale_factor().map_err(|e|e.to_string())?;
+            let inner=window.inner_size().map_err(|e|e.to_string())?;
+            let outer=window.outer_size().map_err(|e|e.to_string())?;
+            let position=window.outer_position().map_err(|e|e.to_string())?;
+            let monitor=window.current_monitor().map_err(|e|e.to_string())?;
+            let areas=app_clone.available_monitors().map_err(|e|e.to_string())?
+                .into_iter().take(8).map(|m|serde_json::json!({"display_position":m.position(),"display_size":m.size(),"work_area":m.work_area(),"scale":m.scale_factor()})).collect::<Vec<_>>();
+            let children=labels.iter().map(|label| {
+                let bounds=app_clone.get_webview(label).ok_or_else(||"Child unavailable".to_owned())
+                    .and_then(|v|crate::presentation::bounds(&v));
+                serde_json::json!({"label":label,"native_bounds":bounds})
+            }).collect::<Vec<_>>();
+            Ok(serde_json::json!({"grid":grid,"expected_children":expected,"inner_physical":inner,
+                "inner_logical":inner.to_logical::<f64>(scale),"outer_physical":outer,"position_physical":position,
+                "scale":scale,"maximized":window.is_maximized().map_err(|e|e.to_string())?,
+                "fullscreen":window.is_fullscreen().map_err(|e|e.to_string())?,
+                "current_monitor":monitor.map(|m|serde_json::json!({"position":m.position(),"size":m.size(),"work_area":m.work_area(),"scale":m.scale_factor()})),
+                "areas":areas,"children":children}))
+        })();
+        diagnostic(stage,serde_json::json!({"native_observation":observed}));
+    }) {diagnostic(stage,serde_json::json!({"dispatch_error":error.to_string()}));}
+}
+
 pub fn script() -> &'static str {
     r#"
 (() => {
@@ -482,35 +535,54 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
             return Err(format!("Native child cells overlap: {bounds:?}"));
         }
     }
+    sample_geometry(app, &grid, &labels, "grid-committed");
     let original_position = grid.outer_position().map_err(|e| e.to_string())?;
     let original_size = grid.inner_size().map_err(|e| e.to_string())?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     let app_clone = app.clone();
+    let grid_clone = grid.clone();
     app.run_on_main_thread(move || {
-        let _ = tx.send(
-            app_clone
-                .available_monitors()
-                .map(|monitors| {
-                    monitors
-                        .iter()
-                        .map(|m| m.work_area().position)
-                        .collect::<Vec<_>>()
-                })
-                .map_err(|e| e.to_string()),
-        );
+        let result = (|| -> Result<_, String> {
+            let current = grid_clone
+                .current_monitor()
+                .map_err(|e| e.to_string())?
+                .ok_or("Grid's current monitor is unavailable")?;
+            let monitors = app_clone.available_monitors().map_err(|e| e.to_string())?;
+            // A shifted window is not a different monitor. Mirrored displays
+            // with the same physical rectangle are not evidence of a move.
+            Ok(monitors
+                .into_iter()
+                .find(|m| m.position() != current.position() || m.size() != current.size())
+                .map(|m| (*m.position(), *m.size(), m.work_area().position)))
+        })();
+        let _ = tx.send(result);
     })
     .map_err(|e| e.to_string())?;
-    let monitors = rx.await.map_err(|e| e.to_string())??;
-    let other = monitors.iter().find(|p| {
-        (p.x - original_position.x).abs() > 100 || (p.y - original_position.y).abs() > 100
-    });
-    let target = other.map_or(
+    let other = rx.await.map_err(|e| e.to_string())??;
+    let target = other.as_ref().map_or(
         tauri::PhysicalPosition::new(original_position.x + 20, original_position.y + 20),
-        |p| tauri::PhysicalPosition::new(p.x + 20, p.y + 20),
+        |(_, _, p)| tauri::PhysicalPosition::new(p.x + 20, p.y + 20),
     );
     grid.set_position(target).map_err(|e| e.to_string())?;
     tokio::time::sleep(Duration::from_millis(250)).await;
+    sample_geometry(app, &grid, &labels, "after-placement");
     let moved = grid.outer_position().map_err(|e| e.to_string())?;
+    if let Some((position, size, _)) = other {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let grid_clone = grid.clone();
+        app.run_on_main_thread(move || {
+            let result = grid_clone
+                .current_monitor()
+                .map_err(|e| e.to_string())
+                .and_then(|m| m.ok_or_else(|| "Moved grid's monitor is unavailable".to_owned()))
+                .map(|m| *m.position() == position && *m.size() == size);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| e.to_string())?;
+        if !rx.await.map_err(|e| e.to_string())?? {
+            return Err("Native grid did not change to the selected monitor".into());
+        }
+    }
     if other.is_some() && ((moved.x - target.x).abs() > 2 || (moved.y - target.y).abs() > 2) {
         return Err("Native grid did not reach the selected other monitor".into());
     }
@@ -526,21 +598,27 @@ async fn run(app: &AppHandle) -> Result<serde_json::Value, String> {
         .map_err(|e| e.to_string())?;
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
+    sample_geometry(app, &grid, &labels, "before-maximize");
     grid.maximize().map_err(|e| e.to_string())?;
     tokio::time::sleep(Duration::from_millis(500)).await;
+    sample_geometry(app, &grid, &labels, "after-maximize-500ms");
     if !grid.is_maximized().map_err(|e| e.to_string())? {
         return Err("Native grid maximize was not observed".into());
     }
     tokio::time::sleep(Duration::from_millis(1800)).await;
+    sample_geometry(app, &grid, &labels, "after-maximize-hold");
     if !grid.is_maximized().map_err(|e| e.to_string())? {
         return Err("Periodic grid layout undid native maximization".into());
     }
+    sample_geometry(app, &grid, &labels, "before-unmaximize");
     grid.unmaximize().map_err(|e| e.to_string())?;
     tokio::time::sleep(Duration::from_millis(250)).await;
+    sample_geometry(app, &grid, &labels, "after-unmaximize-250ms");
     grid.set_size(original_size).map_err(|e| e.to_string())?;
     grid.set_position(original_position)
         .map_err(|e| e.to_string())?;
     tokio::time::sleep(Duration::from_millis(500)).await;
+    sample_geometry(app, &grid, &labels, "after-restore-before-focus");
     crate::presentation::focus(app, &labels[0])?;
     let manager = app.get_window("main").ok_or("Missing theme manager")?;
     for (theme, marker) in [
@@ -927,6 +1005,13 @@ pub fn install(app: &AppHandle) {
             .await
             .unwrap_or_else(|_| Err("Native grid probe timed out".into()));
         let passed = result.is_ok();
+        if let Err(error) = &result {
+            let view = state(&app);
+            diagnostic(
+                diagnostic_stage(),
+                serde_json::json!({"probe_failure":error,"controller_error":view.error,"mode":view.mode,"players":view.players.len()}),
+            );
+        }
         let evidence = serde_json::json!({"passed":passed,"driver_registered":false,"scenario":crate::e2e::scenario(),"origin":"isolated-local-fixtures","result":result.as_ref().ok(),"error":result.as_ref().err()});
         let written = std::fs::write(
             crate::e2e::root().join("grid-probe.json"),
