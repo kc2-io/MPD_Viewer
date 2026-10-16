@@ -79,7 +79,7 @@ jobs:
           else
             tar -czf .release-work/native.tar.gz -C target/release mpd-tabber
           fi
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: internal-native-${{ matrix.platform }}
           path: .release-work/native.tar.gz
@@ -157,7 +157,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.gate.outputs.version }}
         run: python scripts/release-tools.py package-windows
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-Windows-x64
           path: .release-assets/final/*
@@ -204,7 +204,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.gate.outputs.version }}
           RELEASE_PLATFORM: ${{ matrix.platform }}
         run: python scripts/sign-macos.py
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-${{ matrix.platform }}
           path: .release-assets/final/*
@@ -244,7 +244,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.gate.outputs.version }}
         run: python scripts/release-tools.py package-macos-unsigned --platform "${{ matrix.platform }}"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-${{ matrix.platform }}
           path: .release-assets/final/*
@@ -278,7 +278,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.gate.outputs.version }}
         run: python scripts/release-tools.py package-linux
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-Linux-x64
           path: .release-assets/final/*
